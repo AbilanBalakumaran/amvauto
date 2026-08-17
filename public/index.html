@@ -741,6 +741,36 @@ body.ecran-plein .ecran video { object-fit: contain; }
 .clip.local { box-shadow: inset -1px 0 0 rgba(0,0,0,.75), inset 0 -3px 0 rgba(80, 200, 130, .55); }
 .clip.local.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 -3px 0 rgba(80, 200, 130, .55); }
 .clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--rouge), 0 6px 18px rgba(0,0,0,.6); }
+/* Poignées de rognage : visibles seulement sur le plan sélectionné, larges au
+   doigt (14 px) mais dessinées fines pour ne pas manger le bloc. */
+.poignee {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  display: none;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.poignee::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.55);
+}
+.poignee.gauche { left: 0; }
+.poignee.droite { right: 0; }
+.poignee.gauche::before { left: 2px; }
+.poignee.droite::before { right: 2px; }
+.clip.actif .poignee { display: block; }
+/* Un plan coupé se signale : sinon on cherche pourquoi le rush entier ne passe
+   pas. */
+.clip.rogne .clip-duree { color: #ffd7a1; }
 .clip.hors-lecture { background-color: #2a1c1c; }
 .clip-nom {
   position: absolute; z-index: 1; left: 6px; right: 6px; bottom: 5px;
@@ -974,7 +1004,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 11:08";
+const VERSION_PAGE = "2026-08-17 11:23";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1062,6 +1092,7 @@ const TRAITS = {
   plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
   son: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
   pellicule: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14"/>',
+  couper: '<circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M7.8 16.2L18 5M16.2 16.2L6 5"/>',
 };
 
 const icone = (nom) =>
@@ -1592,7 +1623,7 @@ function majBoutonsHistoire() {
 }
 
 const projetActif = () => state.projets.find((projet) => projet.id === state.actif) || null;
-const dansProjet = (id) => (projetActif()?.plans || []).some((plan) => plan.id === id);
+const dansProjet = (id) => (projetActif()?.plans || []).some((plan) => idRush(plan) === id);
 
 function majBadge() {
   const total = projetActif()?.plans.length || 0;
@@ -1626,9 +1657,10 @@ function ajouterAUnProjet(rush, bouton, apres) {
 
 function basculerDans(projet, rush, bouton, apres) {
   state.actif = projet.id;
-  const index = projet.plans.findIndex((plan) => plan.id === rush.id);
+  const index = projet.plans.findIndex((plan) => idRush(plan) === rush.id);
   if (index >= 0) {
-    projet.plans.splice(index, 1);
+    // Un rush coupé occupe plusieurs blocs : le retirer les enlève tous.
+    projet.plans = projet.plans.filter((plan) => idRush(plan) !== rush.id);
   } else {
     const plan = { ...rush, anime: state.arbre?.anime || rush.ref || "", duree: null };
     projet.plans.push(plan);
@@ -1776,12 +1808,19 @@ function timecode(valeur) {
 }
 
 function totaux(projet) {
+  // Deux morceaux d'un même plan coupé viennent d'un seul fichier : le poids
+  // est compté une fois, sinon le projet paraît deux fois plus lourd.
+  const comptes = new Set();
   return projet.plans.reduce(
-    (somme, plan) => ({
-      duree: somme.duree + (plan.duree || 0),
-      mb: somme.mb + (plan.mb || 0),
-      mesures: somme.mesures + (plan.duree ? 1 : 0),
-    }),
+    (somme, plan) => {
+      const neuf = plan.video && !comptes.has(plan.video);
+      if (plan.video) comptes.add(plan.video);
+      return {
+        duree: somme.duree + (plan.duree ? duree(plan) : 0),
+        mb: somme.mb + (neuf ? plan.mb || 0 : 0),
+        mesures: somme.mesures + (plan.duree ? 1 : 0),
+      };
+    },
     { duree: 0, mb: 0, mesures: 0 },
   );
 }
@@ -1798,9 +1837,25 @@ const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: nul
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
 
+/* Couper un plan ne touche pas au fichier : on déplace deux bornes dans la
+   source. C'est le principe du montage non destructif — le même rush peut
+   servir deux fois, coupé différemment, et revenir en arrière ne coûte rien.
+   `duree` est donc la durée à la timeline, `dureeSource` celle du fichier. */
+const IMAGE = 1 / IMAGES_PAR_SECONDE;
+const PLAN_MINI = 4 * IMAGE;   // en deçà, un plan n'est plus lisible à l'écran
+
+const dureeSource = (plan) => plan?.duree || DUREE_DEFAUT;
+const entreeDe = (plan) => Math.max(0, Math.min(plan?.entree || 0, dureeSource(plan) - PLAN_MINI));
+const sortieDe = (plan) => Math.min(dureeSource(plan), Math.max(plan?.sortie ?? dureeSource(plan), entreeDe(plan) + PLAN_MINI));
+const rogne = (plan) => entreeDe(plan) > 0.001 || sortieDe(plan) < dureeSource(plan) - 0.001;
+
 function duree(plan) {
-  return plan.duree || DUREE_DEFAUT;
+  return Math.max(PLAN_MINI, sortieDe(plan) - entreeDe(plan));
 }
+
+// Un plan coupé en deux garde le rush dont il vient : c'est lui qui dit à
+// l'explorateur si la série est déjà dans le projet.
+const idRush = (plan) => plan.rush || plan.id;
 
 function offsets(plans) {
   let curseur = 0;
@@ -2114,8 +2169,9 @@ function capturerBande(plan) {
   let index = bande.images.length;
   const viserSuivante = () => {
     if (index >= voulues) return rendre();
-    // On échantillonne au centre de chaque tranche.
-    sonde.currentTime = ((index + 0.5) / voulues) * plan.duree;
+    // On échantillonne au centre de chaque tranche, entre les deux bornes : la
+    // pellicule montre ce qui reste du plan, pas ce qu'il y avait avant la coupe.
+    sonde.currentTime = entreeDe(plan) + ((index + 0.5) / voulues) * duree(plan);
   };
 
   const abandon = setTimeout(() => { bande.epuise = true; rendre(); }, 20000);
@@ -2408,11 +2464,121 @@ function blocPlan(projet, plan, index) {
   etiquette.textContent = plan.name;
   const chiffre = document.createElement("span");
   chiffre.className = "clip-duree";
-  chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${plan.duree.toFixed(1)}s` : "…";
+  chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${duree(plan).toFixed(1)}s` : "…";
   clip.append(pellicule, etiquette, chiffre);
 
   brancherGlisse(clip, projet, index);
+
+  // Les poignées ne s'affichent que sur le plan sélectionné : sur une piste
+  // dense, deux poignées par bloc rendraient la piste illisible.
+  if (!plan.youtube) {
+    for (const cote of ["gauche", "droite"]) {
+      const poignee = document.createElement("span");
+      poignee.className = `poignee ${cote}`;
+      clip.append(poignee);
+      brancherRognage(poignee, projet, index, cote);
+    }
+  }
+  if (rogne(plan)) clip.classList.add("rogne");
   return clip;
+}
+
+/* --- rogner un plan par ses bords -------------------------------------
+   Le geste de base d'un banc de montage : on tire le bord du bloc, la tête se
+   pose sur la nouvelle borne, et le moniteur montre l'image exacte où le plan
+   commencera ou finira. */
+function brancherRognage(poignee, projet, index, cote) {
+  poignee.addEventListener("pointerdown", (evt) => {
+    if (evt.button) return;
+    // Sans cela, le bloc partirait en réordonnancement au lieu de se rogner.
+    evt.stopPropagation();
+    evt.preventDefault();
+    deverrouiller();
+    arreter();
+
+    const plan = projet.plans[index];
+    const depart = evt.clientX;
+    const entree0 = entreeDe(plan);
+    const sortie0 = sortieDe(plan);
+    let demande = null;
+
+    const appliquer = () => {
+      demande = null;
+      bandes.delete(plan.id);
+      redessinerPiste();
+      const debut = offsets(projet.plans)[index] || 0;
+      // La tête colle à la borne qu'on déplace : c'est elle qu'on veut voir.
+      allerA(cote === "gauche" ? debut : debut + duree(plan) - IMAGE);
+      selectionner(index);
+    };
+
+    const bouger = (autre) => {
+      const delta = (autre.clientX - depart) / lecture.echelle;
+      if (cote === "gauche") {
+        plan.entree = Math.max(0, Math.min(entree0 + delta, sortie0 - PLAN_MINI));
+      } else {
+        plan.sortie = Math.min(dureeSource(plan), Math.max(sortie0 + delta, entree0 + PLAN_MINI));
+      }
+      // Une seule refonte de la piste par image : le geste doit rester fluide
+      // même sur un projet chargé.
+      if (!demande) demande = requestAnimationFrame(appliquer);
+    };
+
+    const finir = () => {
+      window.removeEventListener("pointermove", bouger);
+      window.removeEventListener("pointerup", finir);
+      window.removeEventListener("pointercancel", finir);
+      if (demande) cancelAnimationFrame(demande);
+      appliquer();
+      sauver();
+      enregistrer(projet);
+    };
+
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", finir);
+    window.addEventListener("pointercancel", finir);
+  });
+}
+
+// Coupe le plan sous la tête de lecture en deux, comme un coup de ciseaux : la
+// partie gauche s'arrête là, la partie droite reprend exactement au même point.
+function couperAuCurseur() {
+  const projet = projetActif();
+  if (!projet?.plans.length) return;
+  const debuts = offsets(projet.plans);
+  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
+  if (index < 0) index = projet.plans.length - 1;
+
+  const plan = projet.plans[index];
+  const dans = lecture.position - debuts[index];
+  // Couper au ras d'un bord ne produirait qu'une miette : on le dit plutôt que
+  // de laisser croire que le bouton ne répond pas.
+  if (plan.youtube || dans < PLAN_MINI || dans > duree(plan) - PLAN_MINI) {
+    const etiquette = $("plan-courant");
+    if (etiquette) {
+      etiquette.textContent = "Pose la tête dans le plan pour le couper";
+      setTimeout(() => selectionner(lecture.index), 1800);
+    }
+    return;
+  }
+
+  const point = entreeDe(plan) + dans;
+  const suite = {
+    ...plan,
+    id: `${idRush(plan)}#${Date.now().toString(36)}`,
+    rush: idRush(plan),
+    entree: point,
+    sortie: sortieDe(plan),
+  };
+  plan.sortie = point;
+  projet.plans.splice(index + 1, 0, suite);
+
+  bandes.delete(plan.id);
+  sauver();
+  enregistrer(projet);
+  redessinerPiste();
+  selectionner(index);
+  majTransport();
 }
 
 /* --- déplacer la tête de lecture au doigt ----------------------------- */
@@ -2657,7 +2823,9 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     video.src = source;
   }
   video.muted = false;
-  viser(video, decalage, plan);
+  // La position visée est dans le fichier : le décalage est compté depuis le
+  // point d'entrée, pas depuis le début du média.
+  viser(video, entreeDe(plan) + decalage, plan);
   const demarrer = () => {
     if (enchainer || lecture.jouant) {
       video.play().catch(() => {
@@ -2718,13 +2886,14 @@ function basculerLecture() {
   const cible = positionCible();
   if (!cible) return;
   lecture.index = cible.index;
-  const change = video.dataset.plan !== cible.plan.id;
-  if (change) {
+  const source = sourceDe(cible.plan);
+  if (video.dataset.plan !== cible.plan.id || video.dataset.source !== source) {
     video.dataset.plan = cible.plan.id;
+    video.dataset.source = source;
     video.poster = cible.plan.preview || "";
-    video.src = cible.plan.video;
+    video.src = source;
   }
-  viser(video, cible.dans, cible.plan);
+  viser(video, entreeDe(cible.plan) + cible.dans, cible.plan);
   preparerSuivant(cible.index + 1);
 
   deverrouille = true;
@@ -2899,8 +3068,9 @@ function appliquerSeek(jouer = false) {
   if (!video) return;
 
   if (index === lecture.index && video.dataset.plan === plan.id) {
+    const vise = entreeDe(plan) + dans;
     const poser = () => {
-      video.currentTime = Math.min(dans, video.duration || dans);
+      video.currentTime = Math.min(vise, video.duration || vise);
       if (jouer) video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
     };
     // Un fichier pas encore prêt ignorait la consigne, et l'image restait celle
@@ -3130,7 +3300,8 @@ function positionCourante() {
   // lui qui donne l'heure juste. S'il patine, l'horloge continue seule.
   const video = elementActif();
   if (video && !video.paused && video.readyState >= 2 && !lecture.cible && !lecture.secousse) {
-    const reelle = (offsets(projet.plans)[lecture.index] || 0) + video.currentTime;
+    const plan = projet.plans[lecture.index];
+    const reelle = (offsets(projet.plans)[lecture.index] || 0) + video.currentTime - entreeDe(plan);
     if (Math.abs(reelle - position) > 0.35) {
       position = reelle;
       lecture.horloge = { debut: performance.now(), depart: reelle };
@@ -3196,6 +3367,13 @@ function remplirBarreOutils(projet) {
   nom.className = "plan-courant";
   nom.id = "plan-courant";
 
+  const couper = document.createElement("button");
+  couper.type = "button";
+  couper.innerHTML = icone("couper");
+  couper.title = "Couper le plan à la tête de lecture";
+  couper.setAttribute("aria-label", "Couper à la tête de lecture");
+  couper.addEventListener("click", couperAuCurseur);
+
   const retirer = document.createElement("button");
   retirer.type = "button";
   retirer.innerHTML = icone("supprimer");
@@ -3212,7 +3390,7 @@ function remplirBarreOutils(projet) {
     poserPlan(lecture.index, 0);
   });
 
-  actions.replaceChildren(nom, retirer);
+  actions.replaceChildren(nom, couper, retirer);
   majBoutonsHistoire();
 }
 
@@ -3320,11 +3498,15 @@ function versEdl(projet) {
   ];
   let curseur = 0;
   projet.plans.forEach((plan, index) => {
-    const duree = plan.duree || DUREE_DEFAUT;
-    const fin = curseur + duree;
+    // Les deux premiers timecodes sont les points d'entrée et de sortie dans le
+    // fichier source : c'est là que les coupes faites ici sont transmises au
+    // logiciel de montage, qui retrouve exactement le même découpage.
+    const entree = entreeDe(plan);
+    const sortie = sortieDe(plan);
+    const fin = curseur + duree(plan);
     lignes.push(
       `${String(index + 1).padStart(3, "0")}  AX       V     C        ` +
-        `${timecode(0)} ${timecode(duree)} ${timecode(curseur)} ${timecode(fin)}`,
+        `${timecode(entree)} ${timecode(sortie)} ${timecode(curseur)} ${timecode(fin)}`,
       `* FROM CLIP NAME: ${nomFichier(plan)}`,
       `* SOURCE FILE: ${plan.video}`,
       plan.duree ? "" : "* DURÉE NON LUE — VALEUR PAR DÉFAUT",
@@ -3345,7 +3527,8 @@ function versTexte(projet) {
   const corps = projet.plans.map((plan, index) => [
     `# ${String(index + 1).padStart(2, "0")} — ${plan.name}`,
     `# ${plan.anime || plan.ref || ""} · ${plan.artists.join(", ") || "animateur non identifié"}` +
-      `${plan.duree ? ` · ${secondes(plan.duree)}` : ""}`,
+      `${plan.duree ? ` · ${secondes(duree(plan))}` : ""}` +
+      `${rogne(plan) ? ` · coupe ${secondes(entreeDe(plan))} → ${secondes(sortieDe(plan))}` : ""}`,
     plan.video,
     "",
   ].join("\n"));

@@ -54,6 +54,14 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
    courant se joue). Clic sur un bloc pour s'y placer, glisser-déposer pour réordonner.
 
+9. **Coupe les plans.** Un rush dure souvent plus que ce qu'on veut en garder. Les bords
+   du bloc se tirent au doigt pour rogner l'entrée et la sortie, et un coup de ciseaux
+   coupe le plan sous la tête de lecture en deux morceaux indépendants — le même rush peut
+   donc servir plusieurs fois, coupé différemment. Rien n'est réécrit : la coupe déplace
+   deux bornes dans le fichier source, elle est donc instantanée et s'annule sans coût.
+   Ces bornes partent dans l'EDL comme points d'entrée et de sortie source, si bien que
+   Premiere ou DaVinci retrouve exactement le même découpage.
+
    La durée de chaque plan est lue dans le fichier lui-même — aucune source ne l'expose —
    ce qui permet le chronométrage et l'export d'une **conduite de montage EDL** (CMX 3600,
    24 i/s) ouvrable dans Premiere, DaVinci ou Final Cut. Export secondaire en `.txt`, ou
