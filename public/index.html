@@ -721,7 +721,8 @@ body.ecran-plein .ecran video { object-fit: contain; }
   overflow: hidden;
   touch-action: none;
 }
-.clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.75)); }
+.clip canvas.bande { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,.68)); }
 .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge); }
 .clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--rouge), 0 6px 18px rgba(0,0,0,.6); }
 .clip.hors-lecture { background-color: #2a1c1c; }
@@ -957,7 +958,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 08:18";
+const VERSION_PAGE = "2026-08-17 08:29";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1775,7 +1776,7 @@ function totaux(projet) {
 const ECHELLE_MIN = 0.3;
 const ECHELLE_MAX = 900;
 const PAS_REGLE = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null, demande: false };
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null, demande: false, horloge: null };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -2048,6 +2049,128 @@ function dessinerMoniteur() {
   ctx.drawImage(source, (toile.width - l) / 2, (toile.height - h) / 2, l, h);
 }
 
+// Bande d'images d'un plan, comme la pellicule d'un banc de montage. On ne
+// peut pas exporter ces images — dessiner une vidéo sans en-tête CORS « teinte »
+// la toile et interdit d'en relire les pixels — mais on peut les garder dans
+// des toiles et les redessiner. Elles se remplissent une par une, en tâche de
+// fond, et seulement quand le zoom les rend visibles.
+const bandes = new Map();
+const LARGEUR_IMAGETTE = 96;
+
+function bandeDe(plan) {
+  let bande = bandes.get(plan.id);
+  if (!bande) {
+    bande = { images: [], enCours: false, epuise: false };
+    bandes.set(plan.id, bande);
+  }
+  return bande;
+}
+
+function imagettesVoulues(plan) {
+  // Une imagette tous les 96 pixels de piste, plafonnée : au-delà on n'y voit
+  // plus rien de plus.
+  return Math.max(1, Math.min(12, Math.round(largeurClip(plan) / LARGEUR_IMAGETTE)));
+}
+
+function capturerBande(plan) {
+  const bande = bandeDe(plan);
+  const voulues = imagettesVoulues(plan);
+  if (bande.enCours || bande.epuise || bande.images.length >= voulues) return;
+  if (plan.youtube || !plan.video || !plan.duree) return;
+  bande.enCours = true;
+
+  const sonde = document.createElement("video");
+  sonde.preload = "auto";
+  sonde.muted = true;
+  sonde.playsInline = true;
+
+  const rendre = () => {
+    sonde.removeAttribute("src");
+    sonde.load();
+    bande.enCours = false;
+    // On enchaîne : sans ça la capture s'acharnait sur le premier plan et les
+    // suivants restaient sans images.
+    setTimeout(ordonnancerBandes, 120);
+  };
+
+  let index = bande.images.length;
+  const viserSuivante = () => {
+    if (index >= voulues) return rendre();
+    // On échantillonne au centre de chaque tranche.
+    sonde.currentTime = ((index + 0.5) / voulues) * plan.duree;
+  };
+
+  const abandon = setTimeout(() => { bande.epuise = true; rendre(); }, 20000);
+
+  sonde.addEventListener("loadedmetadata", viserSuivante, { once: true });
+  sonde.addEventListener("seeked", () => {
+    if (sonde.readyState >= 2 && sonde.videoWidth) {
+      const toile = document.createElement("canvas");
+      toile.width = 128;
+      toile.height = Math.round((128 * sonde.videoHeight) / sonde.videoWidth) || 72;
+      toile.getContext("2d").drawImage(sonde, 0, 0, toile.width, toile.height);
+      bande.images[index] = toile;
+      index += 1;
+      redessinerBandes();
+    }
+    if (index >= voulues) { clearTimeout(abandon); return rendre(); }
+    viserSuivante();
+  });
+  sonde.addEventListener("error", () => { clearTimeout(abandon); bande.epuise = true; rendre(); }, { once: true });
+  sonde.src = plan.video;
+}
+
+// Choisit le prochain plan à compléter : le plan courant d'abord, puis les
+// autres dans l'ordre. Une seule capture à la fois, pour ne pas saturer le
+// décodeur.
+function ordonnancerBandes() {
+  const projet = projetActif();
+  if (!projet || document.getElementById("vue-projet")?.hidden) return;
+  if ([...bandes.values()].some((bande) => bande.enCours)) return;
+
+  const ordre = [projet.plans[lecture.index], ...projet.plans].filter(Boolean);
+  const cible = ordre.find((plan) => {
+    const bande = bandes.get(plan.id);
+    return !bande?.epuise && (bande?.images.filter(Boolean).length || 0) < imagettesVoulues(plan);
+  });
+  if (cible) capturerBande(cible);
+}
+
+// Les imagettes sont peintes dans la toile de fond de chaque bloc.
+function redessinerBandes() {
+  const projet = projetActif();
+  const rail = $("rail");
+  if (!projet || !rail) return;
+  [...rail.children].forEach((bloc, index) => {
+    const plan = projet.plans[index];
+    const toile = bloc.querySelector("canvas.bande");
+    if (!plan || !toile) return;
+    const bande = bandes.get(plan.id);
+    const largeur = Math.max(1, Math.round(bloc.clientWidth));
+    const hauteur = Math.max(1, Math.round(bloc.clientHeight));
+    if (toile.width !== largeur || toile.height !== hauteur) {
+      toile.width = largeur;
+      toile.height = hauteur;
+    }
+    const ctx = toile.getContext("2d");
+    ctx.clearRect(0, 0, largeur, hauteur);
+    const images = bande?.images.filter(Boolean) || [];
+    if (!images.length) return;
+    const pas = largeur / images.length;
+    images.forEach((imagette, i) => {
+      const facteur = Math.max(pas / imagette.width, hauteur / imagette.height);
+      const l = imagette.width * facteur;
+      const h = imagette.height * facteur;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(i * pas, 0, pas, hauteur);
+      ctx.clip();
+      ctx.drawImage(imagette, i * pas + (pas - l) / 2, (hauteur - h) / 2, l, h);
+      ctx.restore();
+    });
+  });
+}
+
 // Prépare un plan sur le lecteur en attente : chargé, placé au début, prêt à
 // prendre la main sans temps mort.
 function preparerSuivant(index) {
@@ -2236,9 +2359,12 @@ function entetePiste(projet) {
 function bilanProjet(projet) {
   const bilan = totaux(projet);
   const manquantes = projet.plans.length - bilan.mesures;
+  // La version est affichée ici en clair : trop de doutes sur « est-ce bien la
+  // dernière ? » se sont réglés en la cherchant dans un onglet.
   return (
     `${projet.plans.length} plans · ${bilan.mb.toFixed(0)} Mo` +
-    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "")
+    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "") +
+    ` · v${VERSION_PAGE.slice(-5)}`
   );
 }
 
@@ -2250,13 +2376,16 @@ function blocPlan(projet, plan, index) {
   if (plan.preview) clip.style.backgroundImage = `url("${plan.preview}")`;
   if (plan.youtube) clip.classList.add("hors-lecture");
 
+  const pellicule = document.createElement("canvas");
+  pellicule.className = "bande";
+
   const etiquette = document.createElement("span");
   etiquette.className = "clip-nom";
   etiquette.textContent = plan.name;
   const chiffre = document.createElement("span");
   chiffre.className = "clip-duree";
   chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${plan.duree.toFixed(1)}s` : "…";
-  clip.append(etiquette, chiffre);
+  clip.append(pellicule, etiquette, chiffre);
 
   brancherGlisse(clip, projet, index);
   return clip;
@@ -2454,13 +2583,18 @@ function redessinerPiste() {
   }
   selectionner(lecture.index);
   majTransport();
+  // Les imagettes manquantes se capturent une par une, sans bloquer le reste.
+  requestAnimationFrame(() => {
+    redessinerBandes();
+    ordonnancerBandes();
+  });
 }
 
 function poserPlan(index, decalage = 0, enchainer = false) {
   const projet = projetActif();
   if (!projet || !projet.plans[index]) return;
   lecture.index = index;
-  if (!lecture.jouant) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
+  if (!lecture.demande) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
   const plan = projet.plans[index];
   // « let » : la bascule A/B peut changer de lecteur en cours de route.
   let video = elementActif();
@@ -2536,11 +2670,14 @@ function basculerLecture() {
   if (lecture.demande) {
     lecture.demande = false;
     lecture.jouant = false;
+    lecture.horloge = null;
     video.pause();
     majTransport();
     return;
   }
   lecture.demande = true;
+  demarrerHorloge();
+  suivreTete();
 
   if (projet.plans[lecture.index]?.youtube) {
     lecture.jouant = true;
@@ -2578,6 +2715,7 @@ function basculerLecture() {
 function arreter() {
   lecture.demande = false;
   lecture.jouant = false;
+  lecture.horloge = null;
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   lecture.boucle = null;
   elementActif()?.pause();
@@ -2592,6 +2730,7 @@ function allerA(secondesCible) {
   const projet = projetActif();
   if (!projet) return;
   lecture.position = Math.max(0, Math.min(secondesCible, total(projet)));
+  if (lecture.demande) demarrerHorloge();
   majTransport();
   if (!lecture.seek) {
     lecture.seek = requestAnimationFrame(() => { lecture.seek = null; appliquerSeek(); });
@@ -2761,18 +2900,42 @@ function selectionner(index) {
   }
 }
 
+// Un banc de montage n'attend pas son lecteur : une horloge avance, et l'image
+// la suit comme elle peut. C'est ce qui garantit que la tête de lecture bouge
+// dès qu'on appuie sur lecture, même si un fichier traîne ou refuse de décoder.
+function demarrerHorloge() {
+  lecture.horloge = { debut: performance.now(), depart: lecture.position };
+}
+
 function positionCourante() {
   const projet = projetActif();
   if (!projet) return 0;
-  // Pendant la lecture, c'est la vidéo qui fait foi ; à l'arrêt, c'est la
-  // position posée par le doigt.
-  // Pendant un glissement, c'est le doigt qui commande, même si la lecture
-  // tourne : sinon la vidéo ramène le curseur là où elle en est.
-  if (lecture.jouant && !lecture.scrub && !lecture.cible && !lecture.secousse) {
-    const video = elementActif();
-    const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
-    lecture.position = (offsets(projet.plans)[lecture.index] || 0) + dans;
+  const duree_totale = total(projet);
+
+  // Le doigt prime sur tout le reste.
+  if (lecture.scrub || !lecture.demande || !lecture.horloge) return lecture.position;
+
+  const ecoule = (performance.now() - lecture.horloge.debut) / 1000;
+  let position = lecture.horloge.depart + ecoule;
+
+  // Quand le lecteur avance vraiment, on se recale doucement sur lui : c'est
+  // lui qui donne l'heure juste. S'il patine, l'horloge continue seule.
+  const video = elementActif();
+  if (video && !video.paused && video.readyState >= 2 && !lecture.cible && !lecture.secousse) {
+    const reelle = (offsets(projet.plans)[lecture.index] || 0) + video.currentTime;
+    if (Math.abs(reelle - position) > 0.35) {
+      position = reelle;
+      lecture.horloge = { debut: performance.now(), depart: reelle };
+    }
   }
+
+  if (position >= duree_totale) {
+    position = duree_totale;
+    lecture.demande = false;
+    lecture.jouant = false;
+    video?.pause();
+  }
+  lecture.position = Math.max(0, position);
   return lecture.position;
 }
 
@@ -2803,7 +2966,15 @@ function suivreTete() {
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   const pas = () => {
     majTransport();
-    if (lecture.jouant) lecture.boucle = requestAnimationFrame(pas);
+    // Le changement de plan est décidé par l'horloge, pas par la fin d'un
+    // fichier : un plan dont la lecture patine n'immobilise plus le montage.
+    const projet = projetActif();
+    if (lecture.demande && projet) {
+      const debuts = offsets(projet.plans);
+      const fin = (debuts[lecture.index] || 0) + duree(projet.plans[lecture.index]);
+      if (lecture.position >= fin - 0.02 && lecture.index + 1 < projet.plans.length) planSuivant();
+    }
+    if (lecture.demande) lecture.boucle = requestAnimationFrame(pas);
   };
   lecture.boucle = requestAnimationFrame(pas);
 }

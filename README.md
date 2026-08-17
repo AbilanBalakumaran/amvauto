@@ -48,8 +48,9 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 8. **Monte le projet** : les plans retenus vont dans un ou plusieurs **projets**, conservés
    dans le navigateur. L'onglet Projet est un banc de montage — prévisualisation en haut,
    piste en bas à échelle continue réglée au pincement, avec une règle graduée et le timecode
-   à gauche, chaque bloc étant large comme sa durée, tête de lecture glissable au doigt, une
-   voie pour une musique ou un SFX pris sur l'appareil, et
+   à gauche, chaque bloc large comme sa durée et rempli de vraies images du plan (une bande
+   qui se densifie au zoom), tête de lecture glissable au doigt, une voie pour une musique ou
+   un SFX pris sur l'appareil, et
    **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
    courant se joue). Clic sur un bloc pour s'y placer, glisser-déposer pour réordonner.
 
@@ -127,6 +128,25 @@ wrangler.toml      config de déploiement
 
 `worker/src/scoring.js` est le portage de `amvauto/scoring.py` : les deux doivent rester
 alignés. `worker/src/series.js` est généré depuis `amvauto/series.py`.
+
+## Comment la lecture est construite
+
+L'aperçu n'est pas un lecteur : c'est un **moniteur** dessiné image par image sur une toile,
+alimenté par deux lecteurs qui alternent — pendant qu'un plan passe, le suivant est déjà
+chargé, donc la jointure ne marque pas.
+
+Le temps, lui, vient d'une **horloge de transport**, pas du lecteur. C'est le fonctionnement
+d'un banc de montage : l'horloge avance, l'image suit comme elle peut. La tête de lecture
+bouge donc dès qu'on appuie sur lecture, même si un fichier refuse de démarrer — vérifié en
+simulant un lecteur qui rejette toute lecture. Quand le lecteur avance vraiment, l'horloge se
+recale sur lui.
+
+Le reste tient à des contraintes de lecture média sur mobile : un fichier n'est pas chargé
+tant que l'utilisateur n'a pas lancé la lecture, une lecture demandée hors du geste est
+refusée, une consigne de position posée trop tôt est ignorée en silence, et le nombre de
+médias chargeables en parallèle est faible. D'où, respectivement : le déverrouillage au
+premier geste, la lecture lancée dans le geste, la position reposée jusqu'à ce qu'elle prenne
+(avec repli sur un fragment `#t=`), et une seule sonde à la fois.
 
 ## Deux pièges rencontrés, et leur contournement
 
