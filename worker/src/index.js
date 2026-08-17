@@ -253,7 +253,14 @@ export default {
           return json({ series: suggest(url.searchParams.get("q") || "", 10) });
         }
         if (url.pathname === "/api/media") return await relayerMedia(request, url);
-        if (url.pathname === "/api/version") return json({ version: VERSION });
+        if (url.pathname === "/api/version") {
+          // Jamais en cache : la page compare cette réponse à son propre
+          // horodatage. Une copie gardée au bord ferait croire à une mise à
+          // jour en attente pendant un quart d'heure.
+          return new Response(JSON.stringify({ version: VERSION }), {
+            headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+          });
+        }
         if (url.pathname === "/api/moods") {
           return json({
             moods: Object.entries(MOODS).map(([key, m]) => ({ key, label: m.label })),
