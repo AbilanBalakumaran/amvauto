@@ -1980,6 +1980,7 @@ function blocPlan(projet, plan, index) {
 function brancherScrub(element) {
   element.addEventListener("pointerdown", (evt) => {
     evt.preventDefault();
+    deverrouiller();
     const ligne = $("ligne");
     if (!ligne) return;
     const gauche = ligne.getBoundingClientRect().left;
@@ -2186,6 +2187,9 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   const change = video.dataset.plan !== plan.id;
   if (change) {
     video.dataset.plan = plan.id;
+    // L'affiche s'affiche tant qu'aucune image du fichier n'est disponible :
+    // sur mobile, c'est elle qu'on voit sous le curseur avant chargement.
+    video.poster = plan.preview || "";
     video.src = plan.video;
   }
   const demarrer = () => {
@@ -2236,10 +2240,32 @@ function basculerLecture() {
     suivreTete();
     return;
   }
-  // On recale le fichier sur la tête avant de lancer : sans ça la lecture
-  // repartait de l'endroit où le fichier en était, c'est-à-dire du début du
-  // plan dès qu'un chargement était passé par là.
-  appliquerSeek(true);
+  // La lecture est demandée dans le geste lui-même — iOS refuse une lecture
+  // lancée depuis un rappel asynchrone — et le recalage se fait ensuite, dès
+  // que le fichier annonce ses métadonnées.
+  const cible = positionCible();
+  if (!cible) return;
+  lecture.index = cible.index;
+  const change = video.dataset.plan !== cible.plan.id;
+  if (change) {
+    video.dataset.plan = cible.plan.id;
+    video.poster = cible.plan.preview || "";
+    video.src = cible.plan.video;
+  }
+  const caler = () => { video.currentTime = Math.min(cible.dans, video.duration || cible.dans); };
+  if (!change && video.readyState >= 1) caler();
+  else video.addEventListener("loadedmetadata", caler, { once: true });
+
+  deverrouille = true;
+  const essai = video.play();
+  if (essai) {
+    essai.catch(() => {
+      video.muted = true;
+      video.play().catch(() => { lecture.jouant = false; majTransport(); });
+    });
+  }
+  selectionner(cible.index);
+  precharger(cible.index + 1);
   suivreTete();
 }
 
@@ -2263,6 +2289,29 @@ function allerA(secondesCible) {
   if (!lecture.seek) {
     lecture.seek = requestAnimationFrame(() => { lecture.seek = null; appliquerSeek(); });
   }
+}
+
+function positionCible() {
+  const projet = projetActif();
+  if (!projet) return null;
+  const debuts = offsets(projet.plans);
+  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
+  if (index < 0) index = projet.plans.length - 1;
+  return { index, dans: Math.max(0, lecture.position - debuts[index]), plan: projet.plans[index] };
+}
+
+// Safari sur iPhone ne charge rien tant que l'utilisateur n'a pas lancé la
+// lecture lui-même : tant que l'élément n'a pas joué une fois, se déplacer
+// dedans ne montre aucune image. On le déverrouille au premier geste sur la
+// piste, en lançant puis coupant aussitôt.
+let deverrouille = false;
+function deverrouiller() {
+  if (deverrouille) return;
+  const video = $("apercu");
+  if (!video || !video.src) return;
+  deverrouille = true;
+  const essai = video.play();
+  if (essai) essai.then(() => { if (!lecture.jouant) video.pause(); }).catch(() => {});
 }
 
 // Le fichier rattrape la tête au rythme où il peut — une fois par image au
