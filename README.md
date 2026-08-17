@@ -48,9 +48,10 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 8. **Monte le projet** : les plans retenus vont dans un ou plusieurs **projets**, conservés
    dans le navigateur. L'onglet Projet est un banc de montage — prévisualisation en haut,
    piste en bas à échelle continue réglée au pincement, avec une règle graduée et le timecode
-   à gauche, chaque bloc large comme sa durée et rempli de vraies images du plan (une bande
-   qui se densifie au zoom), tête de lecture glissable au doigt, une voie pour une musique ou
-   un SFX pris sur l'appareil, et
+   à gauche, chaque bloc large comme sa durée et rempli de vraies images du plan — la
+   pellicule ne peint que la partie visible et sa densité suit le zoom, jusqu'à une image
+   par graduation (24 i/s) —, tête de lecture glissable au doigt, une voie pour une musique
+   ou un SFX pris sur l'appareil, et
    **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
    courant se joue). Clic sur un bloc pour s'y placer, glisser-déposer pour réordonner.
 
@@ -165,6 +166,21 @@ d'un banc de montage : l'horloge avance, l'image suit comme elle peut. La tête 
 bouge donc dès qu'on appuie sur lecture, même si un fichier refuse de démarrer — vérifié en
 simulant un lecteur qui rejette toute lecture. Quand le lecteur avance vraiment, l'horloge se
 recale sur lui.
+
+Deux points valent d'être retenus, parce qu'ils donnaient tous les deux l'impression d'une
+image figée :
+
+- **Un lecteur ne traite qu'un déplacement à la fois.** Lui en demander un par image
+  pendant qu'un doigt glisse fait qu'il abandonne celui en cours et ne signale jamais son
+  arrivée : la tête avance, l'image reste. On n'en demande donc qu'un à la fois, en gardant
+  la dernière position voulue pour la poser dès que le précédent est arrivé.
+- **La pellicule est peinte par fenêtre, pas par plan.** Un plan d'une minute zoomé à
+  l'image mesure des dizaines de milliers de pixels — largeur qu'aucune toile n'accepte, et
+  le bloc restait noir. Seule la partie visible est dessinée, dans une toile de la taille de
+  l'écran, et les images sont demandées pour les instants réellement affichés, sur une
+  grille en puissances de deux pour qu'un changement de zoom retombe sur des images déjà
+  capturées. Une seule sonde vidéo sert toutes les captures : sur un fichier importé, s'y
+  déplacer est immédiat.
 
 Le reste tient à des contraintes de lecture média sur mobile : un fichier n'est pas chargé
 tant que l'utilisateur n'a pas lancé la lecture, une lecture demandée hors du geste est
