@@ -405,6 +405,16 @@ main {
 }
 .lecteur-actions .fort { background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce)); border-color: var(--rouge-fonce); }
 
+.row.plan { cursor: pointer; }
+.rang {
+  flex: none;
+  min-width: 26px;
+  font: 700 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--rouge);
+  font-variant-numeric: tabular-nums;
+}
+.row.plan .sous { font-variant-numeric: tabular-nums; }
+
 .panier-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .panier-actions button {
   flex: 1 1 130px;
@@ -431,9 +441,9 @@ main {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       Explorer
     </button>
-    <button type="button" class="tab-btn" data-tab="panier">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M4 9h16M9 5v14"/></svg>
-      Panier
+    <button type="button" class="tab-btn" data-tab="projet">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 6v12M17 6v12"/></svg>
+      Projet
       <span class="tab-badge" id="badge" hidden>0</span>
     </button>
     <button type="button" class="tab-btn" data-tab="apropos">
@@ -465,7 +475,7 @@ main {
       <div id="sortie"></div>
     </section>
 
-    <section id="vue-panier" hidden></section>
+    <section id="vue-projet" hidden></section>
 
     <section id="vue-apropos" class="apropos" hidden>
       <h2>Ce que tu regardes</h2>
@@ -504,6 +514,17 @@ main {
       <strong>Moments calmes</strong>. Un plan ne peut être rangé qu'à un seul endroit, comme dans un
       vrai système de fichiers, et son nom découle du même choix que son dossier.</p>
 
+      <h2>Les projets</h2>
+      <p>Un projet est un montage en préparation : une suite <strong>ordonnée</strong> de plans, que
+      tu réordonnes avec les flèches. Il est conservé dans ce navigateur d'une visite à l'autre, et
+      tu peux en tenir plusieurs en parallèle.</p>
+      <p>La durée de chaque plan n'est exposée par aucune source : elle est lue directement dans le
+      fichier, en ne chargeant que ses métadonnées. C'est ce qui permet d'afficher un vrai
+      chronométrage et d'exporter une <strong>conduite de montage EDL</strong> — le format que
+      Premiere, DaVinci et Final Cut savent ouvrir. L'EDL reconstruit l'ordre et les durées ; il
+      reste à relier les fichiers une fois téléchargés. La base est de 24 images par seconde, et un
+      plan dont la durée n'a pas pu être lue vaut 2 secondes, signalé comme tel dans le fichier.</p>
+
       <h2>Contenu</h2>
       <p>Rien n'est réhébergé ici : les extraits sont servis par Sakugabooru et restent la propriété
       de leurs studios.</p>
@@ -512,11 +533,12 @@ main {
 </div>
 
 <div class="lecteur" id="lecteur" hidden></div>
+<div class="lecteur" id="feuille" hidden></div>
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const PAR_PAGE = 100;
-const state = { arbre: null, chemin: [], panier: new Map(), tri: "episode", occupe: false, montres: PAR_PAGE };
+const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], actif: null };
 
 // L'extension vient du fichier, pas d'une supposition : AnimeThemes sert du
 // WebM, Sakugabooru du MP4, et une bande-annonce n'est pas un fichier.
@@ -540,9 +562,9 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === bouton));
     const onglet = bouton.dataset.tab;
     $("vue-explorer").hidden = onglet !== "explorer";
-    $("vue-panier").hidden = onglet !== "panier";
+    $("vue-projet").hidden = onglet !== "projet";
     $("vue-apropos").hidden = onglet !== "apropos";
-    if (onglet === "panier") rendrePanier();
+    if (onglet === "projet") rendreProjet();
   });
 });
 
@@ -873,14 +895,12 @@ function ligneFichier(rush) {
 
   const choisir = document.createElement("button");
   choisir.type = "button";
-  choisir.className = "btn-pick" + (state.panier.has(rush.id) ? " on" : "");
-  choisir.textContent = state.panier.has(rush.id) ? "✓" : "+";
-  choisir.title = "Ajouter au panier";
+  choisir.className = "btn-pick" + (dansProjet(rush.id) ? " on" : "");
+  choisir.textContent = dansProjet(rush.id) ? "✓" : "+";
+  choisir.title = "Ajouter à un projet";
   choisir.addEventListener("click", (evt) => {
     evt.stopPropagation();
-    basculer(rush);
-    choisir.classList.toggle("on", state.panier.has(rush.id));
-    choisir.textContent = state.panier.has(rush.id) ? "✓" : "+";
+    ajouterAUnProjet(rush, choisir);
   });
 
   ligne.append(vignette, centre, score, choisir);
@@ -940,11 +960,12 @@ function lire(rush) {
   const ajouter = document.createElement("button");
   ajouter.type = "button";
   ajouter.className = "fort";
-  ajouter.textContent = state.panier.has(rush.id) ? "Retirer du panier" : "Ajouter au panier";
+  ajouter.textContent = dansProjet(rush.id) ? "Retirer du projet" : "Ajouter à un projet";
   ajouter.addEventListener("click", () => {
-    basculer(rush);
-    ajouter.textContent = state.panier.has(rush.id) ? "Retirer du panier" : "Ajouter au panier";
-    rendre();
+    ajouterAUnProjet(rush, null, () => {
+      ajouter.textContent = dansProjet(rush.id) ? "Retirer du projet" : "Ajouter à un projet";
+      rendre();
+    });
   });
   const fermer = document.createElement("button");
   fermer.type = "button";
@@ -963,73 +984,421 @@ document.addEventListener("keydown", (evt) => {
   if (evt.key === "Escape" && !$("lecteur").hidden) { $("lecteur").hidden = true; $("lecteur").replaceChildren(); }
 });
 
-/* --- panier --------------------------------------------------------- */
-function basculer(rush) {
-  if (state.panier.has(rush.id)) state.panier.delete(rush.id);
-  else state.panier.set(rush.id, { ...rush, anime: state.arbre.anime });
-  const taille = state.panier.size;
-  $("badge").hidden = taille === 0;
-  $("badge").textContent = taille;
+/* --- projets ---------------------------------------------------------
+   Un projet, c'est un montage en préparation : une suite ordonnée de plans,
+   conservée d'une visite à l'autre, exportable vers un logiciel de montage. */
+
+const CLE = "amvauto-projets";
+const IMAGES_PAR_SECONDE = 24;
+const DUREE_DEFAUT = 2;   // pour un plan dont on n'a pas pu lire la durée
+
+function charger() {
+  try {
+    const brut = JSON.parse(localStorage.getItem(CLE) || "{}");
+    state.projets = Array.isArray(brut.projets) ? brut.projets : [];
+    state.actif = brut.actif || state.projets[0]?.id || null;
+  } catch {
+    state.projets = [];
+    state.actif = null;
+  }
+  majBadge();
 }
 
-function rendrePanier() {
-  const vue = $("vue-panier");
-  if (!state.panier.size) {
-    vue.replaceChildren(note("Le panier est vide. Ouvre un dossier et ajoute des plans avec le bouton +."));
+function sauver() {
+  try {
+    localStorage.setItem(CLE, JSON.stringify({ projets: state.projets, actif: state.actif }));
+  } catch {
+    // Quota plein : le projet reste utilisable dans l'onglet ouvert.
+  }
+  majBadge();
+}
+
+const projetActif = () => state.projets.find((projet) => projet.id === state.actif) || null;
+const dansProjet = (id) => (projetActif()?.plans || []).some((plan) => plan.id === id);
+
+function majBadge() {
+  const total = projetActif()?.plans.length || 0;
+  $("badge").hidden = total === 0;
+  $("badge").textContent = total;
+}
+
+function creerProjet(nom) {
+  const projet = {
+    id: `p${Date.now().toString(36)}`,
+    nom: nom || `Projet ${state.projets.length + 1}`,
+    cree: Date.now(),
+    plans: [],
+  };
+  state.projets.push(projet);
+  state.actif = projet.id;
+  sauver();
+  return projet;
+}
+
+// Le premier plan crée le projet tout seul ; à partir de deux projets, on
+// demande dans lequel ranger.
+function ajouterAUnProjet(rush, bouton, apres) {
+  if (state.projets.length > 1 && !dansProjet(rush.id)) {
+    choisirProjet(rush, bouton, apres);
+    return;
+  }
+  const projet = projetActif() || creerProjet();
+  basculerDans(projet, rush, bouton, apres);
+}
+
+function basculerDans(projet, rush, bouton, apres) {
+  state.actif = projet.id;
+  const index = projet.plans.findIndex((plan) => plan.id === rush.id);
+  if (index >= 0) {
+    projet.plans.splice(index, 1);
+  } else {
+    const plan = { ...rush, anime: state.arbre?.anime || rush.ref || "", duree: null };
+    projet.plans.push(plan);
+    mesurerDuree(plan);
+  }
+  sauver();
+  if (bouton) {
+    const dedans = dansProjet(rush.id);
+    bouton.classList.toggle("on", dedans);
+    bouton.textContent = dedans ? "✓" : "+";
+  }
+  if (apres) apres();
+}
+
+function choisirProjet(rush, bouton, apres) {
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = "Ajouter à quel projet ?";
+  corps.append(titre);
+
+  const liste = document.createElement("div");
+  liste.className = "rows";
+  for (const projet of state.projets) {
+    const ligne = document.createElement("button");
+    ligne.type = "button";
+    ligne.className = "row";
+    ligne.innerHTML = `<span class="grow"><span class="nom"></span><span class="sous"></span></span>`;
+    ligne.querySelector(".nom").textContent = projet.nom;
+    ligne.querySelector(".sous").textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""}`;
+    ligne.addEventListener("click", () => {
+      fermerFeuille();
+      basculerDans(projet, rush, bouton, apres);
+    });
+    liste.append(ligne);
+  }
+  corps.append(liste);
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+  const nouveau = document.createElement("button");
+  nouveau.type = "button";
+  nouveau.className = "fort";
+  nouveau.textContent = "Nouveau projet";
+  nouveau.addEventListener("click", () => {
+    fermerFeuille();
+    basculerDans(creerProjet(), rush, bouton, apres);
+  });
+  const annuler = document.createElement("button");
+  annuler.type = "button";
+  annuler.textContent = "Annuler";
+  annuler.addEventListener("click", fermerFeuille);
+  actions.append(nouveau, annuler);
+  corps.append(actions);
+
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
+}
+
+function fermerFeuille() {
+  $("feuille").hidden = true;
+  $("feuille").replaceChildren();
+}
+
+// La durée d'un plan n'est exposée par aucune des sources : on la lit dans le
+// fichier lui-même, en ne chargeant que ses métadonnées.
+function mesurerDuree(plan) {
+  if (plan.youtube || !plan.video) return;
+  const sonde = document.createElement("video");
+  sonde.preload = "metadata";
+  sonde.muted = true;
+  const finir = () => { sonde.removeAttribute("src"); sonde.load(); };
+  sonde.addEventListener("loadedmetadata", () => {
+    if (Number.isFinite(sonde.duration) && sonde.duration > 0) {
+      plan.duree = Math.round(sonde.duration * 100) / 100;
+      sauver();
+      if (!$("vue-projet").hidden) rendreProjet();
+    }
+    finir();
+  }, { once: true });
+  sonde.addEventListener("error", finir, { once: true });
+  sonde.src = plan.video;
+}
+
+const secondes = (valeur) => `${valeur.toFixed(2).replace(".", ",")} s`;
+
+function timecode(valeur) {
+  const images = Math.max(0, Math.round(valeur * IMAGES_PAR_SECONDE));
+  const parties = [
+    Math.floor(images / (IMAGES_PAR_SECONDE * 3600)),
+    Math.floor(images / (IMAGES_PAR_SECONDE * 60)) % 60,
+    Math.floor(images / IMAGES_PAR_SECONDE) % 60,
+    images % IMAGES_PAR_SECONDE,
+  ];
+  return parties.map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+function totaux(projet) {
+  return projet.plans.reduce(
+    (somme, plan) => ({
+      duree: somme.duree + (plan.duree || 0),
+      mb: somme.mb + (plan.mb || 0),
+      mesures: somme.mesures + (plan.duree ? 1 : 0),
+    }),
+    { duree: 0, mb: 0, mesures: 0 },
+  );
+}
+
+/* --- vue projet ------------------------------------------------------ */
+function rendreProjet() {
+  const vue = $("vue-projet");
+  const morceaux = [barreProjets()];
+  const projet = projetActif();
+
+  if (!projet) {
+    morceaux.push(note("Aucun projet. Ouvre un dossier, puis « + » sur un plan pour en démarrer un."));
+    vue.replaceChildren(...morceaux);
     return;
   }
 
+  if (!projet.plans.length) {
+    morceaux.push(note(`« ${projet.nom} » est vide. Ajoute des plans depuis l'explorateur.`));
+    vue.replaceChildren(...morceaux);
+    return;
+  }
+
+  const bilan = totaux(projet);
+  const manquantes = projet.plans.length - bilan.mesures;
+  const resume = note(
+    `${projet.plans.length} plans · ${secondes(bilan.duree)} de montage · ${bilan.mb.toFixed(1)} Mo` +
+      (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""} en cours de lecture` : ""),
+  );
+
+  morceaux.push(resume, actionsProjet(projet), timeline(projet));
+  vue.replaceChildren(...morceaux);
+}
+
+function barreProjets() {
+  const barre = document.createElement("div");
+  barre.className = "tools";
+  const etiquette = document.createElement("span");
+  etiquette.className = "label";
+  etiquette.textContent = "Projets";
+  barre.append(etiquette);
+
+  for (const projet of state.projets) {
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.textContent = `${projet.nom} (${projet.plans.length})`;
+    bouton.classList.toggle("on", projet.id === state.actif);
+    bouton.addEventListener("click", () => {
+      state.actif = projet.id;
+      sauver();
+      rendreProjet();
+      rendre();
+    });
+    barre.append(bouton);
+  }
+
+  const nouveau = document.createElement("button");
+  nouveau.type = "button";
+  nouveau.textContent = "+ Nouveau";
+  nouveau.addEventListener("click", () => { creerProjet(); rendreProjet(); rendre(); });
+  barre.append(nouveau);
+  return barre;
+}
+
+function actionsProjet(projet) {
   const actions = document.createElement("div");
   actions.className = "panier-actions";
-  const exporter = document.createElement("button");
-  exporter.className = "fort";
-  exporter.type = "button";
-  exporter.textContent = "Exporter la liste (.txt)";
-  exporter.addEventListener("click", telecharger);
+
+  const edl = document.createElement("button");
+  edl.type = "button";
+  edl.className = "fort";
+  edl.textContent = "Exporter le montage (.edl)";
+  edl.title = "Conduite de montage à ouvrir dans Premiere, DaVinci ou Final Cut";
+  edl.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet)));
+
+  const liste = document.createElement("button");
+  liste.type = "button";
+  liste.textContent = "Liste des plans (.txt)";
+  liste.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.txt`, versTexte(projet)));
+
   const copier = document.createElement("button");
   copier.type = "button";
   copier.textContent = "Copier les liens";
   copier.addEventListener("click", async () => {
-    await navigator.clipboard.writeText([...state.panier.values()].map((r) => r.video).join("\n"));
+    await navigator.clipboard.writeText(projet.plans.map((plan) => plan.video).join("\n"));
     copier.textContent = "Copié";
     setTimeout(() => { copier.textContent = "Copier les liens"; }, 1600);
   });
-  const vider = document.createElement("button");
-  vider.type = "button";
-  vider.textContent = "Vider";
-  vider.addEventListener("click", () => {
-    state.panier.clear();
-    $("badge").hidden = true;
-    rendrePanier();
+
+  const renommer = document.createElement("button");
+  renommer.type = "button";
+  renommer.textContent = "Renommer";
+  renommer.addEventListener("click", () => {
+    const nom = prompt("Nom du projet", projet.nom);
+    if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); rendreProjet(); }
+  });
+
+  const supprimer = document.createElement("button");
+  supprimer.type = "button";
+  supprimer.textContent = "Supprimer";
+  supprimer.addEventListener("click", () => {
+    if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
+    state.projets = state.projets.filter((autre) => autre.id !== projet.id);
+    state.actif = state.projets[0]?.id || null;
+    sauver();
+    rendreProjet();
     rendre();
   });
-  actions.append(exporter, copier, vider);
 
-  const total = [...state.panier.values()].reduce((somme, rush) => somme + rush.mb, 0);
-  const resume = note(`${state.panier.size} plans sélectionnés · ${total.toFixed(1)} Mo à télécharger`);
-
-  const liste = document.createElement("div");
-  liste.className = "rows";
-  for (const rush of state.panier.values()) liste.append(ligneFichier(rush));
-
-  vue.replaceChildren(actions, resume, liste);
+  actions.append(edl, liste, copier, renommer, supprimer);
+  return actions;
 }
 
-function telecharger() {
-  const lignes = [...state.panier.values()].map((rush) => [
-    `# ${rush.anime} — ${rush.name}`,
-    `# ${rush.artists.join(", ") || "animateur non identifié"} · ${rush.source || "source inconnue"} · ${rush.width}×${rush.height}`,
-    rush.video,
+function timeline(projet) {
+  const liste = document.createElement("div");
+  liste.className = "rows";
+  let curseur = 0;
+
+  projet.plans.forEach((plan, index) => {
+    const duree = plan.duree || 0;
+    const ligne = document.createElement("div");
+    ligne.className = "row plan";
+
+    const rang = document.createElement("span");
+    rang.className = "rang";
+    rang.textContent = String(index + 1).padStart(2, "0");
+
+    const centre = document.createElement("span");
+    centre.className = "grow";
+    const nom = document.createElement("span");
+    nom.className = "nom";
+    nom.textContent = nomFichier(plan);
+    const sous = document.createElement("span");
+    sous.className = "sous";
+    sous.textContent = [
+      `${timecode(curseur)} → ${timecode(curseur + (duree || DUREE_DEFAUT))}`,
+      plan.youtube ? "lien YouTube" : duree ? secondes(duree) : "durée…",
+      plan.anime || plan.ref || "",
+    ].filter(Boolean).join(" · ");
+    centre.append(nom, sous);
+
+    const monter = boutonPlan("↑", "Monter", () => deplacer(projet, index, -1));
+    const descendre = boutonPlan("↓", "Descendre", () => deplacer(projet, index, 1));
+    const retirer = boutonPlan("✕", "Retirer du projet", () => {
+      projet.plans.splice(index, 1);
+      sauver();
+      rendreProjet();
+      rendre();
+    });
+
+    ligne.append(rang, centre, monter, descendre, retirer);
+    ligne.addEventListener("click", (evt) => {
+      if (evt.target.closest("button")) return;
+      lire(plan);
+    });
+    liste.append(ligne);
+    curseur += duree || DUREE_DEFAUT;
+  });
+
+  return liste;
+}
+
+function boutonPlan(texte, titre, action) {
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.className = "btn-pick";
+  bouton.textContent = texte;
+  bouton.title = titre;
+  bouton.addEventListener("click", (evt) => { evt.stopPropagation(); action(); });
+  return bouton;
+}
+
+function deplacer(projet, index, sens) {
+  const cible = index + sens;
+  if (cible < 0 || cible >= projet.plans.length) return;
+  const [plan] = projet.plans.splice(index, 1);
+  projet.plans.splice(cible, 0, plan);
+  sauver();
+  rendreProjet();
+}
+
+/* --- exports --------------------------------------------------------- */
+const nomDeFichier = (projet) => `amvauto-${projet.nom.toLowerCase().replace(/\W+/g, "-")}`;
+
+// Conduite de montage CMX 3600 : chaque plan bout à bout sur la timeline, avec
+// son nom et le chemin de son fichier. Les logiciels de montage la lisent et
+// reconstruisent l'ordre, il ne reste qu'à relier les médias téléchargés.
+function versEdl(projet) {
+  const lignes = [
+    `TITLE: ${projet.nom.toUpperCase()}`,
+    "FCM: NON-DROP FRAME",
+    `* MONTÉ PAR AMVAUTO — BASE ${IMAGES_PAR_SECONDE} IMAGES/SECONDE`,
+    "",
+  ];
+  let curseur = 0;
+  projet.plans.forEach((plan, index) => {
+    const duree = plan.duree || DUREE_DEFAUT;
+    const fin = curseur + duree;
+    lignes.push(
+      `${String(index + 1).padStart(3, "0")}  AX       V     C        ` +
+        `${timecode(0)} ${timecode(duree)} ${timecode(curseur)} ${timecode(fin)}`,
+      `* FROM CLIP NAME: ${nomFichier(plan)}`,
+      `* SOURCE FILE: ${plan.video}`,
+      plan.duree ? "" : "* DURÉE NON LUE — VALEUR PAR DÉFAUT",
+      "",
+    );
+    curseur = fin;
+  });
+  return lignes.filter((ligne, index, tout) => ligne !== "" || tout[index - 1] !== "").join("\n");
+}
+
+function versTexte(projet) {
+  const bilan = totaux(projet);
+  const entete = [
+    `# ${projet.nom}`,
+    `# ${projet.plans.length} plans · ${secondes(bilan.duree)} · ${bilan.mb.toFixed(1)} Mo`,
+    "",
+  ];
+  const corps = projet.plans.map((plan, index) => [
+    `# ${String(index + 1).padStart(2, "0")} — ${plan.name}`,
+    `# ${plan.anime || plan.ref || ""} · ${plan.artists.join(", ") || "animateur non identifié"}` +
+      `${plan.duree ? ` · ${secondes(plan.duree)}` : ""}`,
+    plan.video,
     "",
   ].join("\n"));
-  const blob = new Blob([lignes.join("\n")], { type: "text/plain;charset=utf-8" });
+  return entete.concat(corps).join("\n");
+}
+
+function telecharger(nom, contenu) {
+  const blob = new Blob([contenu], { type: "text/plain;charset=utf-8" });
   const lien = document.createElement("a");
   lien.href = URL.createObjectURL(blob);
-  const base = (state.arbre?.anime || "rushs").toLowerCase().replace(/\W+/g, "-");
-  lien.download = `amvauto-${base}.txt`;
+  lien.download = nom;
   lien.click();
   URL.revokeObjectURL(lien.href);
 }
+
+charger();
 </script>
 </body>
 </html>

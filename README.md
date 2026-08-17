@@ -45,8 +45,11 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    les impact frames, et pénalise ce qui se marie mal avec du 2D (CGI, captures web).
 7. **Tient la charge côté interface** : un dossier peut contenir un millier de plans, ils
    sont posés par centaines à la demande plutôt qu'en une fois.
-8. **Sort une liste de plans** : sélection dans un panier, export en `.txt` ou copie
-   des liens directs, prêt à passer au téléchargeur.
+8. **Monte le projet** : les plans retenus vont dans un ou plusieurs **projets**, des suites
+   ordonnées conservées dans le navigateur. La durée de chaque plan est lue dans le fichier
+   lui-même — aucune source ne l'expose — ce qui permet un vrai chronométrage et l'export
+   d'une **conduite de montage EDL** (CMX 3600, 24 i/s) ouvrable dans Premiere, DaVinci ou
+   Final Cut. Export secondaire en `.txt`, ou copie des liens pour un téléchargeur.
 
 ## Deux façons de s'en servir
 
