@@ -1,0 +1,24 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="rouge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E63946"/>
+      <stop offset="1" stop-color="#C1121F"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#0a0a0a"/>
+  <!-- amorce de pellicule : deux bandes de perforations et la fenêtre du photogramme -->
+  <rect x="96" y="112" width="320" height="288" rx="24" fill="url(#rouge)"/>
+  <rect x="136" y="152" width="240" height="208" rx="12" fill="#0a0a0a"/>
+  <g fill="#0a0a0a">
+    <rect x="112" y="140" width="26" height="26" rx="7"/>
+    <rect x="112" y="196" width="26" height="26" rx="7"/>
+    <rect x="112" y="252" width="26" height="26" rx="7"/>
+    <rect x="112" y="308" width="26" height="26" rx="7"/>
+    <rect x="374" y="140" width="26" height="26" rx="7"/>
+    <rect x="374" y="196" width="26" height="26" rx="7"/>
+    <rect x="374" y="252" width="26" height="26" rx="7"/>
+    <rect x="374" y="308" width="26" height="26" rx="7"/>
+  </g>
+  <!-- le triangle de lecture, posé dans le photogramme -->
+  <path d="M222 202l96 54-96 54z" fill="url(#rouge)"/>
+</svg>

@@ -44,8 +44,17 @@ export async function searchSeries(query) {
   return tags.filter((tag) => tag.count > 0).sort((a, b) => b.count - a.count);
 }
 
+const PAGE_SIZE = 100;
+
 export async function posts(tags, limit) {
-  const raw = await api("/post.json", { tags, limit }, 1800);
+  // L'API plafonne à 100 posts par page : au-delà on pagine, en parallèle.
+  const pages = Math.max(1, Math.ceil(limit / PAGE_SIZE));
+  const batches = await Promise.all(
+    Array.from({ length: pages }, (_, index) =>
+      api("/post.json", { tags, limit: Math.min(PAGE_SIZE, limit), page: index + 1 }, 1800),
+    ),
+  );
+  const raw = batches.flat();
   const artists = await artistTags();
   return raw.map((item) => {
     const tagList = (item.tags || "").split(" ").filter(Boolean);
@@ -68,7 +77,7 @@ export async function posts(tags, limit) {
 }
 
 // Les cuts d'une série, filtrés sur ce qui est réellement montable.
-export async function rushes(seriesTag, limit = 60) {
+export async function rushes(seriesTag, limit = 300) {
   const found = await posts(`${seriesTag} order:score`, limit);
   return found.filter(
     (post) =>

@@ -3,24 +3,29 @@
 
 export const MOODS = {
   combat: {
+    folder: "Combats",
     label: "Combat",
-    tags: { fighting: 3, impact_frames: 3, martial_arts: 3, weapons: 2, beams: 2, explosions: 2, swords: 2, shooting: 2, creatures: 1 },
+    tags: { fighting: 4, impact_frames: 3, martial_arts: 4, weapons: 3, beams: 3, explosions: 2, swords: 3, shooting: 3, creatures: 1 },
   },
   effets: {
+    folder: "Effets & explosions",
     label: "Effets",
-    tags: { effects: 3, fire: 2, lightning: 2, liquid: 2, smoke: 2, debris: 2, sparks: 2, wind: 1, ice: 2, explosions: 2 },
+    tags: { effects: 1, fire: 3, lightning: 3, liquid: 2, smoke: 2, debris: 2, sparks: 2, wind: 1, ice: 3, explosions: 2 },
   },
   vitesse: {
+    folder: "Vitesse & poursuites",
     label: "Vitesse",
-    tags: { running: 3, flying: 2, smears: 3, chase: 3, vehicle: 2, sports: 2, falling: 2, motorcycles: 2, sliding: 2 },
+    tags: { running: 4, flying: 3, smears: 2, chase: 4, vehicle: 3, sports: 3, falling: 3, motorcycles: 3, sliding: 2 },
   },
   acting: {
+    folder: "Moments calmes",
     label: "Acting",
-    tags: { character_acting: 3, hair: 2, fabric: 2, walk_cycle: 2, dialogue: 1, eating: 1, crying: 2, smoking: 1 },
+    tags: { character_acting: 4, hair: 1, fabric: 1, walk_cycle: 3, dialogue: 2, eating: 2, crying: 3, smoking: 2 },
   },
   hype: {
+    folder: "Transformations",
     label: "Hype / transfo",
-    tags: { henshin: 3, morphing: 3, dancing: 3, performance: 2, background_animation: 2, rotation: 1 },
+    tags: { henshin: 4, morphing: 3, dancing: 4, performance: 3, background_animation: 2, rotation: 1 },
   },
 };
 

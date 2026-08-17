@@ -9,15 +9,22 @@ plans d'animation remarquables épisode par épisode, avec l'animateur derrière
 ## Ce que l'outil fait
 
 1. **Résout la série.** « frieren », « csm », « mob psycho » → le bon tag Sakugabooru.
-2. **Ne garde que le montable.** Vidéos uniquement : les genga, layouts et scans de
+2. **Ratisse large.** Jusqu'à 300 cuts par série, paginés en parallèle.
+3. **Ne garde que le montable.** Vidéos uniquement : les genga, layouts et scans de
    production sont écartés, ce n'est pas de l'image exploitable en timeline.
-3. **Classe pour le montage, pas pour la performance.** Le score communautaire dit
+4. **Nomme chaque plan.** Sakugabooru ne nomme pas ses cuts. Le nom est reconstruit
+   depuis les tags : `E41 · Combat, impact frames et flammes (Itano circus)`. Épisode,
+   action principale, deux détails visuels, et la figure de style quand il y en a une.
+5. **Range le tout comme un disque dur** : un dossier par arc (déduit des tags de série
+   du plan : `Arc Reze`, `Saison 2`, `Final Season`), et dedans un dossier par ambiance
+   — Combats, Effets & explosions, Vitesse & poursuites, Moments calmes, Transformations.
+   Un plan n'existe qu'à un seul endroit, et son nom s'accorde toujours avec son dossier :
+   la même classification décide des deux.
+6. **Classe pour le montage, pas pour la performance.** Le score communautaire dit
    « belle animation » ; ce n'est pas la même chose que « bon rush ». Le classement
    croise ce score avec la durée utile du plan, la résolution, l'animation de décor,
    les impact frames, et pénalise ce qui se marie mal avec du 2D (CGI, captures web).
-4. **Filtre par ambiance** : combat, effets, vitesse, acting, hype/transfo — déduites
-   des tags du plan, et qui re-classent les résultats au lieu de simplement les filtrer.
-5. **Sort une liste de plans** : sélection dans un panier, export en `.txt` ou copie
+7. **Sort une liste de plans** : sélection dans un panier, export en `.txt` ou copie
    des liens directs, prêt à passer au téléchargeur.
 
 ## Deux façons de s'en servir
@@ -39,9 +46,14 @@ Routes :
 
 | Route | Rôle |
 |---|---|
-| `GET /api/rushes?anime=frieren&mood=combat&top=24` | rushs classés |
+| `GET /api/tree?anime=frieren` | arborescence arc → ambiance → plans |
+| `GET /api/rushes?anime=frieren&mood=combat&top=24` | liste plate, classée |
 | `GET /api/suggest?q=chain` | complétion sur le catalogue |
 | `GET /api/moods` | ambiances disponibles |
+
+L'interface reprend la direction artistique d'[autoshort](https://github.com/AbilanBalakumaran/autoshort)
+— fond `#0a0a0a`, surfaces `#161616`, accent `#E63946 → #C1121F`, titres en Obelix Pro,
+coquille header + barre d'onglets — pour que les deux applications se ressemblent.
 
 ### CLI
 
@@ -57,8 +69,12 @@ Aucune dépendance : bibliothèque standard uniquement.
 
 ```
 amvauto/           moteur Python (client API, scoring, CLI)
-worker/src/        Worker Cloudflare (mêmes règles, portées en JS)
-public/index.html  interface
+worker/src/        Worker Cloudflare
+  sakuga.js        accès à l'API, pagination, filtrage
+  scoring.js       barème d'utilisabilité et ambiances
+  naming.js        nom des plans et détection des arcs
+  series.js        raccourcis de séries (généré depuis series.py)
+public/index.html  explorateur
 wrangler.toml      config de déploiement
 ```
 
