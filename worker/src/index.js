@@ -2,6 +2,8 @@
 // proposition de rushs. Sakugabooru étant sans CORS, tous les appels JSON
 // passent par ici.
 
+import { trailers } from "./anilist.js";
+import { themes } from "./animethemes.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { rushes, searchSeries } from "./sakuga.js";
 import { MOODS, moodsOf, qualityFlags, rank } from "./scoring.js";
@@ -34,7 +36,8 @@ function serialize({ post, score }) {
     height: post.height,
     mb: Math.round((post.file_size / 1e6) * 100) / 100,
     episode: episodeNumber(post.source),
-    source: post.source.slice(0, 90),
+    provider: "sakugabooru",
+    ref: post.source.slice(0, 90),
     video: post.file_url,
     preview: post.preview_url,
     page: `https://www.sakugabooru.com/post/show/${post.id}`,
@@ -60,6 +63,32 @@ async function resolve(query, pool) {
     }
   }
   return null;
+}
+
+// Les sources externes ne parlent pas la même langue que Sakugabooru : on les
+// ramène à la forme d'un rush pour que l'explorateur n'ait qu'un seul modèle.
+function fromSource(item) {
+  return {
+    id: item.id,
+    name: item.name,
+    score: item.score,
+    votes: null,
+    moods: [],
+    technique: null,
+    flags: item.flags || [],
+    artists: item.artists || [],
+    width: item.width,
+    height: item.height,
+    mb: item.mb,
+    episode: item.episode,
+    provider: item.source,
+    ref: item.serie || "",
+    video: item.video,
+    youtube: item.youtube || null,
+    preview: item.preview,
+    page: item.page,
+    tags: [],
+  };
 }
 
 // Deux plans de la même scène produisent le même nom : on les numérote plutôt
@@ -137,16 +166,68 @@ async function handleTree(url) {
   if (!query) return json({ error: "Indique un animé." }, 400);
 
   const pool = Math.min(400, Math.max(50, Number(url.searchParams.get("pool")) || 300));
-  const resolved = await resolve(query, pool);
-  if (!resolved) {
-    return json({ error: `Aucun rush vidéo trouvé pour « ${query} ».`, suggestions: suggest("", 6) }, 404);
+
+  // Les trois sources sont interrogées de front, et l'échec de l'une ne doit
+  // pas emporter les autres : un générique reste utile si Sakugabooru tousse.
+  const [cuts, generiques, bandes] = await Promise.allSettled([
+    resolve(query, pool),
+    themes(query),
+    trailers(query),
+  ]);
+
+  const resolved = cuts.status === "fulfilled" ? cuts.value : null;
+  const listeThemes = generiques.status === "fulfilled" ? generiques.value : [];
+  const listeTrailers = bandes.status === "fulfilled" ? bandes.value : [];
+
+  if (!resolved && !listeThemes.length && !listeTrailers.length) {
+    return json({ error: `Rien trouvé pour « ${query} ».`, suggestions: suggest("", 6) }, 404);
   }
 
-  const arcs = buildTree(resolved.posts, resolved.tag, resolved.display);
+  const nom = resolved?.display || listeThemes[0]?.serie || listeTrailers[0]?.serie || query;
+  const arcs = resolved ? buildTree(resolved.posts, resolved.tag, resolved.display) : [];
+
+  const openings = listeThemes.filter((item) => item.kind === "opening").map(fromSource);
+  const endings = listeThemes.filter((item) => item.kind === "ending").map(fromSource);
+  if (openings.length || endings.length) {
+    arcs.push({
+      key: "generiques",
+      label: "Openings & endings",
+      count: openings.length + endings.length,
+      folders: [
+        { key: "opening", label: "Openings", count: openings.length, rushes: dedupe(openings) },
+        { key: "ending", label: "Endings", count: endings.length, rushes: dedupe(endings) },
+      ].filter((dossier) => dossier.count),
+    });
+  }
+
+  if (listeTrailers.length) {
+    const pv = listeTrailers.map(fromSource);
+    arcs.push({
+      key: "pv",
+      label: "Bandes-annonces",
+      count: pv.length,
+      folders: [{ key: "trailer", label: "PV officiels", count: pv.length, rushes: dedupe(pv) }],
+    });
+  }
+
   return json({
-    anime: resolved.display,
-    tag: resolved.tag,
-    total: resolved.posts.length,
+    anime: nom,
+    tag: resolved?.tag || null,
+    total: (resolved?.posts.length || 0) + listeThemes.length + listeTrailers.length,
+    sources: {
+      sakugabooru: resolved?.posts.length || 0,
+      animethemes: listeThemes.length,
+      anilist: listeTrailers.length,
+      // La raison de l'échec est renvoyée : une source qui tombe doit se
+      // diagnostiquer sans avoir à relire les logs.
+      echecs: [
+        [cuts, "sakugabooru"],
+        [generiques, "animethemes"],
+        [bandes, "anilist"],
+      ]
+        .filter(([resultat]) => resultat.status === "rejected")
+        .map(([resultat, nom]) => `${nom} : ${resultat.reason?.message || "erreur inconnue"}`),
+    },
     arcs,
   });
 }

@@ -262,6 +262,13 @@ main {
 .row .sous { display: block; margin-top: 3px; font-size: 0.78rem; color: var(--doux); }
 .row .chevron { flex: none; color: #555; font-size: 1.1rem; }
 
+.vignette.vide {
+  display: grid;
+  place-items: center;
+  color: #666;
+  font-size: 0.72rem;
+  border: 1px solid var(--trait);
+}
 .vignette {
   flex: none;
   width: 96px;
@@ -271,6 +278,7 @@ main {
   background: #000;
 }
 
+.badge-score.vide { background: none; border: 1px solid var(--trait); color: var(--doux); }
 .badge-score {
   flex: none;
   padding: 5px 8px;
@@ -291,6 +299,7 @@ main {
   font-weight: 600;
 }
 .puce.tech { background: rgba(255, 255, 255, 0.08); color: #cfcfd8; }
+.puce.src { background: rgba(255, 255, 255, 0.06); color: #9a9aa8; }
 .puce.alerte { background: none; border: 1px solid #7a2b2b; color: #e08a8a; }
 
 .btn-pick {
@@ -449,9 +458,20 @@ main {
 
     <section id="vue-apropos" class="apropos" hidden>
       <h2>Ce que tu regardes</h2>
-      <p>Chaque fichier est un <strong>cut</strong> : un plan d'animation isolé d'un épisode,
-      référencé sur <a href="https://www.sakugabooru.com" target="_blank" rel="noopener">Sakugabooru</a>,
-      avec l'animateur qui l'a dessiné.</p>
+      <p>Trois sources alimentent l'explorateur :</p>
+      <ul>
+        <li><a href="https://www.sakugabooru.com" target="_blank" rel="noopener">Sakugabooru</a> —
+        les <strong>cuts</strong> : des plans d'animation isolés d'un épisode, avec l'animateur qui
+        les a dessinés. Jusqu'à 300 par série.</li>
+        <li><a href="https://animethemes.moe" target="_blank" rel="noopener">AnimeThemes</a> —
+        les <strong>openings et endings</strong> en fichiers WebM, souvent en 1080p Blu-ray et sans
+        crédits : aucun texte à masquer au montage.</li>
+        <li><a href="https://anilist.co" target="_blank" rel="noopener">AniList</a> — les
+        <strong>bandes-annonces officielles</strong>. Seules entrées qui ne sont pas des fichiers :
+        YouTube n'expose pas de lien direct, elles se lisent ici et se récupèrent avec un
+        téléchargeur.</li>
+      </ul>
+      <p>Si une source tombe, les autres répondent quand même.</p>
 
       <h2>Les noms de fichiers</h2>
       <p>Sakugabooru ne nomme pas ses plans. Le nom affiché est reconstruit à partir des tags :
@@ -459,7 +479,9 @@ main {
       une (Itano circus, Kanada light flare, Obari punch).</p>
 
       <h2>Le classement</h2>
-      <p>Le score n'est pas celui du site. Il part des votes, normalisés par lot — 4000 votes sur un
+      <p>Un générique n'a pas de votes : sa note vient de ce qu'est le fichier — définition,
+      Blu-ray ou WEB, avec ou sans crédits. Une bande-annonce n'offre aucun signal exploitable,
+      elle affiche un tiret plutôt qu'une note inventée. Pour les cuts, le score n'est pas celui du site. Il part des votes, normalisés par lot — 4000 votes sur un
       blockbuster ne valent pas 40 sur un animé confidentiel — puis tient compte de la durée utile du
       plan, de la résolution, du décor animé et des impact frames. Le CGI et les captures web sont
       pénalisés : ils se marient mal avec du 2D au montage.</p>
@@ -483,6 +505,20 @@ main {
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const state = { arbre: null, chemin: [], panier: new Map(), tri: "episode", occupe: false };
+
+// L'extension vient du fichier, pas d'une supposition : AnimeThemes sert du
+// WebM, Sakugabooru du MP4, et une bande-annonce n'est pas un fichier.
+function nomFichier(rush) {
+  if (rush.youtube) return rush.name;
+  const extension = (rush.video.match(/\.(mp4|webm|mkv|mov)(?:\?|$)/i) || [])[1];
+  return extension ? `${rush.name}.${extension.toLowerCase()}` : rush.name;
+}
+
+const PROVENANCE = {
+  sakugabooru: "Sakugabooru",
+  animethemes: "AnimeThemes",
+  anilist: "AniList",
+};
 
 const SVG_DOSSIER = '<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 
@@ -692,33 +728,45 @@ function ligneFichier(rush) {
   const ligne = document.createElement("div");
   ligne.className = "row";
 
-  const vignette = document.createElement("img");
-  vignette.className = "vignette";
-  vignette.src = rush.preview;
-  vignette.alt = "";
-  vignette.loading = "lazy";
+  let vignette;
+  if (rush.preview) {
+    vignette = document.createElement("img");
+    vignette.className = "vignette";
+    vignette.src = rush.preview;
+    vignette.alt = "";
+    vignette.loading = "lazy";
+  } else {
+    vignette = document.createElement("span");
+    vignette.className = "vignette vide";
+    vignette.textContent = rush.youtube ? "▶" : "webm";
+  }
 
   const centre = document.createElement("span");
   centre.className = "grow";
   const nom = document.createElement("span");
   nom.className = "nom";
-  nom.textContent = `${rush.name}.mp4`;
+  nom.textContent = nomFichier(rush);
   const sous = document.createElement("span");
   sous.className = "sous";
   sous.textContent = [
-    rush.artists.join(", ") || "animateur non identifié",
-    `${rush.width}×${rush.height}`,
-    `${rush.mb} Mo`,
-  ].join(" · ");
+    rush.artists.join(", ") || (rush.provider === "sakugabooru" ? "animateur non identifié" : null),
+    rush.ref || null,
+    rush.height ? `${rush.width}×${rush.height}` : null,
+    rush.mb ? `${rush.mb} Mo` : null,
+  ].filter(Boolean).join(" · ");
   const puces = document.createElement("span");
   puces.className = "puces";
+  puces.append(puce(PROVENANCE[rush.provider] || rush.provider, "src"));
   if (rush.technique) puces.append(puce(rush.technique, "tech"));
-  for (const alerte of rush.flags) puces.append(puce(alerte, "alerte"));
+  for (const marque of rush.flags) {
+    puces.append(puce(marque, rush.provider === "sakugabooru" ? "alerte" : "tech"));
+  }
   centre.append(nom, sous, puces);
 
   const score = document.createElement("span");
-  score.className = "badge-score";
-  score.textContent = rush.score.toFixed(0);
+  score.className = "badge-score" + (rush.score === null ? " vide" : "");
+  score.textContent = rush.score === null ? "—" : rush.score.toFixed(0);
+  score.title = rush.score === null ? "Pas de signal de qualité pour cette source" : "Note d'utilisabilité au montage";
 
   const choisir = document.createElement("button");
   choisir.type = "button";
@@ -750,27 +798,38 @@ function lire(rush) {
   const boiteVideo = document.createElement("div");
   boiteVideo.className = "lecteur-boite";
 
-  const video = document.createElement("video");
-  video.src = rush.video;
-  video.controls = true;
-  video.autoplay = true;
-  video.loop = true;
-  video.muted = true;
-  video.playsInline = true;
+  let video;
+  if (rush.youtube) {
+    video = document.createElement("iframe");
+    video.src = `https://www.youtube.com/embed/${rush.youtube}`;
+    video.allow = "accelerometer; encrypted-media; picture-in-picture";
+    video.allowFullscreen = true;
+    video.style.cssText = "width:100%;aspect-ratio:16/9;border:0;display:block;border-radius:14px 14px 0 0";
+  } else {
+    video = document.createElement("video");
+    video.src = rush.video;
+    video.controls = true;
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+  }
 
   const corps = document.createElement("div");
   corps.className = "lecteur-corps";
   const titre = document.createElement("div");
   titre.className = "lecteur-titre";
-  titre.textContent = `${rush.name}.mp4`;
+  titre.textContent = nomFichier(rush);
   const meta = document.createElement("div");
   meta.className = "lecteur-meta";
   meta.textContent = [
-    rush.artists.join(", ") || "animateur non identifié",
-    rush.source || "source inconnue",
-    `${rush.width}×${rush.height} · ${rush.mb} Mo`,
-    `score ${rush.score} · ${rush.votes} votes`,
-  ].join("\n");
+    rush.artists.join(", ") || null,
+    rush.ref || null,
+    rush.height ? `${rush.width}×${rush.height}${rush.mb ? ` · ${rush.mb} Mo` : ""}` : null,
+    rush.score === null
+      ? `${PROVENANCE[rush.provider]} · pas de note`
+      : `${PROVENANCE[rush.provider]} · score ${rush.score}${rush.votes ? ` · ${rush.votes} votes` : ""}`,
+  ].filter(Boolean).join("\n");
   meta.style.whiteSpace = "pre-line";
 
   const actions = document.createElement("div");
@@ -788,12 +847,12 @@ function lire(rush) {
   mp4.href = rush.video;
   mp4.target = "_blank";
   mp4.rel = "noopener";
-  mp4.textContent = "Ouvrir le MP4";
+  mp4.textContent = rush.youtube ? "Ouvrir sur YouTube" : "Ouvrir la vidéo";
   const fiche = document.createElement("a");
   fiche.href = rush.page;
   fiche.target = "_blank";
   fiche.rel = "noopener";
-  fiche.textContent = "Fiche Sakugabooru";
+  fiche.textContent = `Fiche ${PROVENANCE[rush.provider] || ""}`.trim();
   const fermer = document.createElement("button");
   fermer.type = "button";
   fermer.textContent = "Fermer";

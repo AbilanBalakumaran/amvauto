@@ -3,8 +3,20 @@
 Tu donnes un nom d'animé, l'outil te sort les rushs — les cuts sakuga de la série —
 classés selon ce qu'ils valent **au montage** d'un AMV, avec les liens MP4 directs.
 
-Les données viennent de [Sakugabooru](https://www.sakugabooru.com), qui indexe les
-plans d'animation remarquables épisode par épisode, avec l'animateur derrière chaque cut.
+Trois sources alimentent l'outil :
+
+| Source | Ce qu'elle apporte | Format |
+|---|---|---|
+| [Sakugabooru](https://www.sakugabooru.com) | les cuts : plans d'animation isolés d'un épisode, avec leur animateur | MP4/WebM |
+| [AnimeThemes](https://animethemes.moe) | openings et endings, souvent en 1080p Blu-ray sans crédits | WebM |
+| [AniList](https://anilist.co) | bandes-annonces officielles | lien YouTube |
+
+Elles sont interrogées en parallèle et l'échec de l'une n'emporte pas les autres : la
+réponse indique ce que chacune a rendu, et pourquoi elle a échoué le cas échéant.
+
+Trois autres pistes ont été écartées après essai : **Internet Archive** ne remonte que des
+reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
+catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
 ## Ce que l'outil fait
 
