@@ -956,7 +956,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:18";
+const VERSION_PAGE = "2026-08-17 07:44";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1685,24 +1685,53 @@ function fermerFeuille() {
 
 // La durée d'un plan n'est exposée par aucune des sources : on la lit dans le
 // fichier lui-même, en ne chargeant que ses métadonnées.
+//
+// Une seule sonde à la fois, et elle est relâchée avant la suivante. Un
+// téléphone ne peut charger qu'un petit nombre de médias simultanément : en
+// ouvrant une sonde par plan, on saturait le décodeur et le lecteur principal
+// se retrouvait sans ressources — il refusait alors de se positionner ou de
+// démarrer, sans la moindre erreur.
+const attenteMesure = [];
 const enMesure = new Set();
+let sondeActive = false;
 
 function mesurerDuree(plan) {
   if (plan.youtube || !plan.video || plan.duree || enMesure.has(plan.id)) return;
   enMesure.add(plan.id);
+  attenteMesure.push(plan);
+  mesurerSuivant();
+}
+
+function mesurerSuivant() {
+  if (sondeActive) return;
+  const plan = attenteMesure.shift();
+  if (!plan) return;
+  sondeActive = true;
+
   const sonde = document.createElement("video");
   sonde.preload = "metadata";
   sonde.muted = true;
-  const finir = () => { enMesure.delete(plan.id); sonde.removeAttribute("src"); sonde.load(); };
+
+  const finir = () => {
+    enMesure.delete(plan.id);
+    sonde.removeAttribute("src");
+    sonde.load();
+    sondeActive = false;
+    // Un souffle entre deux sondes : le décodeur a le temps de se libérer.
+    setTimeout(mesurerSuivant, 80);
+  };
+
+  const abandon = setTimeout(finir, 12000);
   sonde.addEventListener("loadedmetadata", () => {
+    clearTimeout(abandon);
     if (Number.isFinite(sonde.duration) && sonde.duration > 0) {
       plan.duree = Math.round(sonde.duration * 100) / 100;
       sauver();
-      if (!$("vue-projet").hidden && !lecture.jouant) rendreProjet();
+      if (!$("vue-projet").hidden && !lecture.jouant) redessinerPiste();
     }
     finir();
   }, { once: true });
-  sonde.addEventListener("error", finir, { once: true });
+  sonde.addEventListener("error", () => { clearTimeout(abandon); finir(); }, { once: true });
   sonde.src = plan.video;
 }
 
@@ -2346,14 +2375,20 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   majTransport();
 }
 
+// Un seul préchargeur, réutilisé : en créer un par appel laissait derrière lui
+// autant d'éléments média que de déplacements de tête.
+let preChargeur = null;
 function precharger(index) {
   const plan = projetActif()?.plans[index];
   if (!plan || plan.youtube || !plan.video) return;
-  const sonde = document.createElement("video");
-  sonde.preload = "auto";
-  sonde.muted = true;
-  sonde.src = plan.video;
-  setTimeout(() => { sonde.removeAttribute("src"); sonde.load(); }, 12000);
+  if (!preChargeur) {
+    preChargeur = document.createElement("video");
+    preChargeur.preload = "auto";
+    preChargeur.muted = true;
+  }
+  if (preChargeur.dataset.plan === plan.id) return;
+  preChargeur.dataset.plan = plan.id;
+  preChargeur.src = plan.video;
 }
 
 function planSuivant() {
