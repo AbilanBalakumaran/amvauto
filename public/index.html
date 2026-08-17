@@ -956,7 +956,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:52";
+const VERSION_PAGE = "2026-08-17 07:54";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1774,7 +1774,7 @@ function totaux(projet) {
 const ECHELLE_MIN = 0.3;
 const ECHELLE_MAX = 900;
 const PAS_REGLE = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null };
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -1922,8 +1922,19 @@ function editeur(projet) {
     video.addEventListener(signal, () => appliquerCible(video));
   }
   video.addEventListener("seeked", () => { if (!lecture.jouant && video.readyState < 2) secouer(video); });
-  video.addEventListener("play", () => { lecture.jouant = true; majTransport(); suivreTete(); demarrerSon(); });
-  video.addEventListener("pause", () => { lecture.jouant = false; majTransport(); arreterSon(); });
+  video.addEventListener("play", () => {
+    if (lecture.secousse) return;
+    lecture.jouant = true;
+    majTransport();
+    suivreTete();
+    demarrerSon();
+  });
+  video.addEventListener("pause", () => {
+    if (lecture.secousse) return;
+    lecture.jouant = false;
+    majTransport();
+    arreterSon();
+  });
   // Un lecteur vidéo n'affiche une image qu'une fois le fichier chargé, et sur
   // mobile il ne charge parfois qu'après une première lecture. La vignette du
   // plan, elle, s'affiche immédiatement : c'est elle qu'on voit sous le
@@ -2515,19 +2526,22 @@ function viser(video, temps, planId) {
 // en réseau mobile, il ne charge même pas. Le seul moyen fiable de lui faire
 // produire l'image sous le curseur est de le lancer une fraction de seconde en
 // sourdine, puis de le remettre en pause.
-let secousseEnCours = false;
 function secouer(video) {
-  if (secousseEnCours || !video || !video.paused || lecture.jouant) return;
-  secousseEnCours = true;
+  if (lecture.secousse || !video || !video.paused || lecture.jouant) return;
+  // La secousse déclenche les événements « lecture » et « pause » du lecteur.
+  // Sans ce drapeau, ils étaient pris pour une vraie lecture : la position du
+  // montage repartait alors du fichier et le curseur retombait dans le plan
+  // courant.
+  lecture.secousse = true;
   const etaitMuet = video.muted;
   video.muted = true;
-  const essai = video.play();
   const remettre = () => {
     video.pause();
     video.muted = etaitMuet;
-    secousseEnCours = false;
+    lecture.secousse = false;
   };
-  if (essai) essai.then(() => setTimeout(remettre, 60)).catch(() => { video.muted = etaitMuet; secousseEnCours = false; });
+  const essai = video.play();
+  if (essai) essai.then(() => setTimeout(remettre, 60)).catch(() => { video.muted = etaitMuet; lecture.secousse = false; });
   else remettre();
 }
 
@@ -2633,7 +2647,7 @@ function positionCourante() {
   // position posée par le doigt.
   // Pendant un glissement, c'est le doigt qui commande, même si la lecture
   // tourne : sinon la vidéo ramène le curseur là où elle en est.
-  if (lecture.jouant && !lecture.scrub && !lecture.cible) {
+  if (lecture.jouant && !lecture.scrub && !lecture.cible && !lecture.secousse) {
     const video = $("apercu");
     const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
     lecture.position = (offsets(projet.plans)[lecture.index] || 0) + dans;
