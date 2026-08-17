@@ -201,15 +201,7 @@ function arcLabel(tag, roots, seriesName) {
   return /arc|saison|season|film|movie/i.test(rest) ? rest : `Arc ${rest}`;
 }
 
-// La saison telle que les contributeurs la notent dans la source :
-// « #39 (BD) (S3 #02) » -> 3. Plus fiable que les tags, qui regroupent
-// souvent plusieurs saisons sous un même nom.
-export function seasonNumber(source) {
-  const season = (source || "").match(/\bS(\d+)\b/i);
-  return season ? Number(season[1]) : null;
-}
-
-// Le dossier d'un post : son arc quand il en a un, sa saison sinon.
+// Le dossier d'un post : son arc quand il en a un, le tronc de la série sinon.
 export function arcOf(post, query, seriesName) {
   const roots = seriesRoots(query);
   const tokens = new Set(query.split(/\s+/).map((token) => token.replace(/^~/, "")));
@@ -228,11 +220,8 @@ export function arcOf(post, query, seriesName) {
     return { key: best, label: arcLabel(best, roots, seriesName) };
   }
 
-  const season = seasonNumber(post.source);
-  if (season) return { key: `saison-${season}`, label: `Saison ${season}` };
-
-  // Ni arc ni saison notée : un plan numéroté appartient à la première saison,
-  // un générique ou une bande-annonce n'appartient à aucune.
-  if (episodeNumber(post.source)) return { key: "saison-1", label: "Saison 1" };
+  // Aucun tag d'arc : le plan appartient au tronc de la série. Les génériques
+  // et bandes-annonces, qui n'ont pas de numéro d'épisode, sont mis à part.
+  if (episodeNumber(post.source)) return { key: "principale", label: "Série principale" };
   return { key: "divers", label: "Génériques & bandes-annonces" };
 }

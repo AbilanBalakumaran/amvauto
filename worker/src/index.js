@@ -102,12 +102,11 @@ function buildTree(posts, query, seriesName) {
   }
 
   const order = Object.keys(FOLDERS);
-  // Ordre de lecture d'une série : les saisons, puis les arcs nommés (eux aussi
-  // dans l'ordre quand leur nom porte un numéro de saison), puis les films et
-  // les OVA, et pour finir les génériques.
+  // Ordre de lecture d'une série : le tronc, puis les arcs nommés (dans l'ordre
+  // quand leur nom porte un numéro de saison), puis les films et les OVA, et
+  // pour finir les génériques.
   const rang = (arc) => {
-    const saison = arc.key.match(/^saison-(\d+)$/);
-    if (saison) return Number(saison[1]);
+    if (arc.key === "principale") return 0;
     if (arc.key === "divers") return 1e6;
     if (/^film/i.test(arc.label)) return 2000;
     if (/^(ova|ona)/i.test(arc.label)) return 2100;
