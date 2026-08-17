@@ -956,7 +956,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:54";
+const VERSION_PAGE = "2026-08-17 07:57";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2377,7 +2377,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     video.poster = plan.preview || "";
     video.src = plan.video;
   }
-  viser(video, decalage, plan.id);
+  viser(video, decalage, plan);
   const demarrer = () => {
     if (enchainer || lecture.jouant) {
       video.play().catch(() => {
@@ -2444,7 +2444,7 @@ function basculerLecture() {
     video.poster = cible.plan.preview || "";
     video.src = cible.plan.video;
   }
-  viser(video, cible.dans, cible.plan.id);
+  viser(video, cible.dans, cible.plan);
 
   deverrouille = true;
   const essai = video.play();
@@ -2516,8 +2516,10 @@ function noter(quoi, video) {
   journal.length = Math.min(journal.length, 12);
 }
 
-function viser(video, temps, planId) {
-  lecture.cible = { planId, temps, essais: 0, limite: performance.now() + 5000 };
+function viser(video, temps, plan) {
+  const planId = typeof plan === "string" ? plan : plan.id;
+  const url = typeof plan === "string" ? null : plan.video;
+  lecture.cible = { planId, url, temps, essais: 0, fragment: false, limite: performance.now() + 5000 };
   noter("cible posée", video);
   appliquerCible(video);
 }
@@ -2564,6 +2566,17 @@ function appliquerCible(video) {
     video.currentTime = Math.min(cible.temps, video.duration || cible.temps);
   } catch {
     // Certains lecteurs refusent la consigne avant d'être prêts : on retentera.
+  }
+
+  // Dernier recours, après plusieurs refus : recharger le fichier en demandant
+  // directement l'instant voulu dans l'adresse (fragment média « #t= »). Un
+  // lecteur qui ignore une consigne de position honore en général cette
+  // demande-là, puisqu'elle fait partie de la requête initiale.
+  if (cible.essais >= 4 && !cible.fragment && cible.url) {
+    cible.fragment = true;
+    noter("repli fragment", video);
+    video.src = `${cible.url}#t=${cible.temps.toFixed(2)}`;
+    video.load();
   }
 }
 
