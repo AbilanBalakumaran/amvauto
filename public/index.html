@@ -14,15 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <!-- Nom sous l'icône, sur l'écran d'accueil : capitale initiale. -->
 <meta name="apple-mobile-web-app-title" content="Amvauto">
-<!-- Écrans de lancement : sans eux, iOS ouvre l'application sur du blanc.
-     Une taille par appareil, c'est la seule façon dont Safari les accepte. -->
-<link rel="apple-touch-startup-image" href="splash/828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)">
-<link rel="apple-touch-startup-image" href="splash/750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)">
-<link rel="apple-touch-startup-image" href="splash/1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)">
-<link rel="apple-touch-startup-image" href="splash/1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)">
-<link rel="apple-touch-startup-image" href="splash/1242x2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)">
-<link rel="apple-touch-startup-image" href="splash/1284x2778.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)">
-<link rel="apple-touch-startup-image" href="splash/1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)">
+<script>if (navigator.standalone) document.documentElement.classList.add("autonome");</script>
 <style>
 @font-face {
   font-family: "Obelix Pro";
@@ -60,17 +52,28 @@
   --doux: #888;
 }
 
+/* Un seul écran de démarrage, et seulement dans l'application installée.
+   Les images de lancement d'iOS ont été retirées : le système en gardait une
+   copie prise à l'installation, si bien qu'après l'avoir changée on voyait
+   l'ancienne puis la nouvelle — deux écrans pour un lancement. Le système
+   n'affiche donc plus que le noir du manifeste, que celui-ci prolonge sans
+   rupture. Dans un onglet, le navigateur a déjà sa propre page de chargement :
+   inutile d'en ajouter une. */
 .demarrage {
   position: fixed;
   inset: 0;
   z-index: 200;
-  display: grid;
+  display: none;
   place-items: center;
   align-content: center;
-  gap: 18px;
   background: var(--fond);
   transition: opacity .35s ease;
 }
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  .demarrage { display: grid; }
+}
+/* Repli pour les iOS d'avant la requête « display-mode ». */
+html.autonome .demarrage { display: grid; }
 /* Exactement la taille du logo sur les écrans de lancement du système (46 % du
    petit côté) : les deux écrans se superposent au pixel, si bien que le passage
    de l'un à l'autre ne se voit pas. */
@@ -1134,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-17 16:47";
+const VERSION_PAGE = "2026-08-17 16:54";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
