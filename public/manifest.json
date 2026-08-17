@@ -1,6 +1,6 @@
 {
-  "name": "amvauto",
-  "short_name": "amvauto",
+  "name": "Amvauto",
+  "short_name": "Amvauto",
   "description": "Explorateur de rushs sakuga et banc de montage pour AMV.",
   "start_url": "./",
   "scope": "./",

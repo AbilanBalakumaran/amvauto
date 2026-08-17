@@ -119,10 +119,18 @@ L'interface reprend la coquille d'[autoshort](https://github.com/AbilanBalakumar
 — fond `#0a0a0a`, surfaces `#161616`, titres en Obelix Pro, header + barre d'onglets — sur un
 thème **Zoro** : accent `#35C24D → #12762E`, et pour icône ses trois katanas en éventail,
 dessinés en vectoriel sur le noir de l'application. Le même dessin sert de favicon, d'icône
-installée, et d'écran de lancement — un par taille d'iPhone, plus un écran de démarrage
-dans la page qui prend le relais sans attendre le réseau.
+installée, et d'écran de lancement — un par taille d'iPhone, plus un écran de démarrage dans
+la page qui prend le relais sans attendre le réseau. Le logo seul, sans le nom : il est déjà
+sous l'icône, sur l'écran d'accueil, où l'application s'appelle **Amvauto**.
 
-La barre d'onglets ne porte que des icônes : un dossier, une pellicule et un « i » disent
+Cet écran de démarrage n'est pas retiré du document, il est éteint — et rallumé juste avant un
+rechargement. Une mise à jour ne montre donc plus deux démarrages successifs mais un seul écran
+noir continu. Les deux mécanismes de mise à jour ne se doublonnent plus non plus : quand un
+service worker pilote la page, c'est lui qui recharge, et la comparaison de version se contente
+d'un bandeau au lieu de recharger à son tour.
+
+La barre d'onglets ne porte que des icônes, à la taille d'autoshort (29 px dans une barre de
+54) : un dossier, une pellicule et un « i » disent
 déjà ce que les mots répétaient, et la barre y gagne en hauteur utile.
 
 ### CLI
