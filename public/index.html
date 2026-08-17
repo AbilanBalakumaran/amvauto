@@ -62,6 +62,15 @@ body {
 
 .app-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
+main.montage { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 8px; }
+main.montage #vue-projet { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+main.montage .editeur { flex: 1; min-height: 0; margin-bottom: 0; }
+main.montage .ecran { flex: none; max-height: 34vh; }
+main.montage .piste { flex: 1; min-height: 110px; }
+main.montage .ligne { height: 100%; display: flex; flex-direction: column; }
+main.montage .rail { flex: 1; min-height: 0; }
+main.montage .clip { height: 100%; }
+
 main {
   flex: 1;
   min-height: 0;
@@ -99,8 +108,42 @@ main {
 }
 .app-count { margin-left: auto; font-size: 0.78rem; color: var(--doux); }
 
-.bottom-nav {
+/* Barre d'outils du montage : elle s'intercale entre le contenu et la barre
+   d'onglets au lieu de la recouvrir, et rend à la piste la hauteur que les
+   gros boutons lui prenaient. */
+.barre-outils {
   order: 1;
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 7px 12px;
+  overflow-x: auto;
+  background: var(--fond);
+  border-top: 1px solid var(--trait);
+  scrollbar-width: none;
+}
+.barre-outils::-webkit-scrollbar { display: none; }
+.barre-outils button {
+  flex: none;
+  padding: 9px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  font: 600 0.8rem/1 system-ui, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.barre-outils button:hover { border-color: var(--rouge); color: var(--rouge); }
+.barre-outils button.fort {
+  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  border-color: var(--rouge-fonce);
+  color: #fff;
+}
+.barre-outils .separateur { flex: none; width: 1px; margin: 4px 3px; background: var(--trait); }
+
+.bottom-nav {
+  order: 2;
   flex: none;
   padding-bottom: min(env(safe-area-inset-bottom, 0px), 24px);
   background: var(--fond);
@@ -470,10 +513,15 @@ main {
 .zoom button:hover { border-color: var(--rouge); color: var(--rouge); }
 .zoom-total {
   margin-left: auto;
-  font: 600 0.78rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-width: 0;
+  font: 600 0.72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--doux);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.zoom button { flex: none; }
 
 /* La piste : la position horizontale vaut exactement le temps, règle et blocs
    partagent donc la même échelle — pas de largeur minimale qui décalerait
@@ -557,12 +605,13 @@ main {
   box-shadow: 0 0 6px rgba(230, 57, 70, .9);
   pointer-events: none;
 }
-.outils-plan .label {
-  flex: 1;
-  min-width: 100%;
-  color: var(--texte);
-  font-size: 0.82rem;
+.plan-courant {
+  font-size: 0.78rem;
   font-weight: 600;
+  color: var(--doux);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .row.plan { cursor: pointer; }
@@ -612,6 +661,8 @@ main {
     </button>
   </div>
 </nav>
+
+<div class="barre-outils" id="barre-outils" hidden></div>
 
 <div class="app-shell">
   <header class="app-header">
@@ -729,7 +780,10 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     $("vue-explorer").hidden = onglet !== "explorer";
     $("vue-projet").hidden = onglet !== "projet";
     $("vue-apropos").hidden = onglet !== "apropos";
+    document.querySelector("main").classList.toggle("montage", onglet === "projet");
+    $("barre-outils").hidden = onglet !== "projet";
     if (onglet === "projet") rendreProjet();
+    else arreter();
   });
 });
 
@@ -1409,8 +1463,9 @@ function rendreProjet() {
   projet.plans.forEach(mesurerDuree);
   ajusterEchelle(projet);
   lecture.index = 0;
-  morceaux.push(editeur(projet), actionsProjet(projet));
+  morceaux.push(editeur(projet));
   vue.replaceChildren(...morceaux);
+  remplirBarreOutils(projet);
   poserPlan(0, 0);
 }
 
@@ -1467,7 +1522,7 @@ function editeur(projet) {
   });
   transport.append(bouton, chrono, barre);
 
-  bloc.append(ecran, transport, commandesZoom(projet), piste(projet), outilsPlan(projet));
+  bloc.append(ecran, transport, commandesZoom(projet), piste(projet), ligneDuPlan());
   return bloc;
 }
 
@@ -1495,9 +1550,13 @@ function commandesZoom(projet) {
   ajuster.title = "Faire tenir tout le montage à l'écran";
   ajuster.addEventListener("click", () => { ajusterEchelle(projet); redessinerPiste(); });
 
+  const bilan = totaux(projet);
+  const manquantes = projet.plans.length - bilan.mesures;
   const duree_totale = document.createElement("span");
   duree_totale.className = "zoom-total";
-  duree_totale.textContent = `${horloge(total(projet))} de montage`;
+  duree_totale.textContent =
+    `${projet.plans.length} plans · ${horloge(total(projet))} · ${bilan.mb.toFixed(0)} Mo` +
+    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "");
 
   barre.append(moins, plus, ajuster, duree_totale);
   return barre;
@@ -1589,33 +1648,13 @@ function piste(projet) {
   return cadre;
 }
 
-function outilsPlan(projet) {
-  const barre = document.createElement("div");
-  barre.className = "tools outils-plan";
-  const etiquette = document.createElement("span");
-  etiquette.className = "label";
-  etiquette.id = "plan-courant";
-  barre.append(etiquette);
-
-  const gauche = document.createElement("button");
-  gauche.type = "button";
-  gauche.textContent = "← Reculer";
-  gauche.addEventListener("click", () => reordonner(projet, lecture.index, lecture.index - 1));
-  const droite = document.createElement("button");
-  droite.type = "button";
-  droite.textContent = "Avancer →";
-  droite.addEventListener("click", () => reordonner(projet, lecture.index, lecture.index + 1));
-  const retirer = document.createElement("button");
-  retirer.type = "button";
-  retirer.textContent = "Retirer";
-  retirer.addEventListener("click", () => {
-    projet.plans.splice(lecture.index, 1);
-    sauver();
-    rendreProjet();
-    rendre();
-  });
-  barre.append(gauche, droite, retirer);
-  return barre;
+// Le plan sélectionné reste nommé sous la piste : c'est une information, pas
+// une commande, elle n'a rien à faire dans la barre d'outils.
+function ligneDuPlan() {
+  const ligne = document.createElement("div");
+  ligne.className = "plan-courant";
+  ligne.id = "plan-courant";
+  return ligne;
 }
 
 function reordonner(projet, depuis, vers) {
@@ -1805,51 +1844,54 @@ function barreProjets() {
   return barre;
 }
 
-function actionsProjet(projet) {
-  const bloc = document.createElement("div");
-  const bilan = totaux(projet);
-  const manquantes = projet.plans.length - bilan.mesures;
-  const resume = note(
-    `${projet.plans.length} plans · ${secondes(bilan.duree)} de montage · ${bilan.mb.toFixed(1)} Mo` +
-      (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""} en cours de lecture` : ""),
-  );
+function remplirBarreOutils(projet) {
+  const actions = $("barre-outils");
+  if (!actions) return;
 
-  const actions = document.createElement("div");
-  actions.className = "panier-actions";
+  const bouton = (texte, titre, action, fort = false) => {
+    const element = document.createElement("button");
+    element.type = "button";
+    element.textContent = texte;
+    element.title = titre;
+    if (fort) element.className = "fort";
+    element.addEventListener("click", action);
+    return element;
+  };
+  const separateur = () => {
+    const trait = document.createElement("span");
+    trait.className = "separateur";
+    return trait;
+  };
 
-  const edl = document.createElement("button");
-  edl.type = "button";
-  edl.className = "fort";
-  edl.textContent = "Exporter le montage (.edl)";
-  edl.title = "Conduite de montage à ouvrir dans Premiere, DaVinci ou Final Cut";
-  edl.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet)));
-
-  const liste = document.createElement("button");
-  liste.type = "button";
-  liste.textContent = "Liste des plans (.txt)";
-  liste.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.txt`, versTexte(projet)));
-
-  const copier = document.createElement("button");
-  copier.type = "button";
-  copier.textContent = "Copier les liens";
-  copier.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(projet.plans.map((plan) => plan.video).join("\n"));
-    copier.textContent = "Copié";
-    setTimeout(() => { copier.textContent = "Copier les liens"; }, 1600);
+  const reculer = bouton("←", "Reculer le plan sélectionné", () =>
+    reordonner(projet, lecture.index, lecture.index - 1));
+  const avancer = bouton("→", "Avancer le plan sélectionné", () =>
+    reordonner(projet, lecture.index, lecture.index + 1));
+  const retirer = bouton("Retirer", "Retirer le plan sélectionné du montage", () => {
+    projet.plans.splice(lecture.index, 1);
+    sauver();
+    rendreProjet();
+    rendre();
   });
 
-  const renommer = document.createElement("button");
-  renommer.type = "button";
-  renommer.textContent = "Renommer";
-  renommer.addEventListener("click", () => {
+  const edl = bouton("Exporter .edl", "Conduite de montage pour Premiere, DaVinci ou Final Cut",
+    () => telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet)), true);
+
+  const liste = bouton("Liste .txt", "Liste des plans en texte",
+    () => telecharger(`${nomDeFichier(projet)}.txt`, versTexte(projet)));
+
+  const copier = bouton("Liens", "Copier les liens des fichiers", async (evt) => {
+    await navigator.clipboard.writeText(projet.plans.map((plan) => plan.video).join("\n"));
+    evt.target.textContent = "Copié";
+    setTimeout(() => { evt.target.textContent = "Liens"; }, 1600);
+  });
+
+  const renommer = bouton("Renommer", "Renommer le projet", () => {
     const nom = prompt("Nom du projet", projet.nom);
     if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); rendreProjet(); }
   });
 
-  const supprimer = document.createElement("button");
-  supprimer.type = "button";
-  supprimer.textContent = "Supprimer";
-  supprimer.addEventListener("click", () => {
+  const supprimer = bouton("Supprimer", "Supprimer le projet", () => {
     if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
     state.projets = state.projets.filter((autre) => autre.id !== projet.id);
     state.actif = state.projets[0]?.id || null;
@@ -1858,9 +1900,7 @@ function actionsProjet(projet) {
     rendre();
   });
 
-  actions.append(edl, liste, copier, renommer, supprimer);
-  bloc.append(resume, actions);
-  return bloc;
+  actions.replaceChildren(reculer, avancer, retirer, separateur(), edl, liste, copier, renommer, supprimer);
 }
 
 /* --- exports --------------------------------------------------------- */
