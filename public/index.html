@@ -1547,6 +1547,15 @@ function editeur(projet) {
 
 const total = (projet) => projet.plans.reduce((somme, plan) => somme + duree(plan), 0);
 
+function bilanProjet(projet) {
+  const bilan = totaux(projet);
+  const manquantes = projet.plans.length - bilan.mesures;
+  return (
+    `${projet.plans.length} plans · ${horloge(total(projet))} · ${bilan.mb.toFixed(0)} Mo` +
+    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "")
+  );
+}
+
 function commandesZoom(projet) {
   const barre = document.createElement("div");
   barre.className = "zoom";
@@ -1569,13 +1578,10 @@ function commandesZoom(projet) {
   ajuster.title = "Faire tenir tout le montage à l'écran";
   ajuster.addEventListener("click", () => { ajusterEchelle(projet); redessinerPiste(); });
 
-  const bilan = totaux(projet);
-  const manquantes = projet.plans.length - bilan.mesures;
   const duree_totale = document.createElement("span");
   duree_totale.className = "zoom-total";
-  duree_totale.textContent =
-    `${projet.plans.length} plans · ${horloge(total(projet))} · ${bilan.mb.toFixed(0)} Mo` +
-    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "");
+  duree_totale.id = "zoom-total";
+  duree_totale.textContent = bilanProjet(projet);
 
   barre.append(moins, plus, ajuster, duree_totale);
   return barre;
@@ -1586,8 +1592,9 @@ function redessinerPiste() {
   const projet = projetActif();
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
-  const nouvelle = piste(projet);
-  ancienne.replaceWith(nouvelle);
+  ancienne.replaceWith(piste(projet));
+  const bilan = $("zoom-total");
+  if (bilan) bilan.textContent = bilanProjet(projet);
   selectionner(lecture.index);
   majTransport();
 }
@@ -1680,8 +1687,12 @@ function reordonner(projet, depuis, vers) {
   if (vers < 0 || vers >= projet.plans.length || depuis === vers) return;
   const [plan] = projet.plans.splice(depuis, 1);
   projet.plans.splice(vers, 0, plan);
+  // La sélection suit le plan déplacé. Sans ça elle retombait sur le premier,
+  // et la pression suivante déplaçait le voisin : le plan faisait du surplace
+  // au lieu de traverser la piste.
+  lecture.index = vers;
   sauver();
-  rendreProjet();
+  redessinerPiste();
 }
 
 /* --- lecture enchaînée ------------------------------------------------ */
@@ -1892,8 +1903,15 @@ function remplirBarreOutils(projet) {
   const retirer = bouton("retirer", "Retirer le plan sélectionné du montage", () => {
     projet.plans.splice(lecture.index, 1);
     sauver();
-    rendreProjet();
     rendre();
+    if (!projet.plans.length) {
+      rendreProjet();
+      return;
+    }
+    // On reste là où on était plutôt que de repartir du début.
+    lecture.index = Math.min(lecture.index, projet.plans.length - 1);
+    redessinerPiste();
+    poserPlan(lecture.index, 0);
   });
 
   const edl = bouton("exporter", "Exporter le montage (.edl) pour Premiere, DaVinci ou Final Cut",
