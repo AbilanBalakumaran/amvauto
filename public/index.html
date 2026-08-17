@@ -957,7 +957,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 08:07";
+const VERSION_PAGE = "2026-08-17 08:18";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1775,7 +1775,7 @@ function totaux(projet) {
 const ECHELLE_MIN = 0.3;
 const ECHELLE_MAX = 900;
 const PAS_REGLE = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null };
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null, demande: false };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -1962,14 +1962,17 @@ function creerLecteur(nom) {
     if (video === elementActif() && !lecture.jouant && video.readyState < 2) secouer(video);
   });
   video.addEventListener("play", () => {
-    if (lecture.secousse || video !== elementActif()) return;
+    // Une lecture demandée n'est jamais une secousse, même si l'une chevauche
+    // l'autre : sans cette exception, l'état restait à « arrêté » et la tête de
+    // lecture ne bougeait pas alors que la vidéo tournait.
+    if ((lecture.secousse && !lecture.demande) || video !== elementActif()) return;
     lecture.jouant = true;
     majTransport();
     suivreTete();
     demarrerSon();
   });
   video.addEventListener("pause", () => {
-    if (lecture.secousse || video !== elementActif()) return;
+    if ((lecture.secousse && !lecture.demande) || video !== elementActif()) return;
     lecture.jouant = false;
     majTransport();
     arreterSon();
@@ -2010,6 +2013,21 @@ function dessinerMoniteur() {
   const ctx = toile.getContext("2d");
   const plan = projetActif()?.plans[lecture.index];
   const video = elementActif();
+
+  // Resynchronisation : si le fichier tourne réellement alors que
+  // l'application se croit à l'arrêt, la tête de lecture resterait figée. On
+  // rattrape l'écart au lieu d'attendre un événement qui ne viendra pas.
+  if (video) {
+    if (lecture.demande && !video.paused && !lecture.jouant) {
+      lecture.jouant = true;
+      suivreTete();
+    } else if (!lecture.demande && lecture.jouant) {
+      // Une secousse ou un enchaînement ne valent pas lecture : sans cette
+      // distinction, le bouton croyait qu'on jouait déjà et mettait en pause.
+      lecture.jouant = false;
+      majTransport();
+    }
+  }
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, toile.width, toile.height);
@@ -2504,7 +2522,7 @@ function planSuivant() {
   if (lecture.index + 1 < projet.plans.length) {
     // Le plan suivant est déjà chargé sur le lecteur en attente : la bascule
     // se fait dans poserPlan, sans temps mort.
-    poserPlan(lecture.index + 1, 0, true);
+    poserPlan(lecture.index + 1, 0, lecture.demande || true);
   } else {
     arreter();
     poserPlan(0, 0);
@@ -2515,7 +2533,14 @@ function basculerLecture() {
   const video = elementActif();
   const projet = projetActif();
   if (!video || !projet) return;
-  if (lecture.jouant) { video.pause(); return; }
+  if (lecture.demande) {
+    lecture.demande = false;
+    lecture.jouant = false;
+    video.pause();
+    majTransport();
+    return;
+  }
+  lecture.demande = true;
 
   if (projet.plans[lecture.index]?.youtube) {
     lecture.jouant = true;
@@ -2551,6 +2576,7 @@ function basculerLecture() {
 }
 
 function arreter() {
+  lecture.demande = false;
   lecture.jouant = false;
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   lecture.boucle = null;
@@ -2605,20 +2631,32 @@ function viser(video, temps, plan) {
 // sous le curseur est de le lancer une fraction de seconde en sourdine, puis de
 // le remettre en pause.
 function secouer(video) {
-  if (lecture.secousse || !video || !video.paused || lecture.jouant) return;
+  // Jamais pendant une lecture demandée : la secousse la mettrait en pause.
+  if (lecture.demande || lecture.secousse || !video || !video.paused || lecture.jouant) return;
   // La secousse déclenche les événements « lecture » et « pause ». Sans ce
   // drapeau, ils passeraient pour une vraie lecture et la position du montage
   // repartirait du fichier.
   lecture.secousse = true;
   const etaitMuet = video.muted;
   video.muted = true;
+
+  let rendu = false;
   const remettre = () => {
-    video.pause();
+    if (rendu) return;
+    rendu = true;
+    clearTimeout(filet);
+    if (!lecture.jouant && !lecture.demande) video.pause();
     video.muted = etaitMuet;
     lecture.secousse = false;
   };
+  // Filet de sécurité : si la promesse de lecture ne se dénoue jamais — ce qui
+  // arrive sur mobile — le drapeau resterait levé, l'application se croirait en
+  // pleine secousse et la tête de lecture ne bougerait plus alors que la vidéo
+  // tourne. Le drapeau retombe donc dans tous les cas.
+  const filet = setTimeout(remettre, 800);
+
   const essai = video.play();
-  if (essai) essai.then(() => setTimeout(remettre, 60)).catch(() => { video.muted = etaitMuet; lecture.secousse = false; });
+  if (essai) essai.then(() => setTimeout(remettre, 60)).catch(remettre);
   else remettre();
 }
 
@@ -2744,7 +2782,7 @@ function majTransport() {
   const position = positionCourante();
   $("timecode").textContent = `${horloge(position, true)} / ${horloge(total(projet))}`;
   const jouer = $("lecture");
-  if (jouer) jouer.innerHTML = icone(lecture.jouant ? "pause" : "play");
+  if (jouer) jouer.innerHTML = icone(lecture.demande || lecture.jouant ? "pause" : "play");
 
   const tete = $("tete");
   if (tete) {
