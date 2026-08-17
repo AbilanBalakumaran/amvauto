@@ -137,6 +137,8 @@ main {
 }
 .barre-outils button svg { width: 21px; height: 21px; }
 .barre-outils button.fait { color: var(--rouge); border-color: var(--rouge); }
+.barre-outils button:disabled { opacity: .32; cursor: default; }
+.barre-outils button:disabled:hover { border-color: var(--trait); color: var(--texte); }
 .barre-outils button:hover { border-color: var(--rouge); color: var(--rouge); }
 .barre-outils button.fort {
   background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
@@ -777,6 +779,8 @@ const TRAITS = {
   renommer: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
   supprimer: '<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/>',
   fait: '<path d="M5 13l4 4 10-10"/>',
+  annuler: '<path d="M9 14L4 9l5-5"/><path d="M4 9h9a6 6 0 0 1 0 12H8"/>',
+  retablir: '<path d="M15 14l5-5-5-5"/><path d="M20 9h-9a6 6 0 0 0 0 12h5"/>',
 };
 
 const icone = (nom) =>
@@ -1251,6 +1255,52 @@ function sauver() {
   majBadge();
 }
 
+// Historique du montage : une pile d'états successifs du projet courant, dans
+// laquelle « annuler » et « rétablir » se déplacent. Elle est repartie de zéro
+// à chaque changement de projet — un historique commun à deux montages n'aurait
+// aucun sens.
+const HISTOIRE_MAX = 40;
+const histoire = { pile: [], position: -1, projet: null };
+
+const instantane = (projet) => JSON.stringify({ nom: projet.nom, plans: projet.plans });
+
+function initHistoire(projet) {
+  histoire.projet = projet.id;
+  histoire.pile = [instantane(projet)];
+  histoire.position = 0;
+  majBoutonsHistoire();
+}
+
+function enregistrer(projet) {
+  if (histoire.projet !== projet.id) return initHistoire(projet);
+  // Agir après un « annuler » efface les états qu'on aurait pu rétablir.
+  histoire.pile = histoire.pile.slice(0, histoire.position + 1);
+  histoire.pile.push(instantane(projet));
+  if (histoire.pile.length > HISTOIRE_MAX) histoire.pile.shift();
+  histoire.position = histoire.pile.length - 1;
+  majBoutonsHistoire();
+}
+
+function parcourirHistoire(sens) {
+  const projet = projetActif();
+  const cible = histoire.position + sens;
+  if (!projet || histoire.projet !== projet.id || cible < 0 || cible >= histoire.pile.length) return;
+  histoire.position = cible;
+  const etat = JSON.parse(histoire.pile[cible]);
+  projet.nom = etat.nom;
+  projet.plans = etat.plans;
+  sauver();
+  rendreProjet();
+  rendre();
+}
+
+function majBoutonsHistoire() {
+  const annuler = $("btn-annuler");
+  const retablir = $("btn-retablir");
+  if (annuler) annuler.disabled = histoire.position <= 0;
+  if (retablir) retablir.disabled = histoire.position >= histoire.pile.length - 1;
+}
+
 const projetActif = () => state.projets.find((projet) => projet.id === state.actif) || null;
 const dansProjet = (id) => (projetActif()?.plans || []).some((plan) => plan.id === id);
 
@@ -1295,6 +1345,7 @@ function basculerDans(projet, rush, bouton, apres) {
     mesurerDuree(plan);
   }
   sauver();
+  enregistrer(projet);
   if (bouton) {
     const dedans = dansProjet(rush.id);
     bouton.classList.toggle("on", dedans);
@@ -1479,6 +1530,7 @@ function rendreProjet() {
   }
 
   arreter();
+  if (histoire.projet !== projet.id) initHistoire(projet);
   projet.plans.forEach(mesurerDuree);
   ajusterEchelle(projet);
   lecture.index = 0;
@@ -1692,6 +1744,7 @@ function reordonner(projet, depuis, vers) {
   // au lieu de traverser la piste.
   lecture.index = vers;
   sauver();
+  enregistrer(projet);
   redessinerPiste();
 }
 
@@ -1896,6 +1949,11 @@ function remplirBarreOutils(projet) {
     return trait;
   };
 
+  const annuler = bouton("annuler", "Annuler la dernière modification", () => parcourirHistoire(-1));
+  annuler.id = "btn-annuler";
+  const retablir = bouton("retablir", "Rétablir la modification annulée", () => parcourirHistoire(1));
+  retablir.id = "btn-retablir";
+
   const reculer = bouton("reculer", "Reculer le plan sélectionné", () =>
     reordonner(projet, lecture.index, lecture.index - 1));
   const avancer = bouton("avancer", "Avancer le plan sélectionné", () =>
@@ -1903,6 +1961,7 @@ function remplirBarreOutils(projet) {
   const retirer = bouton("retirer", "Retirer le plan sélectionné du montage", () => {
     projet.plans.splice(lecture.index, 1);
     sauver();
+    enregistrer(projet);
     rendre();
     if (!projet.plans.length) {
       rendreProjet();
@@ -1929,7 +1988,7 @@ function remplirBarreOutils(projet) {
 
   const renommer = bouton("renommer", "Renommer le projet", () => {
     const nom = prompt("Nom du projet", projet.nom);
-    if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); rendreProjet(); }
+    if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); enregistrer(projet); rendreProjet(); }
   });
 
   const supprimer = bouton("supprimer", "Supprimer le projet et ses plans", () => {
@@ -1941,7 +2000,12 @@ function remplirBarreOutils(projet) {
     rendre();
   });
 
-  actions.replaceChildren(reculer, avancer, retirer, separateur(), edl, liste, copier, renommer, supprimer);
+  actions.replaceChildren(
+    annuler, retablir, separateur(),
+    reculer, avancer, retirer, separateur(),
+    edl, liste, copier, renommer, supprimer,
+  );
+  majBoutonsHistoire();
 }
 
 /* --- exports --------------------------------------------------------- */
