@@ -1,6 +1,10 @@
+# Worker dédié : ce projet vit seul sur le compte Cloudflare, sous son propre
+# nom et sa propre URL workers.dev. Il ne partage ni route, ni domaine, ni
+# stockage avec un autre projet — le déployer ne touche à rien d'existant.
 name = "amvauto"
 main = "worker/src/index.js"
 compatibility_date = "2025-01-01"
+workers_dev = true
 
 [assets]
 directory = "public"
