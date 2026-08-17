@@ -4,10 +4,12 @@
 // champ source du genre « #41 (S2 #17) (BD) ». On en dérive ici un nom de
 // fichier qui dit ce qui se passe à l'écran, et le dossier d'arc où le ranger.
 
-// Action principale du plan : [tag, nom affiché, dossier d'ambiance].
+// Action principale du plan : [tag, nom affiché, dossier].
 // Ordre = priorité, du plus spécifique au plus vague — le premier tag trouvé
 // gagne. La même entrée décide du nom ET du rangement, sinon on obtient un
 // fichier « Combat… » classé dans « Moments calmes ».
+// Deux dossiers seulement : « combat » (ça bouge, ça cogne, ça explose) et
+// « calme » (le personnage joue, marche, parle).
 const ACTIONS = [
   ["martial_arts", "Corps à corps", "combat"],
   ["swords", "Duel à l'arme blanche", "combat"],
@@ -17,29 +19,29 @@ const ACTIONS = [
   ["missiles", "Tir de missiles", "combat"],
   ["fighting", "Combat", "combat"],
   ["creatures", "Créature", "combat"],
-  ["chase", "Poursuite", "vitesse"],
-  ["motorcycles", "Course à moto", "vitesse"],
-  ["vehicle", "Poursuite en véhicule", "vitesse"],
-  ["explosions", "Explosion", "effets"],
-  ["henshin", "Transformation", "hype"],
-  ["morphing", "Métamorphose", "hype"],
-  ["dancing", "Danse", "hype"],
-  ["performance", "Performance scénique", "hype"],
-  ["sports", "Action sportive", "vitesse"],
-  ["flying", "Vol", "vitesse"],
-  ["falling", "Chute", "vitesse"],
-  ["sliding", "Glissade", "vitesse"],
-  ["running", "Course", "vitesse"],
-  ["animals", "Animaux", "acting"],
-  ["eating", "Scène de repas", "acting"],
-  ["food", "Scène de repas", "acting"],
-  ["crying", "Larmes", "acting"],
-  ["smoking", "Cigarette", "acting"],
-  ["walk_cycle", "Marche", "acting"],
-  ["dialogue", "Dialogue", "acting"],
-  ["character_acting", "Jeu d'acteur", "acting"],
-  ["background_animation", "Décor animé", "effets"],
-  ["rotation", "Rotation", "hype"],
+  ["chase", "Poursuite", "combat"],
+  ["motorcycles", "Course à moto", "combat"],
+  ["vehicle", "Poursuite en véhicule", "combat"],
+  ["explosions", "Explosion", "combat"],
+  ["henshin", "Transformation", "combat"],
+  ["morphing", "Métamorphose", "combat"],
+  ["dancing", "Danse", "calme"],
+  ["performance", "Performance scénique", "calme"],
+  ["sports", "Action sportive", "combat"],
+  ["flying", "Vol", "combat"],
+  ["falling", "Chute", "combat"],
+  ["sliding", "Glissade", "combat"],
+  ["running", "Course", "combat"],
+  ["animals", "Animaux", "calme"],
+  ["eating", "Scène de repas", "calme"],
+  ["food", "Scène de repas", "calme"],
+  ["crying", "Larmes", "calme"],
+  ["smoking", "Cigarette", "calme"],
+  ["walk_cycle", "Marche", "calme"],
+  ["dialogue", "Dialogue", "calme"],
+  ["character_acting", "Jeu d'acteur", "calme"],
+  ["background_animation", "Décor animé", "calme"],
+  ["rotation", "Rotation", "calme"],
 ];
 
 // Ce qui se passe en plus dans le plan : deux détails suffisent à situer.
@@ -106,12 +108,21 @@ export function techniqueOf(tags) {
   return found ? TECHNIQUES[found] : null;
 }
 
-// L'ambiance déduite de l'action, quand il y en a une. Sinon null : c'est au
-// barème pondéré de trancher.
-export function actionMood(post) {
+export const FOLDERS = {
+  combat: "Combats",
+  calme: "Moments calmes",
+};
+
+// Le dossier du plan. Sans action identifiée, on tranche sur les effets :
+// des flammes et des débris, c'est de l'action, pas un moment calme.
+export function folderOf(post) {
   const tags = new Set(post.tags);
   const action = ACTIONS.find(([tag]) => tags.has(tag));
-  return action ? action[2] : null;
+  if (action) return action[2];
+  return ["fire", "explosions", "debris", "lightning", "sparks", "smoke", "impact_frames"]
+    .some((tag) => tags.has(tag))
+    ? "combat"
+    : "calme";
 }
 
 // Le nom du plan : ce qu'on y voit, pas la référence du post.
@@ -190,29 +201,38 @@ function arcLabel(tag, roots, seriesName) {
   return /arc|saison|season|film|movie/i.test(rest) ? rest : `Arc ${rest}`;
 }
 
-// Le dossier d'arc d'un post : le tag de série le plus spécifique qu'il porte.
+// La saison telle que les contributeurs la notent dans la source :
+// « #39 (BD) (S3 #02) » -> 3. Plus fiable que les tags, qui regroupent
+// souvent plusieurs saisons sous un même nom.
+export function seasonNumber(source) {
+  const season = (source || "").match(/\bS(\d+)\b/i);
+  return season ? Number(season[1]) : null;
+}
+
+// Le dossier d'un post : son arc quand il en a un, sa saison sinon.
 export function arcOf(post, query, seriesName) {
   const roots = seriesRoots(query);
   const tokens = new Set(query.split(/\s+/).map((token) => token.replace(/^~/, "")));
 
+  // Un tag de série plus précis que la racine, c'est un arc nommé.
   const candidates = post.tags.filter(
-    (tag) => !tag.endsWith("_series") && (tokens.has(tag) || roots.some((root) => tag.startsWith(root))),
+    (tag) =>
+      !tag.endsWith("_series") &&
+      !roots.includes(tag) &&
+      (tokens.has(tag) || roots.some((root) => tag.startsWith(root))),
   );
 
   if (candidates.length) {
     // Le plus long = le plus précis (« jujutsu_kaisen_season_2 » bat « jujutsu_kaisen »).
     const best = candidates.sort((a, b) => b.length - a.length)[0];
-    // Le tag racine lui-même n'est pas un arc : c'est le tronc de la série.
-    if (roots.includes(best)) return { key: best, label: "Série principale" };
-    const label = arcLabel(best, roots, seriesName);
-    return { key: best, label: label === seriesName ? "Série principale" : label };
+    return { key: best, label: arcLabel(best, roots, seriesName) };
   }
 
-  // Pas de tag d'arc : on retombe sur des tranches d'épisodes.
-  const episode = episodeNumber(post.source);
-  if (episode) {
-    const start = Math.floor((episode - 1) / 12) * 12 + 1;
-    return { key: `ep-${start}`, label: `Épisodes ${start}–${start + 11}` };
-  }
-  return { key: "divers", label: "Hors épisodes (OP, PV, films)" };
+  const season = seasonNumber(post.source);
+  if (season) return { key: `saison-${season}`, label: `Saison ${season}` };
+
+  // Ni arc ni saison notée : un plan numéroté appartient à la première saison,
+  // un générique ou une bande-annonce n'appartient à aucune.
+  if (episodeNumber(post.source)) return { key: "saison-1", label: "Saison 1" };
+  return { key: "divers", label: "Génériques & bandes-annonces" };
 }

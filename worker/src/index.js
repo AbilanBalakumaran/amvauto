@@ -2,7 +2,7 @@
 // proposition de rushs. Sakugabooru étant sans CORS, tous les appels JSON
 // passent par ici.
 
-import { actionMood, arcOf, describe, episodeNumber, techniqueOf } from "./naming.js";
+import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { rushes, searchSeries } from "./sakuga.js";
 import { MOODS, moodsOf, qualityFlags, rank } from "./scoring.js";
 import { findCurated, suggest } from "./series.js";
@@ -21,8 +21,9 @@ function serialize({ post, score }) {
   return {
     id: post.id,
     name: describe(post),
-    // Le dossier suit l'action nommée ; à défaut, le barème pondéré tranche.
-    mood: actionMood(post) || moods[0],
+    // Le dossier suit l'action nommée, jamais le barème : le nom du fichier et
+    // son rangement doivent raconter la même chose.
+    folder: folderOf(post),
     score,
     votes: post.score,
     moods,
@@ -87,22 +88,36 @@ function buildTree(posts, query, seriesName) {
     const node = arcs.get(arc.key);
     const rush = serialize(entry);
 
-    if (!node.folders.has(rush.mood)) {
-      node.folders.set(rush.mood, {
-        key: rush.mood,
-        label: MOODS[rush.mood].folder,
+    if (!node.folders.has(rush.folder)) {
+      node.folders.set(rush.folder, {
+        key: rush.folder,
+        label: FOLDERS[rush.folder],
         count: 0,
         rushes: [],
       });
     }
-    node.folders.get(rush.mood).rushes.push(rush);
-    node.folders.get(rush.mood).count += 1;
+    node.folders.get(rush.folder).rushes.push(rush);
+    node.folders.get(rush.folder).count += 1;
     node.count += 1;
   }
 
-  const order = Object.keys(MOODS);
+  const order = Object.keys(FOLDERS);
+  // Ordre de lecture d'une série : les saisons, puis les arcs nommés (eux aussi
+  // dans l'ordre quand leur nom porte un numéro de saison), puis les films et
+  // les OVA, et pour finir les génériques.
+  const rang = (arc) => {
+    const saison = arc.key.match(/^saison-(\d+)$/);
+    if (saison) return Number(saison[1]);
+    if (arc.key === "divers") return 1e6;
+    if (/^film/i.test(arc.label)) return 2000;
+    if (/^(ova|ona)/i.test(arc.label)) return 2100;
+    const numero = arc.label.match(/(?:saison|season)\s*(\d+)/i);
+    if (numero) return 1000 + Number(numero[1]);
+    if (/final/i.test(arc.label)) return 1090;
+    return 1500;
+  };
   return [...arcs.values()]
-    .sort((a, b) => b.count - a.count)
+    .sort((a, b) => rang(a) - rang(b) || b.count - a.count)
     .map((arc) => ({
       key: arc.key,
       label: arc.label,
@@ -174,7 +189,7 @@ export default {
         }
         if (url.pathname === "/api/moods") {
           return json({
-            moods: Object.entries(MOODS).map(([key, m]) => ({ key, label: m.label, folder: m.folder })),
+            moods: Object.entries(MOODS).map(([key, m]) => ({ key, label: m.label })),
           });
         }
         return json({ error: "Route inconnue." }, 404);

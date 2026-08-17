@@ -3,27 +3,22 @@
 
 export const MOODS = {
   combat: {
-    folder: "Combats",
     label: "Combat",
     tags: { fighting: 4, impact_frames: 3, martial_arts: 4, weapons: 3, beams: 3, explosions: 2, swords: 3, shooting: 3, creatures: 1 },
   },
   effets: {
-    folder: "Effets & explosions",
     label: "Effets",
     tags: { effects: 1, fire: 3, lightning: 3, liquid: 2, smoke: 2, debris: 2, sparks: 2, wind: 1, ice: 3, explosions: 2 },
   },
   vitesse: {
-    folder: "Vitesse & poursuites",
     label: "Vitesse",
     tags: { running: 4, flying: 3, smears: 2, chase: 4, vehicle: 3, sports: 3, falling: 3, motorcycles: 3, sliding: 2 },
   },
   acting: {
-    folder: "Moments calmes",
     label: "Acting",
     tags: { character_acting: 4, hair: 1, fabric: 1, walk_cycle: 3, dialogue: 2, eating: 2, crying: 3, smoking: 2 },
   },
   hype: {
-    folder: "Transformations",
     label: "Hype / transfo",
     tags: { henshin: 4, morphing: 3, dancing: 4, performance: 3, background_animation: 2, rotation: 1 },
   },

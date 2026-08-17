@@ -15,11 +15,11 @@ plans d'animation remarquables épisode par épisode, avec l'animateur derrière
 4. **Nomme chaque plan.** Sakugabooru ne nomme pas ses cuts. Le nom est reconstruit
    depuis les tags : `E41 · Combat, impact frames et flammes (Itano circus)`. Épisode,
    action principale, deux détails visuels, et la figure de style quand il y en a une.
-5. **Range le tout comme un disque dur** : un dossier par arc (déduit des tags de série
-   du plan : `Arc Reze`, `Saison 2`, `Final Season`), et dedans un dossier par ambiance
-   — Combats, Effets & explosions, Vitesse & poursuites, Moments calmes, Transformations.
-   Un plan n'existe qu'à un seul endroit, et son nom s'accorde toujours avec son dossier :
-   la même classification décide des deux.
+5. **Range le tout comme un disque dur** : un dossier par saison — lue dans la source du
+   plan, que les contributeurs notent `(S3 #02)` — ou par arc quand la série en a un de
+   taggé (`Arc Mugen Train`, `Thousand Year Blood War Arc Season 2`). Dedans, deux
+   dossiers : **Combats** et **Moments calmes**. Un plan n'existe qu'à un seul endroit,
+   et son nom s'accorde toujours avec son dossier : la même classification décide des deux.
 6. **Classe pour le montage, pas pour la performance.** Le score communautaire dit
    « belle animation » ; ce n'est pas la même chose que « bon rush ». Le classement
    croise ce score avec la durée utile du plan, la résolution, l'animation de décor,
