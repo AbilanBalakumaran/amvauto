@@ -517,6 +517,16 @@ body.ecran-plein .ecran {
 }
 body.ecran-plein .ecran video { object-fit: contain; }
 
+.ecran-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  pointer-events: none;
+}
+
 .ecran-vide {
   position: absolute;
   inset: 0;
@@ -1623,7 +1633,7 @@ function totaux(projet) {
 const ECHELLE_MIN = 0.3;
 const ECHELLE_MAX = 900;
 const PAS_REGLE = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null };
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -1766,10 +1776,24 @@ function editeur(projet) {
   });
   video.addEventListener("play", () => { lecture.jouant = true; majTransport(); suivreTete(); demarrerSon(); });
   video.addEventListener("pause", () => { lecture.jouant = false; majTransport(); arreterSon(); });
+  // Un lecteur vidéo n'affiche une image qu'une fois le fichier chargé, et sur
+  // mobile il ne charge parfois qu'après une première lecture. La vignette du
+  // plan, elle, s'affiche immédiatement : c'est elle qu'on voit sous le
+  // curseur tant que le fichier n'a pas rendu sa première image.
+  const image = document.createElement("img");
+  image.className = "ecran-image";
+  image.id = "ecran-image";
+  image.alt = "";
+  image.hidden = true;
+
   const vide = document.createElement("div");
   vide.className = "ecran-vide";
   vide.id = "ecran-vide";
-  ecran.append(video, vide);
+  ecran.append(video, image, vide);
+
+  // Dès que le fichier montre quelque chose, il reprend la main.
+  video.addEventListener("timeupdate", () => { if (video.readyState >= 2) image.hidden = true; });
+  video.addEventListener("seeked", () => { if (video.readyState >= 2) image.hidden = true; });
 
   bloc.append(ecran, transport(), pisteComplete(projet));
   return bloc;
@@ -1985,9 +2009,11 @@ function brancherScrub(element) {
     if (!ligne) return;
     const gauche = ligne.getBoundingClientRect().left;
     const viser = (x) => allerA(Math.max(0, x - gauche) / lecture.echelle);
+    lecture.scrub = true;
     viser(evt.clientX);
     const bouger = (autre) => viser(autre.clientX);
     const finir = () => {
+      lecture.scrub = false;
       window.removeEventListener("pointermove", bouger);
       window.removeEventListener("pointerup", finir);
       window.removeEventListener("pointercancel", finir);
@@ -2193,7 +2219,9 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     video.src = plan.video;
   }
   const demarrer = () => {
-    video.currentTime = Math.min(decalage, video.duration || decalage);
+    if (video.readyState < 1) return;
+    const vise = Math.min(decalage, video.duration || decalage);
+    if (Math.abs(video.currentTime - vise) > 0.25) video.currentTime = vise;
     if (enchainer || lecture.jouant) {
       video.play().catch(() => {
         video.muted = true;
@@ -2205,7 +2233,8 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   // fichier : s'y fier faisait poser la position sur un média déjà remplacé,
   // et le nouveau démarrait donc à zéro.
   if (!change && video.readyState >= 1) demarrer();
-  else video.addEventListener("loadedmetadata", demarrer, { once: true });
+  video.addEventListener("loadedmetadata", demarrer, { once: true });
+  video.addEventListener("canplay", demarrer, { once: true });
 
   precharger(index + 1);
   majTransport();
@@ -2252,9 +2281,17 @@ function basculerLecture() {
     video.poster = cible.plan.preview || "";
     video.src = cible.plan.video;
   }
-  const caler = () => { video.currentTime = Math.min(cible.dans, video.duration || cible.dans); };
+  const caler = () => {
+    if (video.readyState < 1) return;
+    const vise = Math.min(cible.dans, video.duration || cible.dans);
+    if (Math.abs(video.currentTime - vise) > 0.25) video.currentTime = vise;
+  };
   if (!change && video.readyState >= 1) caler();
-  else video.addEventListener("loadedmetadata", caler, { once: true });
+  video.addEventListener("loadedmetadata", caler, { once: true });
+  video.addEventListener("canplay", caler, { once: true });
+  // Dernier filet : si la lecture est partie avant que le calage ait pu se
+  // faire, on le refait une fois qu'elle tourne.
+  video.addEventListener("playing", caler, { once: true });
 
   deverrouille = true;
   const essai = video.play();
@@ -2291,6 +2328,19 @@ function allerA(secondesCible) {
   }
 }
 
+function montrerImage(plan) {
+  const image = $("ecran-image");
+  if (!image) return;
+  if (!plan?.preview) { image.hidden = true; return; }
+  if (image.dataset.plan !== plan.id) {
+    image.dataset.plan = plan.id;
+    image.src = plan.preview;
+  }
+  const video = $("apercu");
+  // On ne masque le fichier que s'il n'a pas encore d'image à montrer.
+  image.hidden = Boolean(video && video.readyState >= 2 && video.dataset.plan === plan.id);
+}
+
 function positionCible() {
   const projet = projetActif();
   if (!projet) return null;
@@ -2310,8 +2360,13 @@ function deverrouiller() {
   const video = $("apercu");
   if (!video || !video.src) return;
   deverrouille = true;
+  // L'intention est relevée avant de lancer : l'événement « play » met
+  // lecture.jouant à vrai, si bien qu'un test après coup croyait toujours à une
+  // lecture voulue et ne coupait jamais. La vidéo tournait alors en fond et
+  // réécrivait la position du curseur à chaque image.
+  const voulait = lecture.jouant;
   const essai = video.play();
-  if (essai) essai.then(() => { if (!lecture.jouant) video.pause(); }).catch(() => {});
+  if (essai) essai.then(() => { if (!voulait) video.pause(); }).catch(() => {});
 }
 
 // Le fichier rattrape la tête au rythme où il peut — une fois par image au
@@ -2328,6 +2383,7 @@ function appliquerSeek(jouer = false) {
   const video = $("apercu");
   const plan = projet.plans[index];
   if (!video) return;
+  montrerImage(plan);
 
   if (index === lecture.index && video.dataset.plan === plan.id) {
     const poser = () => {
@@ -2363,7 +2419,9 @@ function positionCourante() {
   if (!projet) return 0;
   // Pendant la lecture, c'est la vidéo qui fait foi ; à l'arrêt, c'est la
   // position posée par le doigt.
-  if (lecture.jouant) {
+  // Pendant un glissement, c'est le doigt qui commande, même si la lecture
+  // tourne : sinon la vidéo ramène le curseur là où elle en est.
+  if (lecture.jouant && !lecture.scrub) {
     const video = $("apercu");
     const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
     lecture.position = (offsets(projet.plans)[lecture.index] || 0) + dans;
