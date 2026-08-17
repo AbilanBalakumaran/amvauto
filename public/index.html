@@ -405,6 +405,129 @@ main {
 }
 .lecteur-actions .fort { background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce)); border-color: var(--rouge-fonce); }
 
+/* --- éditeur de montage --------------------------------------------- */
+.editeur { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+
+.ecran {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--trait);
+}
+.ecran video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.ecran-vide {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  text-align: center;
+  color: var(--doux);
+  font-size: 0.85rem;
+  background: #000;
+}
+
+.transport { display: flex; align-items: center; gap: 12px; }
+.lecture {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.chrono {
+  flex: none;
+  font: 600 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doux);
+  font-variant-numeric: tabular-nums;
+}
+.barre { flex: 1; height: 6px; border-radius: 3px; background: #272727; cursor: pointer; }
+.barre-remplie {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--rouge), var(--rouge-fonce));
+}
+
+/* La piste : un bloc par plan, large comme sa durée. */
+.piste {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 10px 0 4px;
+  background: var(--surface);
+  border: 1px solid var(--trait);
+  border-radius: 12px;
+}
+.rail { position: relative; display: flex; gap: 3px; padding: 0 10px; min-height: 74px; }
+.clip {
+  position: relative;
+  flex: none;
+  height: 66px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background: #202020 center/cover no-repeat;
+  cursor: pointer;
+  overflow: hidden;
+}
+.clip::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.75));
+}
+.clip.actif { border-color: var(--rouge); }
+.clip.saisi { opacity: .45; }
+.clip.hors-lecture { background-color: #2a1c1c; }
+.clip-nom {
+  position: absolute;
+  z-index: 1;
+  left: 6px;
+  right: 6px;
+  bottom: 5px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: #f0f0f5;
+  line-height: 1.25;
+  max-height: 2.5em;
+  overflow: hidden;
+}
+.clip-duree {
+  position: absolute;
+  z-index: 1;
+  top: 5px;
+  left: 6px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .7);
+  font: 600 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+}
+.tete {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 10px;
+  width: 2px;
+  background: var(--rouge);
+  box-shadow: 0 0 6px rgba(230, 57, 70, .9);
+  pointer-events: none;
+}
+.outils-plan .label {
+  flex: 1;
+  min-width: 100%;
+  color: var(--texte);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .row.plan { cursor: pointer; }
 .rang {
   flex: none;
@@ -515,9 +638,14 @@ main {
       vrai système de fichiers, et son nom découle du même choix que son dossier.</p>
 
       <h2>Les projets</h2>
-      <p>Un projet est un montage en préparation : une suite <strong>ordonnée</strong> de plans, que
-      tu réordonnes avec les flèches. Il est conservé dans ce navigateur d'une visite à l'autre, et
-      tu peux en tenir plusieurs en parallèle.</p>
+      <p>Un projet est un montage en préparation : une suite <strong>ordonnée</strong> de plans,
+      conservée dans ce navigateur d'une visite à l'autre, et tu peux en tenir plusieurs en
+      parallèle.</p>
+      <p>L'onglet Projet est un banc de montage : une prévisualisation en haut, une piste en bas où
+      chaque bloc est <strong>large comme sa durée</strong>. La lecture <strong>enchaîne les
+      plans</strong> — le suivant est mis en cache pendant que le courant se joue — et la tête de
+      lecture suit. Clique un bloc pour t'y placer, la barre de progression pour te déplacer dans
+      le montage, glisse un bloc pour le réordonner (les flèches font la même chose au doigt).</p>
       <p>La durée de chaque plan n'est exposée par aucune source : elle est lue directement dans le
       fichier, en ne chargeant que ses métadonnées. C'est ce qui permet d'afficher un vrai
       chronométrage et d'exporter une <strong>conduite de montage EDL</strong> — le format que
@@ -1124,17 +1252,20 @@ function fermerFeuille() {
 
 // La durée d'un plan n'est exposée par aucune des sources : on la lit dans le
 // fichier lui-même, en ne chargeant que ses métadonnées.
+const enMesure = new Set();
+
 function mesurerDuree(plan) {
-  if (plan.youtube || !plan.video) return;
+  if (plan.youtube || !plan.video || plan.duree || enMesure.has(plan.id)) return;
+  enMesure.add(plan.id);
   const sonde = document.createElement("video");
   sonde.preload = "metadata";
   sonde.muted = true;
-  const finir = () => { sonde.removeAttribute("src"); sonde.load(); };
+  const finir = () => { enMesure.delete(plan.id); sonde.removeAttribute("src"); sonde.load(); };
   sonde.addEventListener("loadedmetadata", () => {
     if (Number.isFinite(sonde.duration) && sonde.duration > 0) {
       plan.duree = Math.round(sonde.duration * 100) / 100;
       sauver();
-      if (!$("vue-projet").hidden) rendreProjet();
+      if (!$("vue-projet").hidden && !lecture.jouant) rendreProjet();
     }
     finir();
   }, { once: true });
@@ -1166,33 +1297,361 @@ function totaux(projet) {
   );
 }
 
-/* --- vue projet ------------------------------------------------------ */
+/* --- éditeur de montage ----------------------------------------------
+   Prévisualisation en haut, piste en bas : les plans s'enchaînent, la tête de
+   lecture avance, et la largeur d'un bloc vaut sa durée. */
+
+const PX_PAR_SECONDE = 46;
+const LARGEUR_MINI = 54;
+const lecture = { index: 0, jouant: false, boucle: null };
+
+const jouables = (projet) => projet.plans.filter((plan) => !plan.youtube && plan.video);
+
+function duree(plan) {
+  return plan.duree || DUREE_DEFAUT;
+}
+
+function offsets(plans) {
+  let curseur = 0;
+  return plans.map((plan) => {
+    const debut = curseur;
+    curseur += duree(plan);
+    return debut;
+  });
+}
+
+function horloge(valeur) {
+  const total = Math.max(0, Math.round(valeur));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
 function rendreProjet() {
   const vue = $("vue-projet");
-  const morceaux = [barreProjets()];
   const projet = projetActif();
+  const morceaux = [barreProjets()];
 
   if (!projet) {
     morceaux.push(note("Aucun projet. Ouvre un dossier, puis « + » sur un plan pour en démarrer un."));
     vue.replaceChildren(...morceaux);
     return;
   }
-
   if (!projet.plans.length) {
     morceaux.push(note(`« ${projet.nom} » est vide. Ajoute des plans depuis l'explorateur.`));
     vue.replaceChildren(...morceaux);
     return;
   }
 
-  const bilan = totaux(projet);
-  const manquantes = projet.plans.length - bilan.mesures;
-  const resume = note(
-    `${projet.plans.length} plans · ${secondes(bilan.duree)} de montage · ${bilan.mb.toFixed(1)} Mo` +
-      (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""} en cours de lecture` : ""),
-  );
-
-  morceaux.push(resume, actionsProjet(projet), timeline(projet));
+  arreter();
+  projet.plans.forEach(mesurerDuree);
+  lecture.index = 0;
+  morceaux.push(editeur(projet), actionsProjet(projet));
   vue.replaceChildren(...morceaux);
+  poserPlan(0, 0);
+}
+
+function editeur(projet) {
+  const bloc = document.createElement("div");
+  bloc.className = "editeur";
+
+  // --- écran
+  const ecran = document.createElement("div");
+  ecran.className = "ecran";
+  const video = document.createElement("video");
+  video.id = "apercu";
+  video.playsInline = true;
+  video.preload = "auto";
+  video.addEventListener("ended", planSuivant);
+  video.addEventListener("error", () => {
+    const projet = projetActif();
+    const plan = projet?.plans[lecture.index];
+    const vide = $("ecran-vide");
+    if (!plan || !vide) return;
+    vide.textContent = `${plan.name} — fichier injoignable`;
+    vide.hidden = false;
+    if (lecture.jouant) planSuivant();
+  });
+  video.addEventListener("play", () => { lecture.jouant = true; majTransport(); suivreTete(); });
+  video.addEventListener("pause", () => { lecture.jouant = false; majTransport(); });
+  const vide = document.createElement("div");
+  vide.className = "ecran-vide";
+  vide.id = "ecran-vide";
+  vide.textContent = "";
+  ecran.append(video, vide);
+
+  // --- transport
+  const transport = document.createElement("div");
+  transport.className = "transport";
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.id = "lecture";
+  bouton.className = "lecture";
+  bouton.textContent = "▶";
+  bouton.addEventListener("click", basculerLecture);
+  const chrono = document.createElement("span");
+  chrono.className = "chrono";
+  chrono.id = "chrono";
+  const barre = document.createElement("div");
+  barre.className = "barre";
+  const remplie = document.createElement("div");
+  remplie.className = "barre-remplie";
+  remplie.id = "barre-remplie";
+  barre.append(remplie);
+  barre.addEventListener("click", (evt) => {
+    const rect = barre.getBoundingClientRect();
+    allerA(((evt.clientX - rect.left) / rect.width) * total(projet));
+  });
+  transport.append(bouton, chrono, barre);
+
+  bloc.append(ecran, transport, piste(projet), outilsPlan(projet));
+  return bloc;
+}
+
+const total = (projet) => projet.plans.reduce((somme, plan) => somme + duree(plan), 0);
+
+function piste(projet) {
+  const cadre = document.createElement("div");
+  cadre.className = "piste";
+  cadre.id = "piste";
+  const rail = document.createElement("div");
+  rail.className = "rail";
+  rail.id = "rail";
+
+  const debuts = offsets(projet.plans);
+  projet.plans.forEach((plan, index) => {
+    const clip = document.createElement("div");
+    clip.className = "clip";
+    clip.dataset.index = String(index);
+    clip.style.width = `${Math.max(LARGEUR_MINI, duree(plan) * PX_PAR_SECONDE)}px`;
+    if (plan.preview) clip.style.backgroundImage = `url("${plan.preview}")`;
+    if (plan.youtube) clip.classList.add("hors-lecture");
+
+    const etiquette = document.createElement("span");
+    etiquette.className = "clip-nom";
+    etiquette.textContent = plan.name;
+    const chiffre = document.createElement("span");
+    chiffre.className = "clip-duree";
+    chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${plan.duree.toFixed(1)}s` : "…";
+    clip.append(etiquette, chiffre);
+
+    clip.addEventListener("click", () => { selectionner(index); allerA(debuts[index]); });
+
+    // Réordonnancement à la souris ; sur mobile, les flèches sous la piste.
+    clip.draggable = true;
+    clip.addEventListener("dragstart", (evt) => {
+      evt.dataTransfer.setData("text/plain", String(index));
+      clip.classList.add("saisi");
+    });
+    clip.addEventListener("dragend", () => clip.classList.remove("saisi"));
+    clip.addEventListener("dragover", (evt) => evt.preventDefault());
+    clip.addEventListener("drop", (evt) => {
+      evt.preventDefault();
+      const depuis = Number(evt.dataTransfer.getData("text/plain"));
+      if (Number.isInteger(depuis) && depuis !== index) reordonner(projet, depuis, index);
+    });
+
+    rail.append(clip);
+  });
+
+  const tete = document.createElement("div");
+  tete.className = "tete";
+  tete.id = "tete";
+  rail.append(tete);
+  cadre.append(rail);
+  return cadre;
+}
+
+function outilsPlan(projet) {
+  const barre = document.createElement("div");
+  barre.className = "tools outils-plan";
+  const etiquette = document.createElement("span");
+  etiquette.className = "label";
+  etiquette.id = "plan-courant";
+  barre.append(etiquette);
+
+  const gauche = document.createElement("button");
+  gauche.type = "button";
+  gauche.textContent = "← Reculer";
+  gauche.addEventListener("click", () => reordonner(projet, lecture.index, lecture.index - 1));
+  const droite = document.createElement("button");
+  droite.type = "button";
+  droite.textContent = "Avancer →";
+  droite.addEventListener("click", () => reordonner(projet, lecture.index, lecture.index + 1));
+  const retirer = document.createElement("button");
+  retirer.type = "button";
+  retirer.textContent = "Retirer";
+  retirer.addEventListener("click", () => {
+    projet.plans.splice(lecture.index, 1);
+    sauver();
+    rendreProjet();
+    rendre();
+  });
+  barre.append(gauche, droite, retirer);
+  return barre;
+}
+
+function reordonner(projet, depuis, vers) {
+  if (vers < 0 || vers >= projet.plans.length || depuis === vers) return;
+  const [plan] = projet.plans.splice(depuis, 1);
+  projet.plans.splice(vers, 0, plan);
+  sauver();
+  rendreProjet();
+}
+
+/* --- lecture enchaînée ------------------------------------------------ */
+function poserPlan(index, decalage = 0, enchainer = false) {
+  const projet = projetActif();
+  if (!projet || !projet.plans[index]) return;
+  lecture.index = index;
+  const plan = projet.plans[index];
+  const video = $("apercu");
+  const vide = $("ecran-vide");
+
+  selectionner(index);
+
+  if (plan.youtube) {
+    // Une bande-annonce YouTube ne s'enchaîne pas : on la saute en lecture.
+    video.removeAttribute("src");
+    video.load();
+    vide.textContent = `${plan.name} — bande-annonce YouTube, non lisible dans le montage`;
+    vide.hidden = false;
+    if (enchainer) planSuivant();
+    return;
+  }
+
+  vide.hidden = true;
+  if (video.dataset.plan !== plan.id) {
+    video.dataset.plan = plan.id;
+    video.src = plan.video;
+  }
+  const demarrer = () => {
+    if (decalage) video.currentTime = Math.min(decalage, video.duration || decalage);
+    if (enchainer || lecture.jouant) {
+      video.play().catch(() => {
+        video.muted = true;
+        video.play().catch(() => { lecture.jouant = false; majTransport(); });
+      });
+    }
+  };
+  if (video.readyState >= 1) demarrer();
+  else video.addEventListener("loadedmetadata", demarrer, { once: true });
+
+  precharger(index + 1);
+  majTransport();
+}
+
+// Le plan suivant se met en cache pendant que le courant se joue : sans ça,
+// l'enchaînement marque un temps d'arrêt.
+function precharger(index) {
+  const projet = projetActif();
+  const plan = projet?.plans[index];
+  if (!plan || plan.youtube || !plan.video) return;
+  const sonde = document.createElement("video");
+  sonde.preload = "auto";
+  sonde.muted = true;
+  sonde.src = plan.video;
+  setTimeout(() => { sonde.removeAttribute("src"); sonde.load(); }, 12000);
+}
+
+function planSuivant() {
+  const projet = projetActif();
+  if (!projet) return;
+  if (lecture.index + 1 < projet.plans.length) {
+    poserPlan(lecture.index + 1, 0, true);
+  } else {
+    arreter();
+    poserPlan(0, 0);
+  }
+}
+
+function basculerLecture() {
+  const video = $("apercu");
+  if (lecture.jouant) {
+    video.pause();
+    return;
+  }
+  const projet = projetActif();
+  if (!jouables(projet).length) return;
+  lecture.jouant = true;
+  if (projet.plans[lecture.index]?.youtube) planSuivant();
+  else video.play().catch(() => {});
+  suivreTete();
+}
+
+function arreter() {
+  lecture.jouant = false;
+  if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
+  lecture.boucle = null;
+  const video = document.getElementById("apercu");
+  if (video) video.pause();
+}
+
+function allerA(secondesCible) {
+  const projet = projetActif();
+  if (!projet) return;
+  const debuts = offsets(projet.plans);
+  let index = debuts.findIndex((debut, i) => secondesCible < debut + duree(projet.plans[i]));
+  if (index < 0) index = projet.plans.length - 1;
+  poserPlan(index, Math.max(0, secondesCible - debuts[index]));
+}
+
+function selectionner(index) {
+  const projet = projetActif();
+  document.querySelectorAll("#rail .clip").forEach((clip) => {
+    clip.classList.toggle("actif", Number(clip.dataset.index) === index);
+  });
+  const courant = $("plan-courant");
+  if (courant && projet?.plans[index]) {
+    courant.textContent = `Plan ${String(index + 1).padStart(2, "0")} — ${projet.plans[index].name}`;
+  }
+}
+
+function positionCourante() {
+  const projet = projetActif();
+  if (!projet) return 0;
+  const debuts = offsets(projet.plans);
+  const video = $("apercu");
+  const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  return (debuts[lecture.index] || 0) + dans;
+}
+
+function majTransport() {
+  const projet = projetActif();
+  if (!projet || !$("chrono")) return;
+  const duree_totale = total(projet);
+  const position = positionCourante();
+  $("chrono").textContent = `${horloge(position)} / ${horloge(duree_totale)}`;
+  $("barre-remplie").style.width = `${Math.min(100, (position / duree_totale) * 100)}%`;
+  $("lecture").textContent = lecture.jouant ? "❚❚" : "▶";
+
+  const tete = $("tete");
+  if (tete) {
+    const projetPlans = projet.plans;
+    const debuts = offsets(projetPlans);
+    let x = 0;
+    for (let i = 0; i < lecture.index; i += 1) {
+      x += Math.max(LARGEUR_MINI, duree(projetPlans[i]) * PX_PAR_SECONDE);
+    }
+    const dans = position - (debuts[lecture.index] || 0);
+    const largeur = Math.max(LARGEUR_MINI, duree(projetPlans[lecture.index]) * PX_PAR_SECONDE);
+    x += Math.min(largeur, (dans / duree(projetPlans[lecture.index])) * largeur);
+    tete.style.left = `${x}px`;
+    const piste = $("piste");
+    if (lecture.jouant && piste) {
+      const marge = piste.clientWidth * 0.4;
+      if (x - piste.scrollLeft > piste.clientWidth - marge || x < piste.scrollLeft) {
+        piste.scrollLeft = Math.max(0, x - marge);
+      }
+    }
+  }
+}
+
+function suivreTete() {
+  if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
+  const pas = () => {
+    majTransport();
+    if (lecture.jouant) lecture.boucle = requestAnimationFrame(pas);
+  };
+  lecture.boucle = requestAnimationFrame(pas);
 }
 
 function barreProjets() {
@@ -1226,6 +1685,14 @@ function barreProjets() {
 }
 
 function actionsProjet(projet) {
+  const bloc = document.createElement("div");
+  const bilan = totaux(projet);
+  const manquantes = projet.plans.length - bilan.mesures;
+  const resume = note(
+    `${projet.plans.length} plans · ${secondes(bilan.duree)} de montage · ${bilan.mb.toFixed(1)} Mo` +
+      (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""} en cours de lecture` : ""),
+  );
+
   const actions = document.createElement("div");
   actions.className = "panier-actions";
 
@@ -1271,75 +1738,8 @@ function actionsProjet(projet) {
   });
 
   actions.append(edl, liste, copier, renommer, supprimer);
-  return actions;
-}
-
-function timeline(projet) {
-  const liste = document.createElement("div");
-  liste.className = "rows";
-  let curseur = 0;
-
-  projet.plans.forEach((plan, index) => {
-    const duree = plan.duree || 0;
-    const ligne = document.createElement("div");
-    ligne.className = "row plan";
-
-    const rang = document.createElement("span");
-    rang.className = "rang";
-    rang.textContent = String(index + 1).padStart(2, "0");
-
-    const centre = document.createElement("span");
-    centre.className = "grow";
-    const nom = document.createElement("span");
-    nom.className = "nom";
-    nom.textContent = nomFichier(plan);
-    const sous = document.createElement("span");
-    sous.className = "sous";
-    sous.textContent = [
-      `${timecode(curseur)} → ${timecode(curseur + (duree || DUREE_DEFAUT))}`,
-      plan.youtube ? "lien YouTube" : duree ? secondes(duree) : "durée…",
-      plan.anime || plan.ref || "",
-    ].filter(Boolean).join(" · ");
-    centre.append(nom, sous);
-
-    const monter = boutonPlan("↑", "Monter", () => deplacer(projet, index, -1));
-    const descendre = boutonPlan("↓", "Descendre", () => deplacer(projet, index, 1));
-    const retirer = boutonPlan("✕", "Retirer du projet", () => {
-      projet.plans.splice(index, 1);
-      sauver();
-      rendreProjet();
-      rendre();
-    });
-
-    ligne.append(rang, centre, monter, descendre, retirer);
-    ligne.addEventListener("click", (evt) => {
-      if (evt.target.closest("button")) return;
-      lire(plan);
-    });
-    liste.append(ligne);
-    curseur += duree || DUREE_DEFAUT;
-  });
-
-  return liste;
-}
-
-function boutonPlan(texte, titre, action) {
-  const bouton = document.createElement("button");
-  bouton.type = "button";
-  bouton.className = "btn-pick";
-  bouton.textContent = texte;
-  bouton.title = titre;
-  bouton.addEventListener("click", (evt) => { evt.stopPropagation(); action(); });
-  return bouton;
-}
-
-function deplacer(projet, index, sens) {
-  const cible = index + sens;
-  if (cible < 0 || cible >= projet.plans.length) return;
-  const [plan] = projet.plans.splice(index, 1);
-  projet.plans.splice(cible, 0, plan);
-  sauver();
-  rendreProjet();
+  bloc.append(resume, actions);
+  return bloc;
 }
 
 /* --- exports --------------------------------------------------------- */
