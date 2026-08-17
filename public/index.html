@@ -956,7 +956,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:44";
+const VERSION_PAGE = "2026-08-17 07:46";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1727,7 +1727,15 @@ function mesurerSuivant() {
     if (Number.isFinite(sonde.duration) && sonde.duration > 0) {
       plan.duree = Math.round(sonde.duration * 100) / 100;
       sauver();
-      if (!$("vue-projet").hidden && !lecture.jouant) redessinerPiste();
+      if (!$("vue-projet").hidden && !lecture.jouant) {
+        // Les durées changent la longueur du montage : sans réajuster, la piste
+        // garde l'échelle calculée sur des durées encore inconnues et le
+        // curseur ne vise plus au bon endroit. On respecte en revanche un
+        // réglage fait à la main.
+        const projet = projetActif();
+        if (projet && !lecture.echelleManuelle) ajusterEchelle(projet);
+        redessinerPiste();
+      }
     }
     finir();
   }, { once: true });
@@ -1805,6 +1813,7 @@ function ajusterEchelle(projet) {
 function appliquerEchelle(valeur) {
   const bornee = Math.min(ECHELLE_MAX, Math.max(ECHELLE_MIN, valeur));
   if (Math.abs(bornee - lecture.echelle) < 0.001) return;
+  lecture.echelleManuelle = true;
   lecture.echelle = bornee;
   redessinerPiste();
 }
@@ -1830,6 +1839,7 @@ function rendreProjet() {
   if (histoire.projet !== projet.id) initHistoire(projet);
   projet.plans.forEach(mesurerDuree);
   ajusterEchelle(projet);
+  lecture.echelleManuelle = false;
   lecture.index = 0;
   lecture.position = 0;
   morceaux.push(editeur(projet));
