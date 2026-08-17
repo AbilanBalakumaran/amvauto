@@ -11,8 +11,14 @@ Trois sources alimentent l'outil :
 | [AnimeThemes](https://animethemes.moe) | openings et endings, souvent en 1080p Blu-ray sans crédits | WebM |
 | [AniList](https://anilist.co) | bandes-annonces officielles | lien YouTube |
 
-Elles sont interrogées en parallèle et l'échec de l'une n'emporte pas les autres : la
-réponse indique ce que chacune a rendu, et pourquoi elle a échoué le cas échéant.
+Les deux premières sont interrogées en parallèle par le Worker, et l'échec de l'une
+n'emporte pas l'autre : la réponse indique ce que chacune a rendu, et pourquoi elle a
+échoué le cas échéant. AniList, elle, est appelée **par la page** : son pare-feu refuse
+les requêtes venant d'un Worker Cloudflare (403) mais elle autorise le CORS, donc le
+navigateur l'atteint en direct. Ses bandes-annonces arrivent après l'arborescence, sans
+retarder l'affichage.
+
+Les deux API refusent aussi les requêtes sans `User-Agent` explicite.
 
 Trois autres pistes ont été écartées après essai : **Internet Archive** ne remonte que des
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un

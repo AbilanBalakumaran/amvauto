@@ -2,7 +2,6 @@
 // proposition de rushs. Sakugabooru étant sans CORS, tous les appels JSON
 // passent par ici.
 
-import { trailers } from "./anilist.js";
 import { themes } from "./animethemes.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { rushes, searchSeries } from "./sakuga.js";
@@ -167,23 +166,21 @@ async function handleTree(url) {
 
   const pool = Math.min(400, Math.max(50, Number(url.searchParams.get("pool")) || 300));
 
-  // Les trois sources sont interrogées de front, et l'échec de l'une ne doit
-  // pas emporter les autres : un générique reste utile si Sakugabooru tousse.
-  const [cuts, generiques, bandes] = await Promise.allSettled([
-    resolve(query, pool),
-    themes(query),
-    trailers(query),
-  ]);
+  // Les deux sources sont interrogées de front, et l'échec de l'une ne doit pas
+  // emporter l'autre : un générique reste utile si Sakugabooru tousse.
+  // Les bandes-annonces AniList, elles, sont chargées par la page : AniList
+  // refuse les requêtes venant d'un Worker (403) mais autorise le CORS, donc
+  // le navigateur l'appelle en direct.
+  const [cuts, generiques] = await Promise.allSettled([resolve(query, pool), themes(query)]);
 
   const resolved = cuts.status === "fulfilled" ? cuts.value : null;
   const listeThemes = generiques.status === "fulfilled" ? generiques.value : [];
-  const listeTrailers = bandes.status === "fulfilled" ? bandes.value : [];
 
-  if (!resolved && !listeThemes.length && !listeTrailers.length) {
+  if (!resolved && !listeThemes.length) {
     return json({ error: `Rien trouvé pour « ${query} ».`, suggestions: suggest("", 6) }, 404);
   }
 
-  const nom = resolved?.display || listeThemes[0]?.serie || listeTrailers[0]?.serie || query;
+  const nom = resolved?.display || listeThemes[0]?.serie || query;
   const arcs = resolved ? buildTree(resolved.posts, resolved.tag, resolved.display) : [];
 
   const openings = listeThemes.filter((item) => item.kind === "opening").map(fromSource);
@@ -200,30 +197,18 @@ async function handleTree(url) {
     });
   }
 
-  if (listeTrailers.length) {
-    const pv = listeTrailers.map(fromSource);
-    arcs.push({
-      key: "pv",
-      label: "Bandes-annonces",
-      count: pv.length,
-      folders: [{ key: "trailer", label: "PV officiels", count: pv.length, rushes: dedupe(pv) }],
-    });
-  }
-
   return json({
     anime: nom,
     tag: resolved?.tag || null,
-    total: (resolved?.posts.length || 0) + listeThemes.length + listeTrailers.length,
+    total: (resolved?.posts.length || 0) + listeThemes.length,
     sources: {
       sakugabooru: resolved?.posts.length || 0,
       animethemes: listeThemes.length,
-      anilist: listeTrailers.length,
       // La raison de l'échec est renvoyée : une source qui tombe doit se
       // diagnostiquer sans avoir à relire les logs.
       echecs: [
         [cuts, "sakugabooru"],
         [generiques, "animethemes"],
-        [bandes, "anilist"],
       ]
         .filter(([resultat]) => resultat.status === "rejected")
         .map(([resultat, nom]) => `${nom} : ${resultat.reason?.message || "erreur inconnue"}`),

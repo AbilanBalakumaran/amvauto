@@ -467,9 +467,9 @@ main {
         les <strong>openings et endings</strong> en fichiers WebM, souvent en 1080p Blu-ray et sans
         crédits : aucun texte à masquer au montage.</li>
         <li><a href="https://anilist.co" target="_blank" rel="noopener">AniList</a> — les
-        <strong>bandes-annonces officielles</strong>. Seules entrées qui ne sont pas des fichiers :
-        YouTube n'expose pas de lien direct, elles se lisent ici et se récupèrent avec un
-        téléchargeur.</li>
+        <strong>bandes-annonces officielles</strong>, chargées directement par ton navigateur.
+        Seules entrées qui ne sont pas des fichiers : YouTube n'expose pas de lien direct, elles se
+        lisent ici et se récupèrent avec un téléchargeur.</li>
       </ul>
       <p>Si une source tombe, les autres répondent quand même.</p>
 
@@ -571,6 +571,63 @@ $("rapide").replaceChildren(...rapide.series.slice(0, 8).map((serie) => {
   return bouton;
 }));
 
+/* --- bandes-annonces (AniList, appelé directement) -------------------- */
+// AniList refuse les requêtes venant d'un Worker mais autorise le CORS : c'est
+// la seule source que la page interroge elle-même. Elle arrive après coup, sans
+// retarder l'affichage de l'arborescence.
+const ANILIST_QUERY = `query ($s: String) {
+  Page(perPage: 8) {
+    media(search: $s, type: ANIME, sort: POPULARITY_DESC) {
+      id seasonYear format
+      title { romaji english }
+      trailer { id site thumbnail }
+      coverImage { large }
+    }
+  }
+}`;
+const FORMATS = { TV: "série", MOVIE: "film", OVA: "OVA", ONA: "ONA", SPECIAL: "spécial" };
+
+async function bandesAnnonces(anime) {
+  try {
+    const reponse = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: ANILIST_QUERY, variables: { s: anime } }),
+    });
+    if (!reponse.ok) return [];
+    const data = await reponse.json();
+    return (data?.data?.Page?.media || [])
+      .filter((media) => media.trailer?.id && media.trailer.site === "youtube")
+      .map((media) => {
+        const titre = media.title?.romaji || media.title?.english || "Sans titre";
+        return {
+          id: `al-${media.id}`,
+          name: `PV · ${titre}${media.seasonYear ? ` (${media.seasonYear})` : ""}`,
+          // Aucun signal de qualité exploitable : pas de note plutôt qu'une note inventée.
+          score: null,
+          votes: null,
+          moods: [],
+          technique: null,
+          flags: [FORMATS[media.format], "lien YouTube"].filter(Boolean),
+          artists: [],
+          width: 0,
+          height: 0,
+          mb: 0,
+          episode: null,
+          provider: "anilist",
+          ref: titre,
+          video: `https://www.youtube.com/watch?v=${media.trailer.id}`,
+          youtube: media.trailer.id,
+          preview: media.trailer.thumbnail || media.coverImage?.large || null,
+          page: `https://anilist.co/anime/${media.id}`,
+          tags: [],
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
 /* --- chargement ----------------------------------------------------- */
 $("go").addEventListener("click", () => ouvrir());
 
@@ -590,6 +647,19 @@ async function ouvrir() {
     state.chemin = [];
     $("compteur").textContent = `${data.total} rushs`;
     rendre();
+
+    const pv = await bandesAnnonces(anime);
+    if (pv.length && state.arbre === data) {
+      data.arcs.push({
+        key: "pv",
+        label: "Bandes-annonces",
+        count: pv.length,
+        folders: [{ key: "trailer", label: "PV officiels", count: pv.length, rushes: pv }],
+      });
+      data.total += pv.length;
+      $("compteur").textContent = `${data.total} rushs`;
+      if (!state.chemin.length) rendre();
+    }
   } catch (erreur) {
     $("sortie").replaceChildren(note(erreur.message, true));
   } finally {
