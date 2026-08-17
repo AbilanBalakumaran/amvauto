@@ -7,6 +7,7 @@ import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "
 import { rushes, searchSeries } from "./sakuga.js";
 import { MOODS, moodsOf, qualityFlags, rank } from "./scoring.js";
 import { findCurated, suggest } from "./series.js";
+import { VERSION } from "./version.js";
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -250,6 +251,7 @@ export default {
         if (url.pathname === "/api/suggest") {
           return json({ series: suggest(url.searchParams.get("q") || "", 10) });
         }
+        if (url.pathname === "/api/version") return json({ version: VERSION });
         if (url.pathname === "/api/moods") {
           return json({
             moods: Object.entries(MOODS).map(([key, m]) => ({ key, label: m.label })),
@@ -261,6 +263,13 @@ export default {
       }
     }
 
-    return env.ASSETS.fetch(request);
+    // La page ne doit jamais être servie depuis un cache local : un navigateur
+    // qui garde l'ancienne donne l'impression que rien n'a été corrigé.
+    const reponse = await env.ASSETS.fetch(request);
+    const type = reponse.headers.get("content-type") || "";
+    if (!type.includes("text/html")) return reponse;
+    const entetes = new Headers(reponse.headers);
+    entetes.set("cache-control", "no-store, must-revalidate");
+    return new Response(reponse.body, { status: reponse.status, headers: entetes });
   },
 };

@@ -81,6 +81,13 @@ Routes :
 | `GET /api/rushes?anime=frieren&mood=combat&top=24` | liste plate, classée |
 | `GET /api/suggest?q=chain` | complétion sur le catalogue |
 | `GET /api/moods` | ambiances disponibles |
+| `GET /api/version` | horodatage du déploiement |
+
+La page est servie en `no-store` et le Worker s'exécute avant les fichiers statiques
+(`run_worker_first`), sans quoi cet en-tête ne s'appliquerait jamais. Page et Worker portent
+le même horodatage, posé par `tools/stamp.mjs` au déploiement : quand ils diffèrent, la page
+affiche un bandeau — un navigateur qui garde une copie périmée donne sinon l'impression que
+rien n'a été corrigé.
 
 L'interface reprend la direction artistique d'[autoshort](https://github.com/AbilanBalakumaran/autoshort)
 — fond `#0a0a0a`, surfaces `#161616`, accent `#E63946 → #C1121F`, titres en Obelix Pro,
