@@ -115,8 +115,8 @@ main {
   order: 1;
   flex: none;
   display: flex;
-  gap: 6px;
-  padding: 7px 12px;
+  gap: 5px;
+  padding: 7px 10px;
   overflow-x: auto;
   background: var(--fond);
   border-top: 1px solid var(--trait);
@@ -125,22 +125,25 @@ main {
 .barre-outils::-webkit-scrollbar { display: none; }
 .barre-outils button {
   flex: none;
-  padding: 9px 13px;
-  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   border: 1px solid var(--trait);
   background: var(--surface);
   color: var(--texte);
-  font: 600 0.8rem/1 system-ui, sans-serif;
-  white-space: nowrap;
   cursor: pointer;
 }
+.barre-outils button svg { width: 21px; height: 21px; }
+.barre-outils button.fait { color: var(--rouge); border-color: var(--rouge); }
 .barre-outils button:hover { border-color: var(--rouge); color: var(--rouge); }
 .barre-outils button.fort {
   background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
   border-color: var(--rouge-fonce);
   color: #fff;
 }
-.barre-outils .separateur { flex: none; width: 1px; margin: 4px 3px; background: var(--trait); }
+.barre-outils .separateur { flex: none; width: 1px; margin: 4px 2px; background: var(--trait); }
 
 .bottom-nav {
   order: 2;
@@ -763,6 +766,22 @@ function nomFichier(rush) {
   const extension = (rush.video.match(/\.(mp4|webm|mkv|mov)(?:\?|$)/i) || [])[1];
   return extension ? `${rush.name}.${extension.toLowerCase()}` : rush.name;
 }
+
+const TRAITS = {
+  reculer: '<path d="M14 6l-6 6 6 6"/>',
+  avancer: '<path d="M10 6l6 6-6 6"/>',
+  retirer: '<path d="M6 6l12 12M18 6L6 18"/>',
+  exporter: '<path d="M12 4v10"/><path d="M8 12l4 4 4-4"/><path d="M5 19h14"/>',
+  liste: '<path d="M8 7h11M8 12h11M8 17h11"/><path d="M4 7h.01M4 12h.01M4 17h.01"/>',
+  liens: '<path d="M10.5 13.5a4 4 0 0 0 5.7 0l2-2a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M13.5 10.5a4 4 0 0 0-5.7 0l-2 2a4 4 0 0 0 5.7 5.7l1-1"/>',
+  renommer: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
+  supprimer: '<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/>',
+  fait: '<path d="M5 13l4 4 10-10"/>',
+};
+
+const icone = (nom) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ` +
+  `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TRAITS[nom]}</svg>`;
 
 const PROVENANCE = {
   sakugabooru: "Sakugabooru",
@@ -1848,11 +1867,14 @@ function remplirBarreOutils(projet) {
   const actions = $("barre-outils");
   if (!actions) return;
 
-  const bouton = (texte, titre, action, fort = false) => {
+  // Icône seule, mais jamais muette : l'intitulé reste en infobulle et pour
+  // les lecteurs d'écran.
+  const bouton = (nom, titre, action, fort = false) => {
     const element = document.createElement("button");
     element.type = "button";
-    element.textContent = texte;
+    element.innerHTML = icone(nom);
     element.title = titre;
+    element.setAttribute("aria-label", titre);
     if (fort) element.className = "fort";
     element.addEventListener("click", action);
     return element;
@@ -1863,35 +1885,36 @@ function remplirBarreOutils(projet) {
     return trait;
   };
 
-  const reculer = bouton("←", "Reculer le plan sélectionné", () =>
+  const reculer = bouton("reculer", "Reculer le plan sélectionné", () =>
     reordonner(projet, lecture.index, lecture.index - 1));
-  const avancer = bouton("→", "Avancer le plan sélectionné", () =>
+  const avancer = bouton("avancer", "Avancer le plan sélectionné", () =>
     reordonner(projet, lecture.index, lecture.index + 1));
-  const retirer = bouton("Retirer", "Retirer le plan sélectionné du montage", () => {
+  const retirer = bouton("retirer", "Retirer le plan sélectionné du montage", () => {
     projet.plans.splice(lecture.index, 1);
     sauver();
     rendreProjet();
     rendre();
   });
 
-  const edl = bouton("Exporter .edl", "Conduite de montage pour Premiere, DaVinci ou Final Cut",
+  const edl = bouton("exporter", "Exporter le montage (.edl) pour Premiere, DaVinci ou Final Cut",
     () => telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet)), true);
 
-  const liste = bouton("Liste .txt", "Liste des plans en texte",
+  const liste = bouton("liste", "Exporter la liste des plans (.txt)",
     () => telecharger(`${nomDeFichier(projet)}.txt`, versTexte(projet)));
 
-  const copier = bouton("Liens", "Copier les liens des fichiers", async (evt) => {
+  const copier = bouton("liens", "Copier les liens des fichiers", async () => {
     await navigator.clipboard.writeText(projet.plans.map((plan) => plan.video).join("\n"));
-    evt.target.textContent = "Copié";
-    setTimeout(() => { evt.target.textContent = "Liens"; }, 1600);
+    copier.innerHTML = icone("fait");
+    copier.classList.add("fait");
+    setTimeout(() => { copier.innerHTML = icone("liens"); copier.classList.remove("fait"); }, 1600);
   });
 
-  const renommer = bouton("Renommer", "Renommer le projet", () => {
+  const renommer = bouton("renommer", "Renommer le projet", () => {
     const nom = prompt("Nom du projet", projet.nom);
     if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); rendreProjet(); }
   });
 
-  const supprimer = bouton("Supprimer", "Supprimer le projet", () => {
+  const supprimer = bouton("supprimer", "Supprimer le projet et ses plans", () => {
     if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
     state.projets = state.projets.filter((autre) => autre.id !== projet.id);
     state.actif = state.projets[0]?.id || null;
