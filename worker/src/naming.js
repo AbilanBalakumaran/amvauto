@@ -118,7 +118,13 @@ export function actionMood(post) {
 export function describe(post) {
   const tags = new Set(post.tags);
   const action = ACTIONS.find(([tag]) => tags.has(tag));
-  const label = action ? action[1] : "Plan animé";
+  // Sans action identifiée, c'est presque toujours un plan d'effets purs :
+  // le dire vaut mieux qu'un « plan animé » qui ne renseigne sur rien.
+  const label = action
+    ? action[1]
+    : ["effects", "fire", "liquid", "smoke", "debris", "sparks", "lightning", "ice"].some((tag) => tags.has(tag))
+      ? "Plan d'effets"
+      : "Plan animé";
 
   const details = DETAILS
     .filter(([tag]) => tags.has(tag) && (!action || tag !== action[0]))
@@ -160,12 +166,22 @@ function arcLabel(tag, roots, seriesName) {
   let rest = tag.slice(root.length).replace(/^[_:\-\s]+/, "");
   if (!rest) return prettify(tag);
 
+  // Les suffixes entre parenthèses (« (ova) », « (2024) ») ne sont pas des arcs.
+  const nu = rest.replace(/[()]/g, "");
+  if (/^ova$/i.test(nu)) return "OVA";
+  if (/^ona$/i.test(nu)) return "ONA";
+  if (/^tv$/i.test(nu)) return "Série TV";
+  if (/^\d{4}$/.test(nu)) return `${seriesName} (${nu})`;
+
   const season = rest.match(/^season[_\s]?(\d+)$/i) || rest.match(/^s(\d+)$/i);
   if (season) return `Saison ${season[1]}`;
   // Un simple numéro accolé au titre, c'est un film ou un opus (« Jujutsu
   // Kaisen 0 »), certainement pas « Arc 0 ».
   if (/^\d+$/.test(rest)) return `${seriesName} ${rest}`;
-  if (/^movie|^film/i.test(rest)) return `Film — ${prettify(rest.replace(/^(movie|film)[_\s:]*/i, ""))}`;
+  if (/^movie|^film/i.test(rest)) {
+    const titre = prettify(rest.replace(/^(movie|film)[_\s:]*/i, ""));
+    return /^\d*$/.test(titre.trim()) ? `Film ${titre}`.trim() : `Film — ${titre}`;
+  }
   if (/^(ii|2)$/i.test(rest)) return "Saison 2";
   if (/^(iii|3)$/i.test(rest)) return "Saison 3";
   if (/-hen$/.test(rest)) return `Arc ${prettify(rest.replace(/-hen$/, ""))}`;
