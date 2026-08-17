@@ -946,21 +946,11 @@ function lire(rush) {
     ajouter.textContent = state.panier.has(rush.id) ? "Retirer du panier" : "Ajouter au panier";
     rendre();
   });
-  const mp4 = document.createElement("a");
-  mp4.href = rush.video;
-  mp4.target = "_blank";
-  mp4.rel = "noopener";
-  mp4.textContent = rush.youtube ? "Ouvrir sur YouTube" : "Ouvrir la vidéo";
-  const fiche = document.createElement("a");
-  fiche.href = rush.page;
-  fiche.target = "_blank";
-  fiche.rel = "noopener";
-  fiche.textContent = `Fiche ${PROVENANCE[rush.provider] || ""}`.trim();
   const fermer = document.createElement("button");
   fermer.type = "button";
   fermer.textContent = "Fermer";
   fermer.addEventListener("click", () => { fond.hidden = true; fond.replaceChildren(); });
-  actions.append(ajouter, mp4, fiche, fermer);
+  actions.append(ajouter, fermer);
 
   corps.append(titre, meta, actions);
   boiteVideo.append(video, corps);
