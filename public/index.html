@@ -13,6 +13,15 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="amvauto">
+<!-- Écrans de lancement : sans eux, iOS ouvre l'application sur du blanc.
+     Une taille par appareil, c'est la seule façon dont Safari les accepte. -->
+<link rel="apple-touch-startup-image" href="splash/828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)">
+<link rel="apple-touch-startup-image" href="splash/750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)">
+<link rel="apple-touch-startup-image" href="splash/1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)">
+<link rel="apple-touch-startup-image" href="splash/1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)">
+<link rel="apple-touch-startup-image" href="splash/1242x2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)">
+<link rel="apple-touch-startup-image" href="splash/1284x2778.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)">
+<link rel="apple-touch-startup-image" href="splash/1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)">
 <style>
 @font-face {
   font-family: "Obelix Pro";
@@ -27,28 +36,46 @@
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #E63946 #161616;
+  scrollbar-color: #35C24D #161616;
 }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: #161616; }
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #E63946, #C1121F);
+  background: linear-gradient(180deg, #35C24D, #12762E);
   border-radius: 6px;
   border: 2px solid #161616;
 }
-::-webkit-scrollbar-thumb:hover { background: #ff4d5e; }
+::-webkit-scrollbar-thumb:hover { background: #4ee06a; }
 
 :root {
   --header-h: 50px;
   --nav-h: 40px;
-  --rouge: #E63946;
-  --rouge-fonce: #C1121F;
+  --vert: #35C24D;
+  --vert-fonce: #12762E;
   --fond: #0a0a0a;
   --surface: #161616;
   --trait: rgba(255, 255, 255, 0.08);
   --texte: #f0f0f5;
   --doux: #888;
 }
+
+.demarrage {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 18px;
+  background: var(--fond);
+  transition: opacity .35s ease;
+}
+.demarrage span {
+  font: 700 1.05rem/1 system-ui, sans-serif;
+  letter-spacing: .14em;
+  color: var(--vert);
+}
+.demarrage.parti { opacity: 0; pointer-events: none; }
 
 html { height: 100%; }
 
@@ -121,12 +148,12 @@ main {
   font: 700 0.8rem/1 system-ui, sans-serif;
   cursor: pointer;
 }
-.tete-btn.rouge {
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
-  border-color: var(--rouge-fonce);
+.tete-btn.accent {
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  border-color: var(--vert-fonce);
   color: #fff;
 }
-.tete-btn:hover { border-color: var(--rouge); }
+.tete-btn:hover { border-color: var(--vert); }
 
 /* Barre d'outils du montage : elle s'intercale entre le contenu et la barre
    d'onglets au lieu de la recouvrir, et rend à la piste la hauteur que les
@@ -157,21 +184,21 @@ main {
   cursor: pointer;
 }
 .barre-outils button svg { width: 21px; height: 21px; }
-.barre-outils button.fait { color: var(--rouge); border-color: var(--rouge); }
+.barre-outils button.fait { color: var(--vert); border-color: var(--vert); }
 .barre-outils button:disabled { opacity: .32; cursor: default; }
 .barre-outils button:disabled:hover { border-color: var(--trait); color: var(--texte); }
-.barre-outils button:hover { border-color: var(--rouge); color: var(--rouge); }
+.barre-outils button:hover { border-color: var(--vert); color: var(--vert); }
 .barre-outils button.fort {
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
-  border-color: var(--rouge-fonce);
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  border-color: var(--vert-fonce);
   color: #fff;
 }
 .barre-outils .separateur { flex: none; width: 1px; margin: 4px 2px; background: var(--trait); }
 /* Un mode actif se voit : sinon on ne sait pas si un glissé va déplacer un plan
    ou non, et c'est précisément ce doute qu'on veut supprimer. */
 .barre-outils button.on {
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
-  border-color: var(--rouge-fonce);
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  border-color: var(--vert-fonce);
   color: #fff;
 }
 .barre-outils button.on:hover { color: #fff; }
@@ -192,12 +219,16 @@ main {
   justify-content: space-evenly;
 }
 .tab-btn {
-  flex: none;
+  /* Icônes seules : le nom de l'onglet n'apprend rien qu'un dossier, une
+     pellicule et un « i » ne disent déjà. La barre y gagne en hauteur utile. */
+  flex: 1;
+  max-width: 96px;
   height: 100%;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
-  padding: 4px 18px;
+  padding: 4px 10px;
   background: transparent;
   color: var(--doux);
   border-radius: 8px;
@@ -205,13 +236,13 @@ main {
   cursor: pointer;
   font: 600 0.82rem/1 system-ui, sans-serif;
 }
-.tab-btn svg { width: 19px; height: 19px; }
-.tab-btn.active { color: var(--rouge); }
+.tab-btn svg { width: 22px; height: 22px; }
+.tab-btn.active { color: var(--vert); }
 .tab-badge {
   min-width: 18px;
   padding: 2px 5px;
   border-radius: 999px;
-  background: var(--rouge);
+  background: var(--vert);
   color: #fff;
   font-size: 0.68rem;
   font-weight: 700;
@@ -230,13 +261,13 @@ main {
   color: var(--texte);
   font-size: 1rem;
 }
-#anime:focus { outline: none; border-color: var(--rouge-fonce); }
+#anime:focus { outline: none; border-color: var(--vert-fonce); }
 .btn-go {
   flex: none;
   padding: 12px 18px;
   border: none;
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
   font: 700 0.92rem/1 system-ui, sans-serif;
   cursor: pointer;
@@ -268,7 +299,7 @@ main {
   cursor: pointer;
 }
 .suggest button:last-child { border-bottom: none; }
-.suggest button:hover { background: rgba(230, 57, 70, 0.14); color: var(--rouge); }
+.suggest button:hover { background: rgba(53, 194, 77, 0.14); color: var(--vert); }
 
 .quick { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 18px; }
 .quick button {
@@ -280,7 +311,7 @@ main {
   font-size: 0.82rem;
   cursor: pointer;
 }
-.quick button:hover { border-color: rgba(230, 57, 70, 0.6); color: var(--texte); }
+.quick button:hover { border-color: rgba(53, 194, 77, 0.6); color: var(--texte); }
 
 /* --- fil d'ariane --------------------------------------------------- */
 .crumbs {
@@ -300,11 +331,11 @@ main {
   border: none;
   border-radius: 6px;
   background: none;
-  color: var(--rouge);
+  color: var(--vert);
   font-size: 0.86rem;
   cursor: pointer;
 }
-.crumbs button:hover { background: rgba(230, 57, 70, 0.14); }
+.crumbs button:hover { background: rgba(53, 194, 77, 0.14); }
 .crumbs .sep { color: #555; }
 .crumbs .here { color: var(--doux); padding: 4px 7px; }
 
@@ -325,8 +356,8 @@ main {
   cursor: pointer;
   font: inherit;
 }
-.row:hover { border-color: rgba(230, 57, 70, 0.6); }
-.row .glyph { flex: none; width: 26px; height: 26px; color: var(--rouge); }
+.row:hover { border-color: rgba(53, 194, 77, 0.6); }
+.row .glyph { flex: none; width: 26px; height: 26px; color: var(--vert); }
 .row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .row .nom {
   display: block;
@@ -360,7 +391,7 @@ main {
   flex: none;
   padding: 5px 8px;
   border-radius: 6px;
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
   font: 700 0.78rem/1 system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
@@ -370,7 +401,7 @@ main {
 .puce {
   padding: 3px 7px;
   border-radius: 5px;
-  background: rgba(230, 57, 70, 0.16);
+  background: rgba(53, 194, 77, 0.16);
   color: #ff8a94;
   font-size: 0.7rem;
   font-weight: 600;
@@ -391,7 +422,7 @@ main {
   line-height: 1;
   cursor: pointer;
 }
-.btn-pick.on { background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce)); border-color: var(--rouge-fonce); }
+.btn-pick.on { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
 
 .tools { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .tools .label { font-size: 0.78rem; color: var(--doux); }
@@ -404,7 +435,7 @@ main {
   font-size: 0.8rem;
   cursor: pointer;
 }
-.tools button.on { background: linear-gradient(135deg, rgba(230,57,70,.3), rgba(193,18,31,.2)); border-color: var(--rouge-fonce); color: var(--texte); }
+.tools button.on { background: linear-gradient(135deg, rgba(53,194,77,.3), rgba(193,18,31,.2)); border-color: var(--vert-fonce); color: var(--texte); }
 
 .note { padding: 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--trait); color: var(--doux); font-size: 0.9rem; }
 .note.erreur { border-color: #7a2b2b; color: #e59a9a; }
@@ -419,7 +450,7 @@ main {
   font: 600 0.85rem/1 system-ui, sans-serif;
   cursor: pointer;
 }
-.encore:hover { border-color: var(--rouge); color: var(--rouge); }
+.encore:hover { border-color: var(--vert); color: var(--vert); }
 
 .squelette { height: 66px; border-radius: 10px; background: var(--surface); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
@@ -480,7 +511,7 @@ main {
   text-decoration: none;
   cursor: pointer;
 }
-.lecteur-actions .fort { background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce)); border-color: var(--rouge-fonce); }
+.lecteur-actions .fort { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
 
 /* --- éditeur de montage --------------------------------------------- */
 .editeur { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
@@ -515,7 +546,7 @@ main {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
   font: 600 0.78rem/1.3 system-ui, sans-serif;
 }
@@ -531,6 +562,9 @@ main {
   cursor: pointer;
 }
 
+/* En plein écran sur iPhone, la page passe sous la barre d'état : une croix à
+   12 px du haut se retrouve collée à l'heure et au réseau. Elle descend donc de
+   la hauteur de cette barre, plus une marge pour le pouce. */
 .sortie-plein {
   position: absolute;
   top: 12px;
@@ -564,6 +598,52 @@ body.ecran-plein .ecran {
   background: #000;
 }
 body.ecran-plein .ecran video { object-fit: contain; }
+body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px); right: 14px; }
+
+/* Contrôles de lecture en plein écran : on ne quitte plus l'écran pour mettre
+   en pause. Ils s'effacent au bout de trois secondes sans geste, comme dans un
+   lecteur vidéo, et reviennent au moindre contact. */
+.plein-transport {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(8px);
+  transition: opacity .25s;
+}
+.plein-transport.efface { opacity: 0; pointer-events: none; }
+.plein-transport button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  cursor: pointer;
+}
+.plein-transport button.lecture {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+}
+.plein-transport button svg { width: 22px; height: 22px; }
+.plein-transport button.lecture svg { width: 26px; height: 26px; }
+.plein-timecode {
+  font: 700 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  padding: 0 4px;
+}
 
 .ecran-vide {
   position: absolute;
@@ -584,7 +664,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
   height: 44px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
   font-size: 1rem;
   line-height: 1;
@@ -601,7 +681,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
   height: 100%;
   width: 0;
   border-radius: 3px;
-  background: linear-gradient(90deg, var(--rouge), var(--rouge-fonce));
+  background: linear-gradient(90deg, var(--vert), var(--vert-fonce));
 }
 
 /* --- sélecteur de projets ------------------------------------------- */
@@ -620,7 +700,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
   cursor: pointer;
   text-align: left;
 }
-.projet-carte.actif { border-color: var(--rouge); background: linear-gradient(135deg, rgba(230,57,70,.22), rgba(193,18,31,.14)); }
+.projet-carte.actif { border-color: var(--vert); background: linear-gradient(135deg, rgba(53,194,77,.22), rgba(193,18,31,.14)); }
 .projet-vignette {
   flex: none;
   display: grid;
@@ -630,7 +710,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
   border-radius: 6px;
   background: #000 center/cover no-repeat;
   border: 1px solid var(--trait);
-  color: var(--rouge);
+  color: var(--vert);
 }
 .projet-vignette svg { width: 18px; height: 18px; }
 .projet-texte { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -654,7 +734,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
   cursor: pointer;
 }
 .rond svg { width: 19px; height: 19px; }
-.rond:hover { border-color: var(--rouge); color: var(--rouge); }
+.rond:hover { border-color: var(--vert); color: var(--vert); }
 .rond:disabled { opacity: .3; cursor: default; }
 .lecture {
   flex: none;
@@ -664,7 +744,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
   height: 52px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
   cursor: pointer;
 }
@@ -739,12 +819,14 @@ body.ecran-plein .ecran video { object-fit: contain; }
 .clip canvas.bande { position: absolute; top: 0; bottom: 0; height: 100%; display: block; }
 .clip canvas.bande[hidden] { display: none; }
 .clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,.68)); }
-.clip.actif { box-shadow: inset 0 0 0 2px var(--rouge); }
+.clip.actif { box-shadow: inset 0 0 0 2px var(--vert); }
 /* Un bloc porte une image de fond et du texte : sans ces trois lignes, le
    navigateur y voit de quoi lancer son propre glisser-déposer ou une sélection,
    prend la main sur le geste et annule le nôtre au deuxième déplacement. */
 .clip, .clip * { user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
-body.reordre .clip { touch-action: none; }
+.clip { touch-action: none; }
+/* La bande son, elle, reste le rail pour faire défiler la piste au doigt. */
+.bande-son { touch-action: pan-x; }
 .clip-import {
   position: absolute;
   z-index: 2;
@@ -756,12 +838,12 @@ body.reordre .clip { touch-action: none; }
   background: rgba(255, 255, 255, .18);
   overflow: hidden;
 }
-.clip-import-jauge { display: block; height: 100%; width: 0; background: var(--rouge); }
+.clip-import-jauge { display: block; height: 100%; width: 0; background: var(--vert); }
 /* Un liseré vert discret : le plan est sur l'appareil, il se parcourt
    instantanément. */
 .clip.local { box-shadow: inset -1px 0 0 rgba(0,0,0,.75), inset 0 -3px 0 rgba(80, 200, 130, .55); }
-.clip.local.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 -3px 0 rgba(80, 200, 130, .55); }
-.clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--rouge), 0 6px 18px rgba(0,0,0,.6); }
+.clip.local.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 -3px 0 rgba(80, 200, 130, .55); }
+.clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--vert), 0 6px 18px rgba(0,0,0,.6); }
 /* Poignées de rognage : visibles seulement sur le plan sélectionné, larges au
    doigt (14 px) mais dessinées fines pour ne pas manger le bloc. */
 .poignee {
@@ -793,7 +875,7 @@ body.reordre .clip { touch-action: none; }
    poignées s'effacent et les blocs annoncent qu'ils se saisissent. */
 body.reordre .clip .poignee { display: none; }
 body.reordre .clip { cursor: grab; }
-body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 22px rgba(230, 57, 70, .35); }
+body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22px rgba(53, 194, 77, .35); }
 /* Un plan coupé se signale : sinon on cherche pourquoi le rush entier ne passe
    pas. */
 .clip.rogne .clip-duree { color: #ffd7a1; }
@@ -831,7 +913,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 2
   font: 600 0.78rem/1 system-ui, sans-serif; cursor: pointer;
 }
 .son-ajout svg { width: 16px; height: 16px; }
-.son-ajout:hover { border-color: var(--rouge); color: var(--rouge); }
+.son-ajout:hover { border-color: var(--vert); color: var(--vert); }
 .son-retirer {
   flex: none; display: grid; place-items: center;
   width: 36px; height: 36px; border-radius: 9px;
@@ -851,12 +933,12 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 2
 }
 .tete::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 10px;
-  width: 2px; background: var(--rouge); box-shadow: 0 0 6px rgba(230, 57, 70, .9);
+  width: 2px; background: var(--vert); box-shadow: 0 0 6px rgba(53, 194, 77, .9);
 }
 .tete-poignee {
   position: absolute; top: 0; left: 50%; transform: translateX(-50%);
   width: 14px; height: 14px; border-radius: 50%;
-  background: var(--rouge); box-shadow: 0 0 8px rgba(230, 57, 70, .8);
+  background: var(--vert); box-shadow: 0 0 8px rgba(53, 194, 77, .8);
   pointer-events: auto; cursor: ew-resize; touch-action: none;
 }
 /* Zone de saisie élargie au doigt, sans grossir le rond. */
@@ -870,7 +952,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 2
   position: absolute; right: 10px; bottom: 52px; z-index: 4;
   display: grid; place-items: center;
   width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--fond);
-  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff; cursor: pointer;
   box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
 }
@@ -893,7 +975,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 2
   flex: none;
   min-width: 26px;
   font: 700 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--rouge);
+  color: var(--vert);
   font-variant-numeric: tabular-nums;
 }
 .row.plan .sous { font-variant-numeric: tabular-nums; }
@@ -909,29 +991,33 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 2
   font: 600 0.85rem/1 system-ui, sans-serif;
   cursor: pointer;
 }
-.panier-actions button.fort { background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce)); border-color: var(--rouge-fonce); }
+.panier-actions button.fort { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
 
 .apropos h2 { font-family: "Obelix Pro", "Arial Black", system-ui, sans-serif; font-size: 1rem; letter-spacing: .05em; margin: 20px 0 8px; }
 .apropos p, .apropos li { font-size: 0.88rem; color: #bbb; line-height: 1.6; }
-.apropos a { color: var(--rouge); }
+.apropos a { color: var(--vert); }
 </style>
 </head>
 <body>
 
+<!-- Écran de démarrage : la page est en cache, il s'affiche donc sans attendre
+     le réseau et prend le relais de l'écran de lancement du système. -->
+<div class="demarrage" id="demarrage" aria-hidden="true">
+  <img src="icon.svg" alt="" width="128" height="128">
+  <span>AMVAUTO</span>
+</div>
+
 <nav class="bottom-nav">
   <div class="bottom-nav-inner">
-    <button type="button" class="tab-btn active" data-tab="explorer">
+    <button type="button" class="tab-btn active" data-tab="explorer" title="Explorer" aria-label="Explorer">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-      Explorer
     </button>
-    <button type="button" class="tab-btn" data-tab="projet">
+    <button type="button" class="tab-btn" data-tab="projet" title="Projet" aria-label="Projet">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 6v12M17 6v12"/></svg>
-      Projet
       <span class="tab-badge" id="badge" hidden>0</span>
     </button>
-    <button type="button" class="tab-btn" data-tab="apropos">
+    <button type="button" class="tab-btn" data-tab="apropos" title="Infos" aria-label="Infos">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
-      Infos
     </button>
   </div>
 </nav>
@@ -945,7 +1031,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 2
       <span class="app-title">AMVAUTO</span>
       <span class="app-count" id="compteur"></span>
       <span class="app-actions" id="app-actions" hidden>
-        <button type="button" id="btn-export" class="tete-btn rouge">Export</button>
+        <button type="button" id="btn-export" class="tete-btn accent">Export</button>
         <button type="button" id="btn-setting" class="tete-btn">Setting</button>
       </span>
     </div>
@@ -1040,7 +1126,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 2
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 12:38";
+const VERSION_PAGE = "2026-08-17 16:18";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1126,6 +1212,7 @@ const TRAITS = {
   pause: '<path d="M8 5v14M16 5v14" stroke-width="2.6"/>',
   plein: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
   plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"/>',
   son: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
   pellicule: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14"/>',
   couper: '<circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M7.8 16.2L18 5M16.2 16.2L6 5"/>',
@@ -2519,11 +2606,86 @@ function entrerPleinEcranCss() {
     sortie.addEventListener("click", quitterPleinEcranCss);
     $("ecran").append(sortie);
   }
+  poserTransportPlein();
 }
 
 function quitterPleinEcranCss() {
   document.body.classList.remove("ecran-plein");
   $("sortie-plein")?.remove();
+  retirerTransportPlein();
+}
+
+// Le plein écran natif (ordinateur) mérite les mêmes contrôles que le repli CSS.
+for (const nom of ["fullscreenchange", "webkitfullscreenchange"]) {
+  document.addEventListener(nom, () => {
+    if (document.fullscreenElement || document.webkitFullscreenElement) poserTransportPlein();
+    else retirerTransportPlein();
+  });
+}
+
+/* Transport du plein écran : lecture, retour au début, et le timecode. Sans
+   lui, il fallait sortir du plein écran pour mettre en pause. */
+let effacementPlein = null;
+
+function poserTransportPlein() {
+  const ecran = $("ecran");
+  if (!ecran || $("plein-transport")) return;
+
+  const barre = document.createElement("div");
+  barre.className = "plein-transport";
+  barre.id = "plein-transport";
+
+  const bouton = (nom, titre, action, classe = "") => {
+    const element = document.createElement("button");
+    element.type = "button";
+    if (classe) element.className = classe;
+    element.innerHTML = icone(nom);
+    element.title = titre;
+    element.setAttribute("aria-label", titre);
+    element.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      action();
+      reveillerTransportPlein();
+    });
+    return element;
+  };
+
+  const jouer = bouton("play", "Lecture ou pause", basculerLecture, "lecture");
+  jouer.id = "plein-lecture";
+
+  const code = document.createElement("span");
+  code.className = "plein-timecode";
+  code.id = "plein-timecode";
+
+  barre.append(
+    bouton("stop", "Revenir au début et arrêter", () => { arreter(); allerA(0); }),
+    jouer,
+    code,
+  );
+  ecran.append(barre);
+
+  // Un contact sur l'image rappelle les contrôles ; ils s'effacent ensuite.
+  ecran.addEventListener("pointerdown", reveillerTransportPlein);
+  reveillerTransportPlein();
+  majTransport();
+}
+
+function retirerTransportPlein() {
+  clearTimeout(effacementPlein);
+  effacementPlein = null;
+  $("ecran")?.removeEventListener("pointerdown", reveillerTransportPlein);
+  $("plein-transport")?.remove();
+}
+
+function reveillerTransportPlein() {
+  const barre = $("plein-transport");
+  if (!barre) return;
+  barre.classList.remove("efface");
+  clearTimeout(effacementPlein);
+  // Jamais pendant une pause : on laisse les contrôles sous la main.
+  effacementPlein = setTimeout(() => {
+    if (lecture.demande) barre.classList.add("efface");
+  }, 3000);
 }
 
 document.addEventListener("keydown", (evt) => {
@@ -2768,20 +2930,52 @@ function couperAuCurseur() {
 }
 
 /* --- déplacer la tête de lecture au doigt ----------------------------- */
+/* Poser le doigt n'importe où dans la piste amène la tête de lecture à cet
+   endroit, et elle suit le doigt ensuite : c'est le geste attendu, et il évite
+   de devoir viser la règle. Quand le doigt atteint un bord de la fenêtre, la
+   piste défile toute seule — sans ça, à fort zoom, on ne pourrait pas dépasser
+   ce qui est visible. */
 function brancherScrub(element) {
-  element.addEventListener("pointerdown", (evt) => {
+  element.addEventListener("pointerdown", demarrerScrub);
+}
+
+function demarrerScrub(evt) {
     evt.preventDefault();
     deverrouiller();
     const ligne = $("ligne");
+    const cadre = $("piste");
     if (!ligne) return;
-    const gauche = ligne.getBoundingClientRect().left;
-    const viser = (x) => allerA(Math.max(0, x - gauche) / lecture.echelle);
+    const viser = (x) => allerA(Math.max(0, x - ligne.getBoundingClientRect().left) / lecture.echelle);
     lecture.scrub = true;
     debutGeste();
     viser(evt.clientX);
-    const bouger = (autre) => viser(autre.clientX);
+
+    // Défilement au bord, entretenu tant que le doigt y reste.
+    let dernierX = evt.clientX;
+    let glissade = null;
+    const entretenir = () => {
+      glissade = null;
+      if (!cadre) return;
+      const boite = cadre.getBoundingClientRect();
+      const marge = 44;
+      const sortie = dernierX > boite.right - marge
+        ? dernierX - (boite.right - marge)
+        : dernierX < boite.left + marge ? dernierX - (boite.left + marge) : 0;
+      if (!sortie) return;
+      const avant = cadre.scrollLeft;
+      cadre.scrollLeft = Math.max(0, avant + Math.max(-24, Math.min(24, sortie / 3)));
+      if (cadre.scrollLeft !== avant) viser(dernierX);
+      glissade = requestAnimationFrame(entretenir);
+    };
+
+    const bouger = (autre) => {
+      dernierX = autre.clientX;
+      viser(dernierX);
+      if (!glissade) glissade = requestAnimationFrame(entretenir);
+    };
     const finir = () => {
       lecture.scrub = false;
+      if (glissade) cancelAnimationFrame(glissade);
       finGeste();
       window.removeEventListener("pointermove", bouger);
       window.removeEventListener("pointerup", finir);
@@ -2790,7 +2984,6 @@ function brancherScrub(element) {
     window.addEventListener("pointermove", bouger);
     window.addEventListener("pointerup", finir);
     window.addEventListener("pointercancel", finir);
-  });
 }
 
 /* --- déplacer un plan, réordonné en direct ---------------------------- */
@@ -2799,19 +2992,22 @@ function brancherGlisse(clip, projet, index) {
   clip.addEventListener("dragstart", (evt) => evt.preventDefault());
   clip.addEventListener("pointerdown", (evt) => {
     if (evt.button) return;
+    // Hors mode déplacement, un bloc est une portion de la piste comme une
+    // autre : le doigt y amène la tête de lecture et elle le suit.
+    if (!state.reordre) {
+      selectionner(index);
+      demarrerScrub(evt);
+      return;
+    }
     // En mode déplacement, le geste est à nous : on empêche le navigateur de
     // lancer le sien, faute de quoi il annule le nôtre en cours de route.
-    if (state.reordre) evt.preventDefault();
+    evt.preventDefault();
     const depart = evt.clientX;
     let position = index;
     let actif = false;
     debutGeste();
 
     const bouger = (autre) => {
-      // Hors mode déplacement, un doigt qui traîne ne touche pas à l'ordre des
-      // plans : c'est le geste le plus facile à faire par accident, et le plus
-      // coûteux à défaire quand on ne s'en aperçoit pas.
-      if (!state.reordre) return;
       if (!actif && Math.abs(autre.clientX - depart) < 6) return;
       if (!actif) {
         actif = true;
@@ -3585,8 +3781,13 @@ function majTransport() {
   // Zoomé au-delà du dixième, la tête bouge sans que le timecode change : il
   // gagne alors une décimale.
   $("timecode").textContent = `${horloge(position, lecture.echelle > 300 ? 2 : 1)} / ${horloge(total(projet))}`;
+  const enLecture = lecture.demande || lecture.jouant;
   const jouer = $("lecture");
-  if (jouer) jouer.innerHTML = icone(lecture.demande || lecture.jouant ? "pause" : "play");
+  if (jouer) jouer.innerHTML = icone(enLecture ? "pause" : "play");
+  const pleinJouer = $("plein-lecture");
+  if (pleinJouer) pleinJouer.innerHTML = icone(enLecture ? "pause" : "play");
+  const pleinCode = $("plein-timecode");
+  if (pleinCode) pleinCode.textContent = `${horloge(position, 1)} / ${horloge(total(projet))}`;
 
   const tete = $("tete");
   if (tete) {
@@ -3884,6 +4085,19 @@ function telecharger(nom, contenu) {
 }
 
 charger();
+
+// L'écran de démarrage s'efface dès que l'interface est prête. Un court minimum
+// de présence évite le clignotement quand tout est déjà en cache.
+const depart = performance.now();
+requestAnimationFrame(() => {
+  const attendre = Math.max(0, 420 - (performance.now() - depart));
+  setTimeout(() => {
+    const ecran = $("demarrage");
+    if (!ecran) return;
+    ecran.classList.add("parti");
+    setTimeout(() => ecran.remove(), 400);
+  }, attendre);
+});
 </script>
 </body>
 </html>

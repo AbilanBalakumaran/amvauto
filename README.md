@@ -51,7 +51,8 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    à gauche, chaque bloc large comme sa durée et rempli de vraies images du plan — la
    pellicule ne peint que la partie visible et sa densité suit le zoom, jusqu'à une image
    par graduation (24 i/s) —, tête de lecture glissable au doigt, une voie pour une musique
-   ou un SFX pris sur l'appareil, et
+   ou un SFX pris sur l'appareil, **la tête qui se pose partout où le doigt touche la piste**
+   et la suit — avec défilement automatique quand le doigt atteint un bord —, et
    **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
    courant se joue). Clic sur un bloc pour s'y placer. **Déplacer un plan est un mode qui
    s'active**, verrouillé par défaut : changer l'ordre des scènes est le geste le plus facile
@@ -111,9 +112,15 @@ le même horodatage, posé par `tools/stamp.mjs` au déploiement : quand ils dif
 affiche un bandeau — un navigateur qui garde une copie périmée donne sinon l'impression que
 rien n'a été corrigé.
 
-L'interface reprend la direction artistique d'[autoshort](https://github.com/AbilanBalakumaran/autoshort)
-— fond `#0a0a0a`, surfaces `#161616`, accent `#E63946 → #C1121F`, titres en Obelix Pro,
-coquille header + barre d'onglets — pour que les deux applications se ressemblent.
+L'interface reprend la coquille d'[autoshort](https://github.com/AbilanBalakumaran/autoshort)
+— fond `#0a0a0a`, surfaces `#161616`, titres en Obelix Pro, header + barre d'onglets — sur un
+thème **Zoro** : accent `#35C24D → #12762E`, et pour icône ses trois katanas en éventail,
+dessinés en vectoriel sur le noir de l'application. Le même dessin sert de favicon, d'icône
+installée, et d'écran de lancement — un par taille d'iPhone, plus un écran de démarrage
+dans la page qui prend le relais sans attendre le réseau.
+
+La barre d'onglets ne porte que des icônes : un dossier, une pellicule et un « i » disent
+déjà ce que les mots répétaient, et la barre y gagne en hauteur utile.
 
 ### CLI
 
@@ -194,6 +201,13 @@ image figée :
   grille en puissances de deux pour qu'un changement de zoom retombe sur des images déjà
   capturées. Une seule sonde vidéo sert toutes les captures : sur un fichier importé, s'y
   déplacer est immédiat.
+
+- **Le plein écran d'iPhone n'est pas celui des autres.** Safari n'expose pas
+  `requestFullscreen` sur un élément quelconque : l'écran est agrandi en CSS, et la page passe
+  alors sous la barre d'état — une croix à 12 px du haut se retrouve collée à l'heure. Elle
+  descend donc de la hauteur de cette barre plus une marge pour le pouce, et le plein écran a
+  ses propres contrôles (lecture, retour au début, timecode) pour ne plus avoir à en sortir
+  pour mettre en pause.
 
 Le reste tient à des contraintes de lecture média sur mobile : un fichier n'est pas chargé
 tant que l'utilisateur n'a pas lancé la lecture, une lecture demandée hors du geste est

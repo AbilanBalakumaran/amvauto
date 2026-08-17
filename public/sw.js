@@ -6,7 +6,7 @@
 // ouverte. Sans cette estampille automatique, il faudrait penser à incrémenter
 // un numéro à chaque déploiement — et l'oublier une fois suffit à figer
 // l'application chez l'utilisateur.
-const VERSION = "2026-08-17 12:38";
+const VERSION = "2026-08-17 16:18";
 const CACHE = `amvauto-${VERSION}`;
 
 const COQUILLE = [
@@ -16,6 +16,7 @@ const COQUILLE = [
   "./icon.svg",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/icon-512-masque.png",
   "./apple-touch-icon.png",
   "./fonts/ObelixProB-cyr.ttf",
 ];

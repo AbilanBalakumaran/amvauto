@@ -1,24 +1,46 @@
 <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Trois katanas en éventail : le santoryu de Zoro. Un emblème plutôt qu'un
+       portrait — c'est ce qui se reconnaît au premier coup d'œil et reste
+       lisible à 32 pixels dans un onglet. Vectoriel, sur le noir de
+       l'application, dans son vert. -->
   <defs>
-    <linearGradient id="rouge" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#E63946"/>
-      <stop offset="1" stop-color="#C1121F"/>
+    <linearGradient id="acier" x1="0.1" y1="1" x2="0.9" y2="0">
+      <stop offset="0" stop-color="#BFEFCB"/>
+      <stop offset="0.45" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#7FE39A"/>
     </linearGradient>
+    <linearGradient id="poignee" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3FD65A"/>
+      <stop offset="1" stop-color="#0F6427"/>
+    </linearGradient>
+    <radialGradient id="lueur" cx="0.5" cy="0.44" r="0.58">
+      <stop offset="0" stop-color="#35C24D" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#35C24D" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Un katana, pointe en haut, garde à l'origine : lame courbe à un seul
+         tranchant, garde ovale, poignée tressée. Les trois exemplaires ne
+         diffèrent que par leur pivot et leur inclinaison. -->
+    <g id="katana">
+      <path d="M-11 -4 C-14 -96 -10 -170 -3 -214 L4 -236 L11 -200 C13 -112 11 -52 11 -4 Z" fill="url(#acier)"/>
+      <path d="M-3 -28 C-5 -104 -2 -160 1 -196" stroke="#0a0a0a" stroke-width="4" fill="none" opacity="0.16"/>
+      <ellipse cx="0" cy="2" rx="27" ry="12" fill="url(#poignee)"/>
+      <rect x="-10" y="10" width="20" height="84" rx="9" fill="url(#poignee)"/>
+      <g stroke="#0a0a0a" stroke-width="4.5" stroke-linecap="round" opacity="0.45">
+        <path d="M-10 27 L10 38"/>
+        <path d="M-10 46 L10 57"/>
+        <path d="M-10 65 L10 76"/>
+      </g>
+      <circle cx="0" cy="100" r="8" fill="url(#poignee)"/>
+    </g>
   </defs>
+
   <rect width="512" height="512" rx="112" fill="#0a0a0a"/>
-  <!-- amorce de pellicule : deux bandes de perforations et la fenêtre du photogramme -->
-  <rect x="96" y="112" width="320" height="288" rx="24" fill="url(#rouge)"/>
-  <rect x="136" y="152" width="240" height="208" rx="12" fill="#0a0a0a"/>
-  <g fill="#0a0a0a">
-    <rect x="112" y="140" width="26" height="26" rx="7"/>
-    <rect x="112" y="196" width="26" height="26" rx="7"/>
-    <rect x="112" y="252" width="26" height="26" rx="7"/>
-    <rect x="112" y="308" width="26" height="26" rx="7"/>
-    <rect x="374" y="140" width="26" height="26" rx="7"/>
-    <rect x="374" y="196" width="26" height="26" rx="7"/>
-    <rect x="374" y="252" width="26" height="26" rx="7"/>
-    <rect x="374" y="308" width="26" height="26" rx="7"/>
-  </g>
-  <!-- le triangle de lecture, posé dans le photogramme -->
-  <path d="M222 202l96 54-96 54z" fill="url(#rouge)"/>
+  <circle cx="256" cy="232" r="232" fill="url(#lueur)"/>
+
+  <!-- Les deux sabres inclinés d'abord : ils passent derrière celui du centre,
+       et leurs gardes sont décalées pour ne pas se confondre. -->
+  <g transform="translate(190 336) rotate(-31)"><use href="#katana"/></g>
+  <g transform="translate(322 336) rotate(31)"><use href="#katana"/></g>
+  <g transform="translate(256 318)"><use href="#katana"/></g>
 </svg>
