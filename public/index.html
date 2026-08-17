@@ -485,7 +485,18 @@ main {
   overflow: hidden;
   border: 1px solid var(--trait);
 }
-.ecran video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.moniteur { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
+/* Les deux lecteurs alimentent le moniteur : ils ne sont jamais montrés, mais
+   restent dans le document — un média retiré du DOM est déchargé. */
+.lecteur-cache {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0.01;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+}
 .bandeau-version {
   position: fixed;
   top: 0;
@@ -545,16 +556,6 @@ body.ecran-plein .ecran {
   background: #000;
 }
 body.ecran-plein .ecran video { object-fit: contain; }
-
-.ecran-image {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #000;
-  pointer-events: none;
-}
 
 .ecran-vide {
   position: absolute;
@@ -956,7 +957,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:57";
+const VERSION_PAGE = "2026-08-17 08:07";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1774,7 +1775,7 @@ function totaux(projet) {
 const ECHELLE_MIN = 0.3;
 const ECHELLE_MAX = 900;
 const PAS_REGLE = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false };
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -1904,12 +1905,47 @@ function editeur(projet) {
   const ecran = document.createElement("div");
   ecran.className = "ecran";
   ecran.id = "ecran";
+
+  // Moniteur programme : c'est lui qu'on regarde, et il montre l'état de la
+  // séquence à l'instant de la tête de lecture. Les fichiers, eux, tournent
+  // derrière — un logiciel de montage ne montre pas un lecteur, il compose une
+  // image.
+  const moniteur = document.createElement("canvas");
+  moniteur.className = "moniteur";
+  moniteur.id = "moniteur";
+  moniteur.width = 1280;
+  moniteur.height = 720;
+
+  // Deux lecteurs qui alternent : pendant qu'un plan passe, le suivant est
+  // déjà chargé et placé au début. C'est ce qui supprime le trou noir au
+  // changement de plan.
+  const lecteurs = [creerLecteur("a"), creerLecteur("b")];
+
+  const vide = document.createElement("div");
+  vide.className = "ecran-vide";
+  vide.id = "ecran-vide";
+
+  ecran.append(moniteur, lecteurs[0], lecteurs[1], vide);
+  bloc.append(ecran, transport(), pisteComplete(projet));
+  lecture.actif = 0;
+  demarrerMoniteur();
+  return bloc;
+}
+
+function creerLecteur(nom) {
   const video = document.createElement("video");
-  video.id = "apercu";
+  video.id = `lecteur-${nom}`;
+  video.className = "lecteur-cache";
   video.playsInline = true;
   video.preload = "auto";
-  video.addEventListener("ended", planSuivant);
+  // Surtout pas de crossOrigin : les sources n'envoient pas d'en-tête CORS, et
+  // le lecteur refuserait alors de charger le fichier. Dessiner une vidéo sans
+  // CORS dans une toile la « teinte » — on ne peut plus en relire les pixels —
+  // mais l'afficher reste permis, et c'est tout ce dont on a besoin.
+
+  video.addEventListener("ended", () => { if (video === elementActif()) planSuivant(); });
   video.addEventListener("error", () => {
+    if (video !== elementActif()) return;
     const plan = projetActif()?.plans[lecture.index];
     const vide = $("ecran-vide");
     if (!plan || !vide) return;
@@ -1917,45 +1953,94 @@ function editeur(projet) {
     vide.hidden = false;
     if (lecture.jouant) planSuivant();
   });
-  // Chaque étape du chargement est une occasion de reposer la cible.
+
+  // Chaque étape du chargement est une occasion de reposer la position visée.
   for (const signal of ["loadedmetadata", "loadeddata", "canplay", "canplaythrough", "playing", "timeupdate", "seeked"]) {
     video.addEventListener(signal, () => appliquerCible(video));
   }
-  video.addEventListener("seeked", () => { if (!lecture.jouant && video.readyState < 2) secouer(video); });
+  video.addEventListener("seeked", () => {
+    if (video === elementActif() && !lecture.jouant && video.readyState < 2) secouer(video);
+  });
   video.addEventListener("play", () => {
-    if (lecture.secousse) return;
+    if (lecture.secousse || video !== elementActif()) return;
     lecture.jouant = true;
     majTransport();
     suivreTete();
     demarrerSon();
   });
   video.addEventListener("pause", () => {
-    if (lecture.secousse) return;
+    if (lecture.secousse || video !== elementActif()) return;
     lecture.jouant = false;
     majTransport();
     arreterSon();
   });
-  // Un lecteur vidéo n'affiche une image qu'une fois le fichier chargé, et sur
-  // mobile il ne charge parfois qu'après une première lecture. La vignette du
-  // plan, elle, s'affiche immédiatement : c'est elle qu'on voit sous le
-  // curseur tant que le fichier n'a pas rendu sa première image.
-  const image = document.createElement("img");
-  image.className = "ecran-image";
-  image.id = "ecran-image";
-  image.alt = "";
-  image.hidden = true;
+  return video;
+}
 
-  const vide = document.createElement("div");
-  vide.className = "ecran-vide";
-  vide.id = "ecran-vide";
-  ecran.append(video, image, vide);
+const elementActif = () => document.getElementById(`lecteur-${lecture.actif ? "b" : "a"}`);
+const elementAttente = () => document.getElementById(`lecteur-${lecture.actif ? "a" : "b"}`);
 
-  // Dès que le fichier montre quelque chose, il reprend la main.
-  video.addEventListener("timeupdate", () => { if (video.readyState >= 2) image.hidden = true; });
-  video.addEventListener("seeked", () => { if (video.readyState >= 2) image.hidden = true; });
+// Le moniteur dessine, image par image, ce que la séquence doit montrer : la
+// vidéo du plan courant si elle a quelque chose à donner, sa vignette sinon.
+// Ainsi l'aperçu suit toujours la piste, même quand un fichier traîne.
+const vignettes = new Map();
+function vignetteDe(plan) {
+  if (!plan?.preview) return null;
+  let image = vignettes.get(plan.id);
+  if (!image) {
+    image = new Image();
+    image.src = plan.preview;
+    vignettes.set(plan.id, image);
+  }
+  return image.complete && image.naturalWidth ? image : null;
+}
 
-  bloc.append(ecran, transport(), pisteComplete(projet));
-  return bloc;
+function demarrerMoniteur() {
+  if (lecture.moniteur) cancelAnimationFrame(lecture.moniteur);
+  const pas = () => {
+    dessinerMoniteur();
+    lecture.moniteur = requestAnimationFrame(pas);
+  };
+  lecture.moniteur = requestAnimationFrame(pas);
+}
+
+function dessinerMoniteur() {
+  const toile = $("moniteur");
+  if (!toile) { if (lecture.moniteur) cancelAnimationFrame(lecture.moniteur); lecture.moniteur = null; return; }
+  const ctx = toile.getContext("2d");
+  const plan = projetActif()?.plans[lecture.index];
+  const video = elementActif();
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, toile.width, toile.height);
+
+  let source = null;
+  if (video && video.readyState >= 2 && video.videoWidth) source = video;
+  else source = vignetteDe(plan);
+  if (!source) return;
+
+  const largeur = source.videoWidth || source.naturalWidth;
+  const hauteur = source.videoHeight || source.naturalHeight;
+  if (!largeur || !hauteur) return;
+
+  // On respecte le format de la source, comme le ferait un moniteur.
+  const facteur = Math.min(toile.width / largeur, toile.height / hauteur);
+  const l = largeur * facteur;
+  const h = hauteur * facteur;
+  ctx.drawImage(source, (toile.width - l) / 2, (toile.height - h) / 2, l, h);
+}
+
+// Prépare un plan sur le lecteur en attente : chargé, placé au début, prêt à
+// prendre la main sans temps mort.
+function preparerSuivant(index) {
+  const plan = projetActif()?.plans[index];
+  const attente = elementAttente();
+  if (!plan || !attente || plan.youtube || !plan.video) return;
+  if (attente.dataset.plan === plan.id) return;
+  attente.dataset.plan = plan.id;
+  attente.muted = true;
+  attente.src = plan.video;
+  attente.load();
 }
 
 // Plein écran à gauche, lecture au centre, annuler et rétablir à droite.
@@ -2343,6 +2428,12 @@ function redessinerPiste() {
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
   ancienne.closest(".piste-enveloppe").replaceWith(pisteComplete(projet));
+  // La carte du projet porte la durée totale : elle vieillit dès qu'une durée
+  // est mesurée.
+  const carte = document.querySelector(".projet-carte.actif .projet-sous");
+  if (carte) {
+    carte.textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""} · ${horloge(total(projet))}`;
+  }
   selectionner(lecture.index);
   majTransport();
 }
@@ -2353,7 +2444,8 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   lecture.index = index;
   if (!lecture.jouant) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
   const plan = projet.plans[index];
-  const video = $("apercu");
+  // « let » : la bascule A/B peut changer de lecteur en cours de route.
+  let video = elementActif();
   const vide = $("ecran-vide");
   if (!video) return;
 
@@ -2369,14 +2461,23 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   }
 
   vide.hidden = true;
+  // Si le lecteur en attente porte déjà ce plan, on bascule sur lui : c'est
+  // tout l'intérêt d'en avoir deux, le fichier est déjà chargé.
+  const attente = elementAttente();
+  if (video.dataset.plan !== plan.id && attente?.dataset.plan === plan.id) {
+    // Le sortant est arrêté et mis en sourdine : sans ça deux lecteurs
+    // pourraient se faire entendre en même temps.
+    video.pause();
+    video.muted = true;
+    lecture.actif = lecture.actif ? 0 : 1;
+    video = elementActif();
+  }
   const change = video.dataset.plan !== plan.id;
   if (change) {
     video.dataset.plan = plan.id;
-    // L'affiche s'affiche tant qu'aucune image du fichier n'est disponible :
-    // sur mobile, c'est elle qu'on voit sous le curseur avant chargement.
-    video.poster = plan.preview || "";
     video.src = plan.video;
   }
+  video.muted = false;
   viser(video, decalage, plan);
   const demarrer = () => {
     if (enchainer || lecture.jouant) {
@@ -2393,35 +2494,25 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   video.addEventListener("loadedmetadata", demarrer, { once: true });
   video.addEventListener("canplay", demarrer, { once: true });
 
-  precharger(index + 1);
+  preparerSuivant(index + 1);
   majTransport();
-}
-
-// Un seul préchargeur, réutilisé : en créer un par appel laissait derrière lui
-// autant d'éléments média que de déplacements de tête.
-let preChargeur = null;
-function precharger(index) {
-  const plan = projetActif()?.plans[index];
-  if (!plan || plan.youtube || !plan.video) return;
-  if (!preChargeur) {
-    preChargeur = document.createElement("video");
-    preChargeur.preload = "auto";
-    preChargeur.muted = true;
-  }
-  if (preChargeur.dataset.plan === plan.id) return;
-  preChargeur.dataset.plan = plan.id;
-  preChargeur.src = plan.video;
 }
 
 function planSuivant() {
   const projet = projetActif();
   if (!projet) return;
-  if (lecture.index + 1 < projet.plans.length) poserPlan(lecture.index + 1, 0, true);
-  else { arreter(); poserPlan(0, 0); }
+  if (lecture.index + 1 < projet.plans.length) {
+    // Le plan suivant est déjà chargé sur le lecteur en attente : la bascule
+    // se fait dans poserPlan, sans temps mort.
+    poserPlan(lecture.index + 1, 0, true);
+  } else {
+    arreter();
+    poserPlan(0, 0);
+  }
 }
 
 function basculerLecture() {
-  const video = $("apercu");
+  const video = elementActif();
   const projet = projetActif();
   if (!video || !projet) return;
   if (lecture.jouant) { video.pause(); return; }
@@ -2445,6 +2536,7 @@ function basculerLecture() {
     video.src = cible.plan.video;
   }
   viser(video, cible.dans, cible.plan);
+  preparerSuivant(cible.index + 1);
 
   deverrouille = true;
   const essai = video.play();
@@ -2455,7 +2547,6 @@ function basculerLecture() {
     });
   }
   selectionner(cible.index);
-  precharger(cible.index + 1);
   suivreTete();
 }
 
@@ -2463,7 +2554,7 @@ function arreter() {
   lecture.jouant = false;
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   lecture.boucle = null;
-  document.getElementById("apercu")?.pause();
+  elementActif()?.pause();
   arreterSon();
 }
 
@@ -2481,24 +2572,6 @@ function allerA(secondesCible) {
   }
 }
 
-function montrerImage(plan) {
-  const image = $("ecran-image");
-  if (!image) return;
-  if (!plan?.preview) { image.hidden = true; return; }
-  if (image.dataset.plan !== plan.id) {
-    image.dataset.plan = plan.id;
-    image.src = plan.preview;
-  }
-  const video = $("apercu");
-  // On ne masque le fichier que s'il n'a pas encore d'image à montrer.
-  image.hidden = Boolean(video && video.readyState >= 2 && video.dataset.plan === plan.id);
-}
-
-// Poser currentTime ne suffit pas : tant que le fichier n'a pas assez de
-// données, la consigne est ignorée en silence — et sur mobile elle l'est
-// souvent, d'où une lecture qui repart du début du plan une fois sur deux. On
-// garde donc la cible et on la repose à chaque étape du chargement, jusqu'à ce
-// qu'elle prenne ou que le délai soit écoulé.
 // Journal de bord : les dernières demandes de position et ce que le lecteur en
 // a fait. Consultable dans Setting, pour diagnostiquer un comportement qu'on ne
 // peut pas reproduire ailleurs.
@@ -2516,6 +2589,9 @@ function noter(quoi, video) {
   journal.length = Math.min(journal.length, 12);
 }
 
+// Poser currentTime ne suffit pas : tant que le fichier n'a pas assez de
+// données, la consigne est ignorée en silence. On garde donc la cible et on la
+// repose à chaque signal du lecteur, jusqu'à ce qu'elle prenne.
 function viser(video, temps, plan) {
   const planId = typeof plan === "string" ? plan : plan.id;
   const url = typeof plan === "string" ? null : plan.video;
@@ -2524,16 +2600,15 @@ function viser(video, temps, plan) {
   appliquerCible(video);
 }
 
-// Un lecteur en pause qui n'a jamais joué n'affiche aucune image : sur iPhone
-// en réseau mobile, il ne charge même pas. Le seul moyen fiable de lui faire
-// produire l'image sous le curseur est de le lancer une fraction de seconde en
-// sourdine, puis de le remettre en pause.
+// Un lecteur en pause qui n'a jamais joué n'affiche aucune image : sur mobile,
+// il ne charge même pas. Le seul moyen fiable de lui faire produire l'image
+// sous le curseur est de le lancer une fraction de seconde en sourdine, puis de
+// le remettre en pause.
 function secouer(video) {
   if (lecture.secousse || !video || !video.paused || lecture.jouant) return;
-  // La secousse déclenche les événements « lecture » et « pause » du lecteur.
-  // Sans ce drapeau, ils étaient pris pour une vraie lecture : la position du
-  // montage repartait alors du fichier et le curseur retombait dans le plan
-  // courant.
+  // La secousse déclenche les événements « lecture » et « pause ». Sans ce
+  // drapeau, ils passeraient pour une vraie lecture et la position du montage
+  // repartirait du fichier.
   lecture.secousse = true;
   const etaitMuet = video.muted;
   video.muted = true;
@@ -2550,13 +2625,12 @@ function secouer(video) {
 function appliquerCible(video) {
   const cible = lecture.cible;
   if (!cible || !video || video.dataset.plan !== cible.planId) return;
-  // Rien n'est chargé : on secoue le lecteur pour qu'il s'y mette, sinon la
-  // consigne de position n'a aucun support sur lequel s'appliquer.
+  // Rien n'est chargé : on secoue le lecteur, sinon la consigne de position n'a
+  // aucun support sur lequel s'appliquer.
   if (video.readyState < 1) { secouer(video); return; }
   if (Math.abs(video.currentTime - cible.temps) <= 0.4) {
     noter("atteinte", video);
     lecture.cible = null;
-    // La position est bonne mais aucune image n'est décodée : même remède.
     if (video.readyState < 2) secouer(video);
     return;
   }
@@ -2568,10 +2642,7 @@ function appliquerCible(video) {
     // Certains lecteurs refusent la consigne avant d'être prêts : on retentera.
   }
 
-  // Dernier recours, après plusieurs refus : recharger le fichier en demandant
-  // directement l'instant voulu dans l'adresse (fragment média « #t= »). Un
-  // lecteur qui ignore une consigne de position honore en général cette
-  // demande-là, puisqu'elle fait partie de la requête initiale.
+  // Dernier recours : recharger en demandant l'instant voulu dans l'adresse.
   if (cible.essais >= 4 && !cible.fragment && cible.url) {
     cible.fragment = true;
     noter("repli fragment", video);
@@ -2596,7 +2667,7 @@ function positionCible() {
 let deverrouille = false;
 function deverrouiller() {
   if (deverrouille) return;
-  const video = $("apercu");
+  const video = elementActif();
   if (!video || !video.src) return;
   deverrouille = true;
   // L'intention est relevée avant de lancer : l'événement « play » met
@@ -2619,10 +2690,9 @@ function appliquerSeek(jouer = false) {
   if (index < 0) index = projet.plans.length - 1;
   const dans = Math.max(0, lecture.position - debuts[index]);
 
-  const video = $("apercu");
+  const video = elementActif();
   const plan = projet.plans[index];
   if (!video) return;
-  montrerImage(plan);
 
   if (index === lecture.index && video.dataset.plan === plan.id) {
     const poser = () => {
@@ -2661,7 +2731,7 @@ function positionCourante() {
   // Pendant un glissement, c'est le doigt qui commande, même si la lecture
   // tourne : sinon la vidéo ramène le curseur là où elle en est.
   if (lecture.jouant && !lecture.scrub && !lecture.cible && !lecture.secousse) {
-    const video = $("apercu");
+    const video = elementActif();
     const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
     lecture.position = (offsets(projet.plans)[lecture.index] || 0) + dans;
   }
@@ -2750,7 +2820,7 @@ $("btn-setting").addEventListener("click", () => {
   titre.textContent = projet.nom;
   const meta = document.createElement("div");
   meta.className = "lecteur-meta";
-  const video = $("apercu");
+  const video = elementActif();
   meta.textContent = [
     `${projet.plans.length} plans · ${secondes(total(projet))}`,
     `export sur une base de ${IMAGES_PAR_SECONDE} images par seconde`,
