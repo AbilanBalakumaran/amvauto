@@ -456,24 +456,61 @@ main {
   background: linear-gradient(90deg, var(--rouge), var(--rouge-fonce));
 }
 
-/* La piste : un bloc par plan, large comme sa durée. */
+/* Commandes d'échelle. */
+.zoom { display: flex; align-items: center; gap: 8px; }
+.zoom button {
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  font: 600 0.85rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.zoom button:hover { border-color: var(--rouge); color: var(--rouge); }
+.zoom-total {
+  margin-left: auto;
+  font: 600 0.78rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doux);
+  font-variant-numeric: tabular-nums;
+}
+
+/* La piste : la position horizontale vaut exactement le temps, règle et blocs
+   partagent donc la même échelle — pas de largeur minimale qui décalerait
+   l'une par rapport aux autres. */
 .piste {
-  position: relative;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 10px 0 4px;
+  padding: 0 10px 6px;
   background: var(--surface);
   border: 1px solid var(--trait);
   border-radius: 12px;
 }
-.rail { position: relative; display: flex; gap: 3px; padding: 0 10px; min-height: 74px; }
+.ligne { position: relative; min-width: 100%; }
+.regle {
+  position: relative;
+  height: 22px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--trait);
+}
+.repere {
+  position: absolute;
+  top: 6px;
+  padding-left: 4px;
+  border-left: 1px solid #3a3a3a;
+  font: 600 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doux);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.rail { position: relative; display: flex; gap: 0; min-height: 70px; padding-top: 6px; }
 .clip {
   position: relative;
   flex: none;
-  height: 66px;
-  border-radius: 6px;
-  border: 2px solid transparent;
+  height: 62px;
+  border-radius: 4px;
   background: #202020 center/cover no-repeat;
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, .75);
   cursor: pointer;
   overflow: hidden;
 }
@@ -483,7 +520,7 @@ main {
   inset: 0;
   background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.75));
 }
-.clip.actif { border-color: var(--rouge); }
+.clip.actif { box-shadow: inset 0 0 0 2px var(--rouge); }
 .clip.saisi { opacity: .45; }
 .clip.hors-lecture { background-color: #2a1c1c; }
 .clip-nom {
@@ -514,7 +551,7 @@ main {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 10px;
+  left: 0;
   width: 2px;
   background: var(--rouge);
   box-shadow: 0 0 6px rgba(230, 57, 70, .9);
@@ -1301,9 +1338,33 @@ function totaux(projet) {
    Prévisualisation en haut, piste en bas : les plans s'enchaînent, la tête de
    lecture avance, et la largeur d'un bloc vaut sa durée. */
 
-const PX_PAR_SECONDE = 46;
-const LARGEUR_MINI = 54;
-const lecture = { index: 0, jouant: false, boucle: null };
+// Échelle de la piste, en pixels par seconde. Un plan de 73 secondes mesurerait
+// 3300 px au zoom maximum : l'échelle est réglable, et ajustée au montage à
+// l'ouverture pour qu'il tienne d'un bord à l'autre.
+const ECHELLES = [0.5, 1, 2, 4, 8, 15, 25, 40, 60, 100];
+const PAS_REGLE = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15 };
+
+const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
+const xDeSeconde = (valeur) => valeur * lecture.echelle;
+
+function ajusterEchelle(projet) {
+  const disponible = ($("vue-projet").clientWidth || 360) - 24;
+  const duree_totale = total(projet) || 1;
+  const ideale = disponible / duree_totale;
+  lecture.echelle = ECHELLES.reduce(
+    (retenue, valeur) => (valeur <= ideale ? valeur : retenue),
+    ECHELLES[0],
+  );
+}
+
+function zoomer(sens) {
+  const index = ECHELLES.indexOf(lecture.echelle);
+  const cible = Math.min(ECHELLES.length - 1, Math.max(0, (index < 0 ? 4 : index) + sens));
+  if (ECHELLES[cible] === lecture.echelle) return;
+  lecture.echelle = ECHELLES[cible];
+  redessinerPiste();
+}
 
 const jouables = (projet) => projet.plans.filter((plan) => !plan.youtube && plan.video);
 
@@ -1320,9 +1381,12 @@ function offsets(plans) {
   });
 }
 
-function horloge(valeur) {
-  const total = Math.max(0, Math.round(valeur));
-  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+function horloge(valeur, dixiemes = false) {
+  const entier = Math.max(0, valeur);
+  const minutes = Math.floor(entier / 60);
+  const restant = entier - minutes * 60;
+  const secondes_ = dixiemes ? restant.toFixed(1).padStart(4, "0") : String(Math.round(restant)).padStart(2, "0");
+  return `${String(minutes).padStart(2, "0")}:${secondes_}`;
 }
 
 function rendreProjet() {
@@ -1343,6 +1407,7 @@ function rendreProjet() {
 
   arreter();
   projet.plans.forEach(mesurerDuree);
+  ajusterEchelle(projet);
   lecture.index = 0;
   morceaux.push(editeur(projet), actionsProjet(projet));
   vue.replaceChildren(...morceaux);
@@ -1402,16 +1467,79 @@ function editeur(projet) {
   });
   transport.append(bouton, chrono, barre);
 
-  bloc.append(ecran, transport, piste(projet), outilsPlan(projet));
+  bloc.append(ecran, transport, commandesZoom(projet), piste(projet), outilsPlan(projet));
   return bloc;
 }
 
 const total = (projet) => projet.plans.reduce((somme, plan) => somme + duree(plan), 0);
 
+function commandesZoom(projet) {
+  const barre = document.createElement("div");
+  barre.className = "zoom";
+
+  const moins = document.createElement("button");
+  moins.type = "button";
+  moins.textContent = "−";
+  moins.title = "Dézoomer";
+  moins.addEventListener("click", () => zoomer(-1));
+
+  const plus = document.createElement("button");
+  plus.type = "button";
+  plus.textContent = "+";
+  plus.title = "Zoomer";
+  plus.addEventListener("click", () => zoomer(1));
+
+  const ajuster = document.createElement("button");
+  ajuster.type = "button";
+  ajuster.textContent = "Ajuster";
+  ajuster.title = "Faire tenir tout le montage à l'écran";
+  ajuster.addEventListener("click", () => { ajusterEchelle(projet); redessinerPiste(); });
+
+  const duree_totale = document.createElement("span");
+  duree_totale.className = "zoom-total";
+  duree_totale.textContent = `${horloge(total(projet))} de montage`;
+
+  barre.append(moins, plus, ajuster, duree_totale);
+  return barre;
+}
+
+// Redessine la piste seule : reconstruire tout l'éditeur couperait la lecture.
+function redessinerPiste() {
+  const projet = projetActif();
+  const ancienne = $("piste");
+  if (!projet || !ancienne) return;
+  const nouvelle = piste(projet);
+  ancienne.replaceWith(nouvelle);
+  selectionner(lecture.index);
+  majTransport();
+}
+
 function piste(projet) {
   const cadre = document.createElement("div");
   cadre.className = "piste";
   cadre.id = "piste";
+
+  const duree_totale = total(projet);
+  const ligne = document.createElement("div");
+  ligne.className = "ligne";
+  ligne.style.width = `${Math.max(60, xDeSeconde(duree_totale))}px`;
+
+  // Règle : un repère toutes les N secondes, N choisi pour que les étiquettes
+  // ne se chevauchent jamais quelle que soit l'échelle.
+  const regle = document.createElement("div");
+  regle.className = "regle";
+  const pas = PAS_REGLE.find((valeur) => xDeSeconde(valeur) >= 62) || PAS_REGLE[PAS_REGLE.length - 1];
+  for (let seconde = 0; seconde <= duree_totale; seconde += pas) {
+    const repere = document.createElement("span");
+    repere.className = "repere";
+    repere.style.left = `${xDeSeconde(seconde)}px`;
+    repere.textContent = horloge(seconde);
+    regle.append(repere);
+  }
+  regle.addEventListener("click", (evt) => {
+    allerA(Math.max(0, evt.offsetX) / lecture.echelle);
+  });
+
   const rail = document.createElement("div");
   rail.className = "rail";
   rail.id = "rail";
@@ -1421,7 +1549,7 @@ function piste(projet) {
     const clip = document.createElement("div");
     clip.className = "clip";
     clip.dataset.index = String(index);
-    clip.style.width = `${Math.max(LARGEUR_MINI, duree(plan) * PX_PAR_SECONDE)}px`;
+    clip.style.width = `${largeurClip(plan)}px`;
     if (plan.preview) clip.style.backgroundImage = `url("${plan.preview}")`;
     if (plan.youtube) clip.classList.add("hors-lecture");
 
@@ -1455,8 +1583,9 @@ function piste(projet) {
   const tete = document.createElement("div");
   tete.className = "tete";
   tete.id = "tete";
-  rail.append(tete);
-  cadre.append(rail);
+
+  ligne.append(regle, rail, tete);
+  cadre.append(ligne);
   return cadre;
 }
 
@@ -1619,21 +1748,13 @@ function majTransport() {
   if (!projet || !$("chrono")) return;
   const duree_totale = total(projet);
   const position = positionCourante();
-  $("chrono").textContent = `${horloge(position)} / ${horloge(duree_totale)}`;
+  $("chrono").textContent = `${horloge(position, true)} / ${horloge(duree_totale)}`;
   $("barre-remplie").style.width = `${Math.min(100, (position / duree_totale) * 100)}%`;
   $("lecture").textContent = lecture.jouant ? "❚❚" : "▶";
 
   const tete = $("tete");
   if (tete) {
-    const projetPlans = projet.plans;
-    const debuts = offsets(projetPlans);
-    let x = 0;
-    for (let i = 0; i < lecture.index; i += 1) {
-      x += Math.max(LARGEUR_MINI, duree(projetPlans[i]) * PX_PAR_SECONDE);
-    }
-    const dans = position - (debuts[lecture.index] || 0);
-    const largeur = Math.max(LARGEUR_MINI, duree(projetPlans[lecture.index]) * PX_PAR_SECONDE);
-    x += Math.min(largeur, (dans / duree(projetPlans[lecture.index])) * largeur);
+    const x = xDeSeconde(position);
     tete.style.left = `${x}px`;
     const piste = $("piste");
     if (lecture.jouant && piste) {
