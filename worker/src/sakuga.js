@@ -46,15 +46,22 @@ export async function searchSeries(query) {
 
 const PAGE_SIZE = 100;
 
+const VAGUE = 5;
+
 export async function posts(tags, limit) {
-  // L'API plafonne à 100 posts par page : au-delà on pagine, en parallèle.
+  // L'API plafonne à 100 posts par page. Au-delà on pagine, par vagues de cinq :
+  // en lancer vingt d'un coup sur un site communautaire serait grossier, et une
+  // page vide signifie qu'on a atteint le fond du tag.
   const pages = Math.max(1, Math.ceil(limit / PAGE_SIZE));
-  const batches = await Promise.all(
-    Array.from({ length: pages }, (_, index) =>
-      api("/post.json", { tags, limit: Math.min(PAGE_SIZE, limit), page: index + 1 }, 1800),
-    ),
-  );
-  const raw = batches.flat();
+  const raw = [];
+  for (let debut = 0; debut < pages; debut += VAGUE) {
+    const vague = Array.from({ length: Math.min(VAGUE, pages - debut) }, (_, index) =>
+      api("/post.json", { tags, limit: PAGE_SIZE, page: debut + index + 1 }, 1800),
+    );
+    const lots = await Promise.all(vague);
+    raw.push(...lots.flat());
+    if (lots.some((lot) => lot.length < PAGE_SIZE)) break;
+  }
   const artists = await artistTags();
   return raw.map((item) => {
     const tagList = (item.tags || "").split(" ").filter(Boolean);
@@ -77,7 +84,7 @@ export async function posts(tags, limit) {
 }
 
 // Les cuts d'une série, filtrés sur ce qui est réellement montable.
-export async function rushes(seriesTag, limit = 300) {
+export async function rushes(seriesTag, limit = 1000) {
   const found = await posts(`${seriesTag} order:score`, limit);
   return found.filter(
     (post) =>

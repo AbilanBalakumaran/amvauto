@@ -8,7 +8,7 @@ Trois sources alimentent l'outil :
 | Source | Ce qu'elle apporte | Format |
 |---|---|---|
 | [Sakugabooru](https://www.sakugabooru.com) | les cuts : plans d'animation isolés d'un épisode, avec leur animateur | MP4/WebM |
-| [AnimeThemes](https://animethemes.moe) | openings et endings, souvent en 1080p Blu-ray sans crédits | WebM |
+| [AnimeThemes](https://animethemes.moe) | openings et endings, toutes versions confondues (v2, version TV, Blu-ray), souvent en 1080p sans crédits | WebM |
 | [AniList](https://anilist.co) | bandes-annonces officielles | lien YouTube |
 
 Les deux premières sont interrogées en parallèle par le Worker, et l'échec de l'une
@@ -27,7 +27,8 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 ## Ce que l'outil fait
 
 1. **Résout la série.** « frieren », « csm », « mob psycho » → le bon tag Sakugabooru.
-2. **Ratisse large.** Jusqu'à 300 cuts par série, paginés en parallèle.
+2. **Ratisse large.** Jusqu'à 2000 cuts par série, paginés par vagues de cinq requêtes —
+   ce qui donne 1817 rushs sur One Piece, 1494 sur Naruto Shippuden, 1869 sur Gundam.
 3. **Ne garde que le montable.** Vidéos uniquement : les genga, layouts et scans de
    production sont écartés, ce n'est pas de l'image exploitable en timeline.
 4. **Nomme chaque plan.** Sakugabooru ne nomme pas ses cuts. Le nom est reconstruit
@@ -42,7 +43,9 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    « belle animation » ; ce n'est pas la même chose que « bon rush ». Le classement
    croise ce score avec la durée utile du plan, la résolution, l'animation de décor,
    les impact frames, et pénalise ce qui se marie mal avec du 2D (CGI, captures web).
-7. **Sort une liste de plans** : sélection dans un panier, export en `.txt` ou copie
+7. **Tient la charge côté interface** : un dossier peut contenir un millier de plans, ils
+   sont posés par centaines à la demande plutôt qu'en une fois.
+8. **Sort une liste de plans** : sélection dans un panier, export en `.txt` ou copie
    des liens directs, prêt à passer au téléchargeur.
 
 ## Deux façons de s'en servir

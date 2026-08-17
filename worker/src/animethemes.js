@@ -81,15 +81,7 @@ export async function themes(query) {
     }
   }
 
-  // Un même générique existe souvent en WEB 720 crédité et en BD 1080 sans
-  // crédits — les deux servent. Au-delà, ce sont des doublons de version.
-  const parGroupe = new Map();
-  for (const item of trouves.sort((a, b) => b.score - a.score)) {
-    const liste = parGroupe.get(item.groupe) || [];
-    if (liste.length < 2) {
-      liste.push(item);
-      parGroupe.set(item.groupe, liste);
-    }
-  }
-  return [...parGroupe.values()].flat();
+  // Toutes les versions sont conservées : une v2, une version TV et une version
+  // Blu-ray du même générique n'ont ni le même montage ni la même image.
+  return trouves.sort((a, b) => b.score - a.score);
 }

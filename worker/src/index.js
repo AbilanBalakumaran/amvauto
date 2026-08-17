@@ -40,7 +40,6 @@ function serialize({ post, score }) {
     video: post.file_url,
     preview: post.preview_url,
     page: `https://www.sakugabooru.com/post/show/${post.id}`,
-    tags: post.tags,
   };
 }
 
@@ -86,7 +85,6 @@ function fromSource(item) {
     youtube: item.youtube || null,
     preview: item.preview,
     page: item.page,
-    tags: [],
   };
 }
 
@@ -164,7 +162,7 @@ async function handleTree(url) {
   const query = (url.searchParams.get("anime") || "").trim();
   if (!query) return json({ error: "Indique un animé." }, 400);
 
-  const pool = Math.min(400, Math.max(50, Number(url.searchParams.get("pool")) || 300));
+  const pool = Math.min(2000, Math.max(50, Number(url.searchParams.get("pool")) || 2000));
 
   // Les deux sources sont interrogées de front, et l'échec de l'une ne doit pas
   // emporter l'autre : un générique reste utile si Sakugabooru tousse.
@@ -225,7 +223,7 @@ async function handleRushes(url) {
   if (mood && !MOODS[mood]) return json({ error: `Ambiance inconnue : ${mood}` }, 400);
 
   const top = Math.min(200, Math.max(1, Number(url.searchParams.get("top")) || 24));
-  const pool = Math.min(400, Math.max(top, Number(url.searchParams.get("pool")) || 300));
+  const pool = Math.min(2000, Math.max(top, Number(url.searchParams.get("pool")) || 1000));
 
   const resolved = await resolve(query, pool);
   if (!resolved) {

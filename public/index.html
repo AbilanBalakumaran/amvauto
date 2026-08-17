@@ -333,6 +333,17 @@ main {
 .note.erreur { border-color: #7a2b2b; color: #e59a9a; }
 .note strong { color: var(--texte); }
 
+.encore {
+  padding: 13px;
+  border-radius: 10px;
+  border: 1px dashed var(--trait);
+  background: none;
+  color: var(--doux);
+  font: 600 0.85rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.encore:hover { border-color: var(--rouge); color: var(--rouge); }
+
 .squelette { height: 66px; border-radius: 10px; background: var(--surface); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
@@ -504,7 +515,8 @@ main {
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const state = { arbre: null, chemin: [], panier: new Map(), tri: "episode", occupe: false };
+const PAR_PAGE = 100;
+const state = { arbre: null, chemin: [], panier: new Map(), tri: "episode", occupe: false, montres: PAR_PAGE };
 
 // L'extension vient du fichier, pas d'une supposition : AnimeThemes sert du
 // WebM, Sakugabooru du MP4, et une bande-annonce n'est pas un fichier.
@@ -645,6 +657,7 @@ async function ouvrir() {
     if (!reponse.ok) throw new Error(data.error || "réponse invalide");
     state.arbre = data;
     state.chemin = [];
+    state.montres = PAR_PAGE;
     $("compteur").textContent = `${data.total} rushs`;
     rendre();
 
@@ -705,7 +718,8 @@ function rendre() {
     })));
   } else {
     const dossier = state.arbre.arcs[arcIndex].folders[dossierIndex];
-    morceaux.push(barreDeTri(), listeFichiers(trier(dossier.rushes)));
+    const entete = note(`${dossier.count} plan${dossier.count > 1 ? "s" : ""} dans ce dossier`);
+    morceaux.push(entete, barreDeTri(), listeFichiers(trier(dossier.rushes)));
   }
 
   $("sortie").replaceChildren(...morceaux);
@@ -738,7 +752,11 @@ function filDAriane() {
       const lien = document.createElement("button");
       lien.type = "button";
       lien.textContent = etape.label;
-      lien.addEventListener("click", () => { state.chemin = state.chemin.slice(0, etape.profondeur); rendre(); });
+      lien.addEventListener("click", () => {
+        state.chemin = state.chemin.slice(0, etape.profondeur);
+        state.montres = PAR_PAGE;
+        rendre();
+      });
       fil.append(lien);
     }
   });
@@ -756,7 +774,11 @@ function listeDossiers(elements, decrire) {
     ligne.innerHTML = `${SVG_DOSSIER}<span class="grow"><span class="nom"></span><span class="sous"></span></span><span class="chevron">›</span>`;
     ligne.querySelector(".nom").textContent = titre;
     ligne.querySelector(".sous").textContent = sous;
-    ligne.addEventListener("click", () => { state.chemin = [...state.chemin, index]; rendre(); });
+    ligne.addEventListener("click", () => {
+      state.chemin = [...state.chemin, index];
+      state.montres = PAR_PAGE;
+      rendre();
+    });
     liste.append(ligne);
   });
   return liste;
@@ -774,7 +796,7 @@ function barreDeTri() {
     bouton.type = "button";
     bouton.textContent = texte;
     bouton.classList.toggle("on", state.tri === cle);
-    bouton.addEventListener("click", () => { state.tri = cle; rendre(); });
+    bouton.addEventListener("click", () => { state.tri = cle; state.montres = PAR_PAGE; rendre(); });
     barre.append(bouton);
   }
   return barre;
@@ -790,7 +812,18 @@ function trier(rushes) {
 function listeFichiers(rushes) {
   const liste = document.createElement("div");
   liste.className = "rows";
-  for (const rush of rushes) liste.append(ligneFichier(rush));
+  const visibles = rushes.slice(0, state.montres);
+  for (const rush of visibles) liste.append(ligneFichier(rush));
+
+  if (rushes.length > visibles.length) {
+    const encore = document.createElement("button");
+    encore.type = "button";
+    encore.className = "encore";
+    const reste = rushes.length - visibles.length;
+    encore.textContent = `Afficher ${Math.min(PAR_PAGE, reste)} de plus (${reste} restants)`;
+    encore.addEventListener("click", () => { state.montres += PAR_PAGE; rendre(); });
+    liste.append(encore);
+  }
   return liste;
 }
 
