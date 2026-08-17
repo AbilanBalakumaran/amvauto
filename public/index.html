@@ -956,7 +956,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:46";
+const VERSION_PAGE = "2026-08-17 07:52";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1921,6 +1921,7 @@ function editeur(projet) {
   for (const signal of ["loadedmetadata", "loadeddata", "canplay", "canplaythrough", "playing", "timeupdate", "seeked"]) {
     video.addEventListener(signal, () => appliquerCible(video));
   }
+  video.addEventListener("seeked", () => { if (!lecture.jouant && video.readyState < 2) secouer(video); });
   video.addEventListener("play", () => { lecture.jouant = true; majTransport(); suivreTete(); demarrerSon(); });
   video.addEventListener("pause", () => { lecture.jouant = false; majTransport(); arreterSon(); });
   // Un lecteur vidéo n'affiche une image qu'une fois le fichier chargé, et sur
@@ -2510,11 +2511,39 @@ function viser(video, temps, planId) {
   appliquerCible(video);
 }
 
+// Un lecteur en pause qui n'a jamais joué n'affiche aucune image : sur iPhone
+// en réseau mobile, il ne charge même pas. Le seul moyen fiable de lui faire
+// produire l'image sous le curseur est de le lancer une fraction de seconde en
+// sourdine, puis de le remettre en pause.
+let secousseEnCours = false;
+function secouer(video) {
+  if (secousseEnCours || !video || !video.paused || lecture.jouant) return;
+  secousseEnCours = true;
+  const etaitMuet = video.muted;
+  video.muted = true;
+  const essai = video.play();
+  const remettre = () => {
+    video.pause();
+    video.muted = etaitMuet;
+    secousseEnCours = false;
+  };
+  if (essai) essai.then(() => setTimeout(remettre, 60)).catch(() => { video.muted = etaitMuet; secousseEnCours = false; });
+  else remettre();
+}
+
 function appliquerCible(video) {
   const cible = lecture.cible;
   if (!cible || !video || video.dataset.plan !== cible.planId) return;
-  if (video.readyState < 1) return;
-  if (Math.abs(video.currentTime - cible.temps) <= 0.4) { noter("atteinte", video); lecture.cible = null; return; }
+  // Rien n'est chargé : on secoue le lecteur pour qu'il s'y mette, sinon la
+  // consigne de position n'a aucun support sur lequel s'appliquer.
+  if (video.readyState < 1) { secouer(video); return; }
+  if (Math.abs(video.currentTime - cible.temps) <= 0.4) {
+    noter("atteinte", video);
+    lecture.cible = null;
+    // La position est bonne mais aucune image n'est décodée : même remède.
+    if (video.readyState < 2) secouer(video);
+    return;
+  }
   if (cible.essais >= 12 || performance.now() > cible.limite) { noter("abandon", video); lecture.cible = null; return; }
   cible.essais += 1;
   try {
@@ -2739,13 +2768,22 @@ $("btn-setting").addEventListener("click", () => {
     rendre();
   });
 
+  const copier = document.createElement("button");
+  copier.type = "button";
+  copier.textContent = "Copier le diagnostic";
+  copier.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(meta.textContent);
+    copier.textContent = "Copié";
+    setTimeout(() => { copier.textContent = "Copier le diagnostic"; }, 1600);
+  });
+
   const fermer = document.createElement("button");
   fermer.type = "button";
   fermer.className = "fort";
   fermer.textContent = "Fermer";
   fermer.addEventListener("click", fermerFeuille);
 
-  actions.append(renommer, supprimer, fermer);
+  actions.append(copier, renommer, supprimer, fermer);
   corps.append(titre, meta, actions);
   boite.append(corps);
   fond.replaceChildren(boite);
