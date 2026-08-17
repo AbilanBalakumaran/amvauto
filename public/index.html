@@ -724,6 +724,22 @@ body.ecran-plein .ecran video { object-fit: contain; }
 .clip canvas.bande { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,.68)); }
 .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge); }
+.clip-import {
+  position: absolute;
+  z-index: 2;
+  left: 4px;
+  right: 4px;
+  bottom: 3px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .18);
+  overflow: hidden;
+}
+.clip-import-jauge { display: block; height: 100%; width: 0; background: var(--rouge); }
+/* Un liseré vert discret : le plan est sur l'appareil, il se parcourt
+   instantanément. */
+.clip.local { box-shadow: inset -1px 0 0 rgba(0,0,0,.75), inset 0 -3px 0 rgba(80, 200, 130, .55); }
+.clip.local.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 -3px 0 rgba(80, 200, 130, .55); }
 .clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--rouge), 0 6px 18px rgba(0,0,0,.6); }
 .clip.hors-lecture { background-color: #2a1c1c; }
 .clip-nom {
@@ -958,7 +974,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 08:29";
+const VERSION_PAGE = "2026-08-17 11:08";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1616,6 +1632,7 @@ function basculerDans(projet, rush, bouton, apres) {
   } else {
     const plan = { ...rush, anime: state.arbre?.anime || rush.ref || "", duree: null };
     projet.plans.push(plan);
+    preparerLocal(plan);
     mesurerDuree(plan);
   }
   sauver();
@@ -1742,7 +1759,7 @@ function mesurerSuivant() {
     finir();
   }, { once: true });
   sonde.addEventListener("error", () => { clearTimeout(abandon); finir(); }, { once: true });
-  sonde.src = plan.video;
+  sonde.src = sourceDe(plan);
 }
 
 const secondes = (valeur) => `${valeur.toFixed(2).replace(".", ",")} s`;
@@ -1839,6 +1856,7 @@ function rendreProjet() {
 
   arreter();
   if (histoire.projet !== projet.id) initHistoire(projet);
+  importerProjet(projet);
   projet.plans.forEach(mesurerDuree);
   ajusterEchelle(projet);
   lecture.echelleManuelle = false;
@@ -2117,7 +2135,7 @@ function capturerBande(plan) {
     viserSuivante();
   });
   sonde.addEventListener("error", () => { clearTimeout(abandon); bande.epuise = true; rendre(); }, { once: true });
-  sonde.src = plan.video;
+  sonde.src = sourceDe(plan);
 }
 
 // Choisit le prochain plan à compléter : le plan courant d'abord, puis les
@@ -2177,10 +2195,12 @@ function preparerSuivant(index) {
   const plan = projetActif()?.plans[index];
   const attente = elementAttente();
   if (!plan || !attente || plan.youtube || !plan.video) return;
-  if (attente.dataset.plan === plan.id) return;
+  const source = sourceDe(plan);
+  if (attente.dataset.plan === plan.id && attente.dataset.source === source) return;
   attente.dataset.plan = plan.id;
+  attente.dataset.source = source;
   attente.muted = true;
-  attente.src = plan.video;
+  attente.src = source;
   attente.load();
 }
 
@@ -2361,8 +2381,11 @@ function bilanProjet(projet) {
   const manquantes = projet.plans.length - bilan.mesures;
   // La version est affichée ici en clair : trop de doutes sur « est-ce bien la
   // dernière ? » se sont réglés en la cherchant dans un onglet.
+  const importes = projet.plans.filter((plan) => estLocal(plan) || plan.youtube).length;
+  const reste = projet.plans.length - importes;
   return (
     `${projet.plans.length} plans · ${bilan.mb.toFixed(0)} Mo` +
+    (reste ? ` · ${reste} à importer` : " · tous importés") +
     (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "") +
     ` · v${VERSION_PAGE.slice(-5)}`
   );
@@ -2375,6 +2398,7 @@ function blocPlan(projet, plan, index) {
   clip.style.width = `${largeurClip(plan)}px`;
   if (plan.preview) clip.style.backgroundImage = `url("${plan.preview}")`;
   if (plan.youtube) clip.classList.add("hors-lecture");
+  if (estLocal(plan)) clip.classList.add("local");
 
   const pellicule = document.createElement("canvas");
   pellicule.className = "bande";
@@ -2616,7 +2640,8 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   // Si le lecteur en attente porte déjà ce plan, on bascule sur lui : c'est
   // tout l'intérêt d'en avoir deux, le fichier est déjà chargé.
   const attente = elementAttente();
-  if (video.dataset.plan !== plan.id && attente?.dataset.plan === plan.id) {
+  if (video.dataset.plan !== plan.id && attente?.dataset.plan === plan.id
+      && attente.dataset.source === sourceDe(plan)) {
     // Le sortant est arrêté et mis en sourdine : sans ça deux lecteurs
     // pourraient se faire entendre en même temps.
     video.pause();
@@ -2624,10 +2649,12 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     lecture.actif = lecture.actif ? 0 : 1;
     video = elementActif();
   }
-  const change = video.dataset.plan !== plan.id;
+  const source = sourceDe(plan);
+  const change = video.dataset.plan !== plan.id || video.dataset.source !== source;
   if (change) {
     video.dataset.plan = plan.id;
-    video.src = plan.video;
+    video.dataset.source = source;
+    video.src = source;
   }
   video.muted = false;
   viser(video, decalage, plan);
@@ -2759,7 +2786,7 @@ function noter(quoi, video) {
 // repose à chaque signal du lecteur, jusqu'à ce qu'elle prenne.
 function viser(video, temps, plan) {
   const planId = typeof plan === "string" ? plan : plan.id;
-  const url = typeof plan === "string" ? null : plan.video;
+  const url = typeof plan === "string" ? null : sourceDe(plan);
   lecture.cible = { planId, url, temps, essais: 0, fragment: false, limite: performance.now() + 5000 };
   noter("cible posée", video);
   appliquerCible(video);
@@ -2898,6 +2925,187 @@ function selectionner(index) {
   if (courant && projet?.plans[index]) {
     courant.textContent = `Plan ${String(index + 1).padStart(2, "0")} — ${projet.plans[index].name}`;
   }
+}
+
+/* --- importation des médias -------------------------------------------
+   Un logiciel de montage ne monte pas des fichiers distants : il importe les
+   médias, puis travaille en local. C'est de là que vient tout le reste — un
+   fichier local se parcourt instantanément, rend ses images sans négocier, et
+   n'est soumis à aucune règle de chargement mobile.
+
+   Les octets passent par notre relais (les sources n'autorisent pas leur
+   lecture directe), sont gardés dans la base du navigateur, et servis ensuite
+   depuis l'appareil. Bonus : une vidéo locale ne « teinte » pas une toile, on
+   peut donc en relire les images — c'est ce qui rend la bande d'imagettes
+   fiable. */
+
+const BASE_MEDIAS = "amvauto-medias";
+const MAGASIN = "fichiers";
+const locales = new Map();          // adresse d'origine -> adresse locale
+const enImport = new Map();         // adresse d'origine -> avancement 0..1
+const fileImport = [];
+let importEnCours = false;
+let basePromise = null;
+
+function ouvrirBase() {
+  if (basePromise) return basePromise;
+  basePromise = new Promise((ok, non) => {
+    const requete = indexedDB.open(BASE_MEDIAS, 1);
+    requete.onupgradeneeded = () => {
+      const base = requete.result;
+      if (!base.objectStoreNames.contains(MAGASIN)) base.createObjectStore(MAGASIN);
+    };
+    requete.onsuccess = () => ok(requete.result);
+    requete.onerror = () => non(requete.error);
+  }).catch(() => null);
+  return basePromise;
+}
+
+async function lireBase(adresse) {
+  const base = await ouvrirBase();
+  if (!base) return null;
+  return new Promise((ok) => {
+    const requete = base.transaction(MAGASIN, "readonly").objectStore(MAGASIN).get(adresse);
+    requete.onsuccess = () => ok(requete.result || null);
+    requete.onerror = () => ok(null);
+  });
+}
+
+async function ecrireBase(adresse, blob) {
+  const base = await ouvrirBase();
+  if (!base) return;
+  await new Promise((ok) => {
+    const transaction = base.transaction(MAGASIN, "readwrite");
+    transaction.objectStore(MAGASIN).put(blob, adresse);
+    transaction.oncomplete = ok;
+    transaction.onerror = ok;   // quota plein : on continue en distant
+    transaction.onabort = ok;
+  });
+}
+
+// L'adresse à donner au lecteur : le fichier local dès qu'on l'a.
+function sourceDe(plan) {
+  return (plan?.video && locales.get(plan.video)) || plan?.video || "";
+}
+
+const estLocal = (plan) => Boolean(plan?.video && locales.get(plan.video));
+const avancement = (plan) => enImport.get(plan?.video);
+
+async function preparerLocal(plan) {
+  if (!plan?.video || plan.youtube || locales.has(plan.video)) return;
+  const garde = await lireBase(plan.video);
+  if (garde instanceof Blob) {
+    locales.set(plan.video, URL.createObjectURL(garde));
+    return;
+  }
+  planifierImport(plan);
+}
+
+function planifierImport(plan) {
+  if (!plan?.video || plan.youtube || locales.has(plan.video) || enImport.has(plan.video)) return;
+  if (fileImport.some((autre) => autre.video === plan.video)) return;
+  fileImport.push(plan);
+  lancerImport();
+}
+
+async function lancerImport() {
+  if (importEnCours) return;
+  const plan = fileImport.shift();
+  if (!plan) return;
+  importEnCours = true;
+  enImport.set(plan.video, 0);
+  majImports();
+
+  try {
+    const reponse = await fetch(`/api/media?u=${encodeURIComponent(plan.video)}`);
+    if (!reponse.ok) throw new Error(String(reponse.status));
+
+    // Lecture en flux pour afficher un avancement : sur un rush de 40 Mo en
+    // 4G, une barre qui bouge vaut mieux qu'une attente muette.
+    const attendu = Number(reponse.headers.get("content-length")) || plan.mb * 1e6 || 0;
+    const morceaux = [];
+    let recu = 0;
+    if (reponse.body?.getReader) {
+      const lecteur = reponse.body.getReader();
+      for (;;) {
+        const { done, value } = await lecteur.read();
+        if (done) break;
+        morceaux.push(value);
+        recu += value.byteLength;
+        if (attendu) {
+          enImport.set(plan.video, Math.min(0.99, recu / attendu));
+          majImports();
+        }
+      }
+    } else {
+      morceaux.push(new Uint8Array(await reponse.arrayBuffer()));
+    }
+
+    const blob = new Blob(morceaux, { type: reponse.headers.get("content-type") || "video/mp4" });
+    await ecrireBase(plan.video, blob);
+    locales.set(plan.video, URL.createObjectURL(blob));
+  } catch {
+    // Import raté : le plan reste jouable en distant, avec ses limites.
+  } finally {
+    enImport.delete(plan.video);
+    importEnCours = false;
+    majImports();
+    apresImport(plan);
+    setTimeout(lancerImport, 60);
+  }
+}
+
+// L'interface reflète l'avancement, et le plan courant bascule sur sa copie
+// locale dès qu'elle est prête.
+function majImports() {
+  if ($("vue-projet")?.hidden) return;
+  const projet = projetActif();
+  const rail = $("rail");
+  if (!projet || !rail) return;
+  [...rail.children].forEach((bloc, index) => {
+    const plan = projet.plans[index];
+    if (!plan) return;
+    const barre = bloc.querySelector(".clip-import");
+    const part = avancement(plan);
+    if (part === undefined) {
+      barre?.remove();
+      bloc.classList.toggle("local", estLocal(plan));
+      return;
+    }
+    const jauge = barre || (() => {
+      const neuve = document.createElement("span");
+      neuve.className = "clip-import";
+      neuve.innerHTML = '<span class="clip-import-jauge"></span>';
+      bloc.append(neuve);
+      return neuve;
+    })();
+    jauge.querySelector(".clip-import-jauge").style.width = `${Math.round(part * 100)}%`;
+  });
+  const bilan = $("zoom-total");
+  if (bilan) bilan.textContent = bilanProjet(projet);
+}
+
+function apresImport(plan) {
+  const projet = projetActif();
+  if (!projet || !estLocal(plan)) return;
+  // La copie locale est plus exacte que l'estimation : on remesure.
+  if (plan.id === projet.plans[lecture.index]?.id) {
+    const video = elementActif();
+    if (video) {
+      video.dataset.plan = "";
+      poserPlan(lecture.index, Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)));
+    }
+  }
+  bandes.delete(plan.id);
+  const attente = elementAttente();
+  if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
+  redessinerPiste();
+}
+
+// Tous les plans du projet sont importés, le plan courant d'abord.
+function importerProjet(projet) {
+  const ordre = [projet.plans[lecture.index], ...projet.plans].filter(Boolean);
+  for (const plan of ordre) preparerLocal(plan);
 }
 
 // Un banc de montage n'attend pas son lecteur : une horloge avance, et l'image

@@ -3,6 +3,7 @@
 // passent par ici.
 
 import { themes } from "./animethemes.js";
+import { relayerMedia } from "./media.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { rushes, searchSeries } from "./sakuga.js";
 import { MOODS, moodsOf, qualityFlags, rank } from "./scoring.js";
@@ -251,6 +252,7 @@ export default {
         if (url.pathname === "/api/suggest") {
           return json({ series: suggest(url.searchParams.get("q") || "", 10) });
         }
+        if (url.pathname === "/api/media") return await relayerMedia(request, url);
         if (url.pathname === "/api/version") return json({ version: VERSION });
         if (url.pathname === "/api/moods") {
           return json({

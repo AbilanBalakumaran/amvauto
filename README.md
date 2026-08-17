@@ -129,6 +129,23 @@ wrangler.toml      config de déploiement
 `worker/src/scoring.js` est le portage de `amvauto/scoring.py` : les deux doivent rester
 alignés. `worker/src/series.js` est généré depuis `amvauto/series.py`.
 
+## Les médias sont importés, pas diffusés
+
+Un logiciel de montage ne monte pas des fichiers distants : il importe les médias, puis
+travaille en local. C'est ce que fait l'application — chaque plan ajouté à un projet est
+téléchargé une fois, gardé dans la base du navigateur (IndexedDB) et servi ensuite depuis
+l'appareil.
+
+Tout en découle : le déplacement dans un plan est instantané, l'image apparaît sans
+négociation, aucune règle de chargement mobile ne s'applique, et une vidéo locale ne
+« teinte » pas une toile — on peut donc en relire les images, ce qui rend la bande
+d'imagettes fiable. Les octets passent par `/api/media`, un relais à liste blanche stricte
+(Sakugabooru, AnimeThemes) : les sources n'autorisent pas la lecture directe de leurs
+octets par une page, et un relais ouvert servirait à n'importe qui.
+
+L'importation se fait un fichier à la fois, le plan courant d'abord, avec l'avancement
+affiché sur le bloc. Un plan non encore importé reste jouable en distant, avec ses limites.
+
 ## Comment la lecture est construite
 
 L'aperçu n'est pas un lecteur : c'est un **moniteur** dessiné image par image sur une toile,
