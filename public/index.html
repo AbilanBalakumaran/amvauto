@@ -2183,12 +2183,13 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   }
 
   vide.hidden = true;
-  if (video.dataset.plan !== plan.id) {
+  const change = video.dataset.plan !== plan.id;
+  if (change) {
     video.dataset.plan = plan.id;
     video.src = plan.video;
   }
   const demarrer = () => {
-    if (decalage) video.currentTime = Math.min(decalage, video.duration || decalage);
+    video.currentTime = Math.min(decalage, video.duration || decalage);
     if (enchainer || lecture.jouant) {
       video.play().catch(() => {
         video.muted = true;
@@ -2196,7 +2197,10 @@ function poserPlan(index, decalage = 0, enchainer = false) {
       });
     }
   };
-  if (video.readyState >= 1) demarrer();
+  // Juste après un changement de source, readyState décrit encore l'ancien
+  // fichier : s'y fier faisait poser la position sur un média déjà remplacé,
+  // et le nouveau démarrait donc à zéro.
+  if (!change && video.readyState >= 1) demarrer();
   else video.addEventListener("loadedmetadata", demarrer, { once: true });
 
   precharger(index + 1);
@@ -2225,9 +2229,17 @@ function basculerLecture() {
   const projet = projetActif();
   if (!video || !projet) return;
   if (lecture.jouant) { video.pause(); return; }
-  lecture.jouant = true;
-  if (projet.plans[lecture.index]?.youtube) planSuivant();
-  else video.play().catch(() => {});
+
+  if (projet.plans[lecture.index]?.youtube) {
+    lecture.jouant = true;
+    planSuivant();
+    suivreTete();
+    return;
+  }
+  // On recale le fichier sur la tête avant de lancer : sans ça la lecture
+  // repartait de l'endroit où le fichier en était, c'est-à-dire du début du
+  // plan dès qu'un chargement était passé par là.
+  appliquerSeek(true);
   suivreTete();
 }
 
@@ -2253,9 +2265,10 @@ function allerA(secondesCible) {
   }
 }
 
-// Le fichier, lui, rattrape la tête au rythme où il peut — une fois par image
-// au plus, et sans se recharger tant qu'on reste dans le même plan.
-function appliquerSeek() {
+// Le fichier rattrape la tête au rythme où il peut — une fois par image au
+// plus, sans se recharger tant qu'on reste dans le même plan. C'est lui qui
+// affiche l'image sous le curseur, et c'est de là que part la lecture.
+function appliquerSeek(jouer = false) {
   const projet = projetActif();
   if (!projet) return;
   const debuts = offsets(projet.plans);
@@ -2265,11 +2278,21 @@ function appliquerSeek() {
 
   const video = $("apercu");
   const plan = projet.plans[index];
-  if (video && index === lecture.index && video.dataset.plan === plan.id) {
-    if (video.readyState >= 1) video.currentTime = Math.min(dans, video.duration || dans);
+  if (!video) return;
+
+  if (index === lecture.index && video.dataset.plan === plan.id) {
+    const poser = () => {
+      video.currentTime = Math.min(dans, video.duration || dans);
+      if (jouer) video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+    };
+    // Un fichier pas encore prêt ignorait la consigne, et l'image restait celle
+    // d'avant : on la repose dès que ses métadonnées arrivent.
+    if (video.readyState >= 1) poser();
+    else video.addEventListener("loadedmetadata", poser, { once: true });
   } else {
-    poserPlan(index, dans);
+    poserPlan(index, dans, jouer);
   }
+
   if (lecture.audio) {
     lecture.audio.currentTime = Math.min(lecture.position, lecture.audio.duration || 0);
   }
