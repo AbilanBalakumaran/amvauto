@@ -483,6 +483,40 @@ main {
   border: 1px solid var(--trait);
 }
 .ecran video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.sortie-plein {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, .65);
+  color: #fff;
+  cursor: pointer;
+}
+.sortie-plein svg { width: 20px; height: 20px; }
+
+/* Repli quand le navigateur refuse le plein écran natif (Safari iPhone). */
+body.ecran-plein .ecran {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  /* Sans neutraliser le format 16/9, la hauteur reste calculée sur la largeur
+     et l'écran ne couvre qu'un quart de la page. */
+  aspect-ratio: auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  border: 0;
+  background: #000;
+}
+body.ecran-plein .ecran video { object-fit: contain; }
+
 .ecran-vide {
   position: absolute;
   inset: 0;
@@ -617,7 +651,13 @@ main {
   touch-action: pan-x;
 }
 .ligne { position: relative; min-width: 100%; }
-.regle { position: relative; height: 24px; cursor: ew-resize; border-bottom: 1px solid var(--trait); }
+.regle {
+  position: relative;
+  height: 24px;
+  cursor: ew-resize;
+  border-bottom: 1px solid var(--trait);
+  touch-action: none;
+}
 .repere {
   position: absolute;
   top: 7px;
@@ -1581,9 +1621,9 @@ function totaux(projet) {
    L'échelle est continue et se règle au pincement. */
 
 const ECHELLE_MIN = 0.3;
-const ECHELLE_MAX = 240;
-const PAS_REGLE = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null };
+const ECHELLE_MAX = 900;
+const PAS_REGLE = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -1648,6 +1688,7 @@ function rendreProjet() {
   projet.plans.forEach(mesurerDuree);
   ajusterEchelle(projet);
   lecture.index = 0;
+  lecture.position = 0;
   morceaux.push(editeur(projet));
   vue.replaceChildren(...morceaux);
   remplirBarreOutils(projet);
@@ -1775,13 +1816,50 @@ function transport() {
   return barre;
 }
 
+// Safari sur iPhone n'expose pas requestFullscreen sur un élément quelconque.
+// On tente le standard, puis la variante webkit, et à défaut on agrandit
+// l'écran en CSS — un repli qui marche partout.
 function pleinEcran() {
   const ecran = $("ecran");
   if (!ecran) return;
-  if (document.fullscreenElement) document.exitFullscreen();
-  else if (ecran.requestFullscreen) ecran.requestFullscreen().catch(() => {});
-  else $("apercu")?.webkitEnterFullscreen?.();
+
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    return;
+  }
+  if (document.body.classList.contains("ecran-plein")) return quitterPleinEcranCss();
+
+  const demande = ecran.requestFullscreen?.bind(ecran) || ecran.webkitRequestFullscreen?.bind(ecran);
+  if (demande) {
+    Promise.resolve(demande()).catch(entrerPleinEcranCss);
+    return;
+  }
+  entrerPleinEcranCss();
 }
+
+function entrerPleinEcranCss() {
+  document.body.classList.add("ecran-plein");
+  if (!$("sortie-plein")) {
+    const sortie = document.createElement("button");
+    sortie.id = "sortie-plein";
+    sortie.type = "button";
+    sortie.className = "sortie-plein";
+    sortie.innerHTML = icone("retirer");
+    sortie.title = "Quitter le plein écran";
+    sortie.setAttribute("aria-label", "Quitter le plein écran");
+    sortie.addEventListener("click", quitterPleinEcranCss);
+    $("ecran").append(sortie);
+  }
+}
+
+function quitterPleinEcranCss() {
+  document.body.classList.remove("ecran-plein");
+  $("sortie-plein")?.remove();
+}
+
+document.addEventListener("keydown", (evt) => {
+  if (evt.key === "Escape") quitterPleinEcranCss();
+});
 
 /* --- la piste --------------------------------------------------------- */
 function pisteComplete(projet) {
@@ -1806,7 +1884,7 @@ function pisteComplete(projet) {
     const repere = document.createElement("span");
     repere.className = "repere";
     repere.style.left = `${xDeSeconde(seconde)}px`;
-    repere.textContent = horloge(seconde);
+    repere.textContent = horloge(seconde, pas < 1);
     regle.append(repere);
   }
 
@@ -2087,6 +2165,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   const projet = projetActif();
   if (!projet || !projet.plans[index]) return;
   lecture.index = index;
+  if (!lecture.jouant) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
   const plan = projet.plans[index];
   const video = $("apercu");
   const vide = $("ecran-vide");
@@ -2160,14 +2239,40 @@ function arreter() {
   arreterSon();
 }
 
+// La tête suit le doigt à la milliseconde : la position du montage est tenue
+// ici, pas lue dans la vidéo. Charger un fichier prend du temps, et tant qu'il
+// n'est pas prêt sa position vaut zéro — c'est ce qui faisait sauter le curseur
+// d'un bloc à l'autre au lieu de glisser.
 function allerA(secondesCible) {
   const projet = projetActif();
   if (!projet) return;
+  lecture.position = Math.max(0, Math.min(secondesCible, total(projet)));
+  majTransport();
+  if (!lecture.seek) {
+    lecture.seek = requestAnimationFrame(() => { lecture.seek = null; appliquerSeek(); });
+  }
+}
+
+// Le fichier, lui, rattrape la tête au rythme où il peut — une fois par image
+// au plus, et sans se recharger tant qu'on reste dans le même plan.
+function appliquerSeek() {
+  const projet = projetActif();
+  if (!projet) return;
   const debuts = offsets(projet.plans);
-  let index = debuts.findIndex((debut, i) => secondesCible < debut + duree(projet.plans[i]));
+  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
   if (index < 0) index = projet.plans.length - 1;
-  poserPlan(index, Math.max(0, secondesCible - debuts[index]));
-  if (lecture.audio) lecture.audio.currentTime = Math.min(secondesCible, lecture.audio.duration || 0);
+  const dans = Math.max(0, lecture.position - debuts[index]);
+
+  const video = $("apercu");
+  const plan = projet.plans[index];
+  if (video && index === lecture.index && video.dataset.plan === plan.id) {
+    if (video.readyState >= 1) video.currentTime = Math.min(dans, video.duration || dans);
+  } else {
+    poserPlan(index, dans);
+  }
+  if (lecture.audio) {
+    lecture.audio.currentTime = Math.min(lecture.position, lecture.audio.duration || 0);
+  }
 }
 
 function selectionner(index) {
@@ -2184,10 +2289,14 @@ function selectionner(index) {
 function positionCourante() {
   const projet = projetActif();
   if (!projet) return 0;
-  const debuts = offsets(projet.plans);
-  const video = $("apercu");
-  const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
-  return (debuts[lecture.index] || 0) + dans;
+  // Pendant la lecture, c'est la vidéo qui fait foi ; à l'arrêt, c'est la
+  // position posée par le doigt.
+  if (lecture.jouant) {
+    const video = $("apercu");
+    const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    lecture.position = (offsets(projet.plans)[lecture.index] || 0) + dans;
+  }
+  return lecture.position;
 }
 
 function majTransport() {
