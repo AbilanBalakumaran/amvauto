@@ -956,7 +956,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:08";
+const VERSION_PAGE = "2026-08-17 07:18";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1737,7 +1737,7 @@ function totaux(projet) {
 const ECHELLE_MIN = 0.3;
 const ECHELLE_MAX = 900;
 const PAS_REGLE = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false };
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -1878,6 +1878,10 @@ function editeur(projet) {
     vide.hidden = false;
     if (lecture.jouant) planSuivant();
   });
+  // Chaque étape du chargement est une occasion de reposer la cible.
+  for (const signal of ["loadedmetadata", "loadeddata", "canplay", "canplaythrough", "playing", "timeupdate", "seeked"]) {
+    video.addEventListener(signal, () => appliquerCible(video));
+  }
   video.addEventListener("play", () => { lecture.jouant = true; majTransport(); suivreTete(); demarrerSon(); });
   video.addEventListener("pause", () => { lecture.jouant = false; majTransport(); arreterSon(); });
   // Un lecteur vidéo n'affiche une image qu'une fois le fichier chargé, et sur
@@ -2322,10 +2326,8 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     video.poster = plan.preview || "";
     video.src = plan.video;
   }
+  viser(video, decalage, plan.id);
   const demarrer = () => {
-    if (video.readyState < 1) return;
-    const vise = Math.min(decalage, video.duration || decalage);
-    if (Math.abs(video.currentTime - vise) > 0.25) video.currentTime = vise;
     if (enchainer || lecture.jouant) {
       video.play().catch(() => {
         video.muted = true;
@@ -2385,17 +2387,7 @@ function basculerLecture() {
     video.poster = cible.plan.preview || "";
     video.src = cible.plan.video;
   }
-  const caler = () => {
-    if (video.readyState < 1) return;
-    const vise = Math.min(cible.dans, video.duration || cible.dans);
-    if (Math.abs(video.currentTime - vise) > 0.25) video.currentTime = vise;
-  };
-  if (!change && video.readyState >= 1) caler();
-  video.addEventListener("loadedmetadata", caler, { once: true });
-  video.addEventListener("canplay", caler, { once: true });
-  // Dernier filet : si la lecture est partie avant que le calage ait pu se
-  // faire, on le refait une fois qu'elle tourne.
-  video.addEventListener("playing", caler, { once: true });
+  viser(video, cible.dans, cible.plan.id);
 
   deverrouille = true;
   const essai = video.play();
@@ -2443,6 +2435,48 @@ function montrerImage(plan) {
   const video = $("apercu");
   // On ne masque le fichier que s'il n'a pas encore d'image à montrer.
   image.hidden = Boolean(video && video.readyState >= 2 && video.dataset.plan === plan.id);
+}
+
+// Poser currentTime ne suffit pas : tant que le fichier n'a pas assez de
+// données, la consigne est ignorée en silence — et sur mobile elle l'est
+// souvent, d'où une lecture qui repart du début du plan une fois sur deux. On
+// garde donc la cible et on la repose à chaque étape du chargement, jusqu'à ce
+// qu'elle prenne ou que le délai soit écoulé.
+// Journal de bord : les dernières demandes de position et ce que le lecteur en
+// a fait. Consultable dans Setting, pour diagnostiquer un comportement qu'on ne
+// peut pas reproduire ailleurs.
+const journal = [];
+function noter(quoi, video) {
+  journal.unshift({
+    quand: new Date().toLocaleTimeString("fr-FR"),
+    quoi,
+    vise: lecture.cible ? Math.round(lecture.cible.temps * 100) / 100 : null,
+    reel: video ? Math.round(video.currentTime * 100) / 100 : null,
+    pret: video ? video.readyState : null,
+    erreur: video?.error ? video.error.code : null,
+    essais: lecture.cible?.essais ?? null,
+  });
+  journal.length = Math.min(journal.length, 12);
+}
+
+function viser(video, temps, planId) {
+  lecture.cible = { planId, temps, essais: 0, limite: performance.now() + 5000 };
+  noter("cible posée", video);
+  appliquerCible(video);
+}
+
+function appliquerCible(video) {
+  const cible = lecture.cible;
+  if (!cible || !video || video.dataset.plan !== cible.planId) return;
+  if (video.readyState < 1) return;
+  if (Math.abs(video.currentTime - cible.temps) <= 0.4) { noter("atteinte", video); lecture.cible = null; return; }
+  if (cible.essais >= 12 || performance.now() > cible.limite) { noter("abandon", video); lecture.cible = null; return; }
+  cible.essais += 1;
+  try {
+    video.currentTime = Math.min(cible.temps, video.duration || cible.temps);
+  } catch {
+    // Certains lecteurs refusent la consigne avant d'être prêts : on retentera.
+  }
 }
 
 function positionCible() {
@@ -2525,7 +2559,7 @@ function positionCourante() {
   // position posée par le doigt.
   // Pendant un glissement, c'est le doigt qui commande, même si la lecture
   // tourne : sinon la vidéo ramène le curseur là où elle en est.
-  if (lecture.jouant && !lecture.scrub) {
+  if (lecture.jouant && !lecture.scrub && !lecture.cible) {
     const video = $("apercu");
     const dans = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
     lecture.position = (offsets(projet.plans)[lecture.index] || 0) + dans;
@@ -2615,9 +2649,23 @@ $("btn-setting").addEventListener("click", () => {
   titre.textContent = projet.nom;
   const meta = document.createElement("div");
   meta.className = "lecteur-meta";
-  meta.textContent =
-    `${projet.plans.length} plans · ${secondes(total(projet))} · export sur une base de ` +
-    `${IMAGES_PAR_SECONDE} images par seconde`;
+  const video = $("apercu");
+  meta.textContent = [
+    `${projet.plans.length} plans · ${secondes(total(projet))}`,
+    `export sur une base de ${IMAGES_PAR_SECONDE} images par seconde`,
+    `version ${VERSION_PAGE}`,
+    "",
+    "Lecteur :",
+    `  état ${video?.readyState ?? "?"}/4 · position ${video ? Math.round(video.currentTime * 100) / 100 : "?"} s` +
+      `${video?.error ? ` · erreur ${video.error.code}` : ""}`,
+    `  tête à ${Math.round(lecture.position * 100) / 100} s · plan ${lecture.index + 1}`,
+    "",
+    "Dernières demandes de position :",
+    ...(journal.length
+      ? journal.map((l) => `  ${l.quand} ${l.quoi} — visé ${l.vise ?? "—"} s, réel ${l.reel ?? "—"} s, état ${l.pret}/4, ${l.essais ?? 0} essai(s)`)
+      : ["  (aucune pour l'instant)"]),
+  ].join("\n");
+  meta.style.whiteSpace = "pre-line";
 
   const actions = document.createElement("div");
   actions.className = "lecteur-actions";
