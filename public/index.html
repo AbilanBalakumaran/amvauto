@@ -66,7 +66,8 @@ main.montage { overflow: hidden; display: flex; flex-direction: column; padding-
 main.montage #vue-projet { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 main.montage .editeur { flex: 1; min-height: 0; margin-bottom: 0; }
 main.montage .ecran { flex: none; max-height: 34vh; }
-main.montage .piste { flex: 1; min-height: 110px; }
+main.montage .piste-enveloppe { flex: 1; min-height: 0; }
+main.montage .piste { flex: 1; min-height: 100px; }
 main.montage .ligne { height: 100%; display: flex; flex-direction: column; }
 main.montage .rail { flex: 1; min-height: 0; }
 main.montage .clip { height: 100%; }
@@ -107,6 +108,22 @@ main {
   color: #f5f5f5;
 }
 .app-count { margin-left: auto; font-size: 0.78rem; color: var(--doux); }
+.app-actions { margin-left: auto; display: flex; gap: 7px; }
+.tete-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  font: 700 0.8rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.tete-btn.rouge {
+  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  border-color: var(--rouge-fonce);
+  color: #fff;
+}
+.tete-btn:hover { border-color: var(--rouge); }
 
 /* Barre d'outils du montage : elle s'intercale entre le contenu et la barre
    d'onglets au lieu de la recouvrir, et rend à la piste la hauteur que les
@@ -123,6 +140,7 @@ main {
   scrollbar-width: none;
 }
 .barre-outils::-webkit-scrollbar { display: none; }
+.barre-outils { align-items: center; }
 .barre-outils button {
   flex: none;
   display: grid;
@@ -504,51 +522,105 @@ main {
   background: linear-gradient(90deg, var(--rouge), var(--rouge-fonce));
 }
 
-/* Commandes d'échelle. */
-.zoom { display: flex; align-items: center; gap: 8px; }
-.zoom button {
-  padding: 7px 13px;
-  border-radius: 8px;
+/* --- sélecteur de projets ------------------------------------------- */
+.projets { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.projets::-webkit-scrollbar { display: none; }
+.projet-carte {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px 6px 6px;
+  border-radius: 10px;
   border: 1px solid var(--trait);
   background: var(--surface);
   color: var(--texte);
-  font: 600 0.85rem/1 system-ui, sans-serif;
+  cursor: pointer;
+  text-align: left;
+}
+.projet-carte.actif { border-color: var(--rouge); background: linear-gradient(135deg, rgba(230,57,70,.22), rgba(193,18,31,.14)); }
+.projet-vignette {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 30px;
+  border-radius: 6px;
+  background: #000 center/cover no-repeat;
+  border: 1px solid var(--trait);
+  color: var(--rouge);
+}
+.projet-vignette svg { width: 18px; height: 18px; }
+.projet-texte { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.projet-nom { font: 700 0.82rem/1.1 system-ui, sans-serif; white-space: nowrap; }
+.projet-sous { font: 500 0.68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--doux); }
+.projet-carte.neuf .projet-vignette { color: var(--doux); background: #141414; }
+
+/* --- transport : plein écran, lecture, historique ------------------- */
+.transport { display: flex; align-items: center; gap: 10px; }
+.transport-cote { flex: 1; display: flex; gap: 8px; }
+.transport-cote.fin { justify-content: flex-end; }
+.rond {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
   cursor: pointer;
 }
-.zoom button:hover { border-color: var(--rouge); color: var(--rouge); }
-.zoom-total {
-  margin-left: auto;
-  min-width: 0;
-  font: 600 0.72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--doux);
+.rond svg { width: 19px; height: 19px; }
+.rond:hover { border-color: var(--rouge); color: var(--rouge); }
+.rond:disabled { opacity: .3; cursor: default; }
+.lecture {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  color: #fff;
+  cursor: pointer;
+}
+.lecture svg { width: 22px; height: 22px; }
+
+/* --- piste ----------------------------------------------------------- */
+.piste-enveloppe { position: relative; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.piste-entete { display: flex; align-items: baseline; gap: 10px; padding: 0 2px; }
+.timecode {
+  font: 700 0.86rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--texte);
   font-variant-numeric: tabular-nums;
+}
+.piste-bilan {
+  margin-left: auto;
+  font: 500 0.7rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doux);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.zoom button { flex: none; }
 
-/* La piste : la position horizontale vaut exactement le temps, règle et blocs
-   partagent donc la même échelle — pas de largeur minimale qui décalerait
-   l'une par rapport aux autres. */
+/* La position horizontale vaut exactement le temps : règle, blocs et tête de
+   lecture partagent la même mesure. */
 .piste {
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0 10px 6px;
+  padding: 0 10px 8px;
   background: var(--surface);
   border: 1px solid var(--trait);
   border-radius: 12px;
+  touch-action: pan-x;
 }
 .ligne { position: relative; min-width: 100%; }
-.regle {
-  position: relative;
-  height: 22px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--trait);
-}
+.regle { position: relative; height: 24px; cursor: ew-resize; border-bottom: 1px solid var(--trait); }
 .repere {
   position: absolute;
-  top: 6px;
+  top: 7px;
   padding-left: 4px;
   border-left: 1px solid #3a3a3a;
   font: 600 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -556,62 +628,96 @@ main {
   white-space: nowrap;
   pointer-events: none;
 }
-.rail { position: relative; display: flex; gap: 0; min-height: 70px; padding-top: 6px; }
+.rail { position: relative; display: flex; gap: 0; min-height: 62px; padding-top: 6px; }
 .clip {
   position: relative;
   flex: none;
-  height: 62px;
+  height: 100%;
+  min-height: 56px;
   border-radius: 4px;
   background: #202020 center/cover no-repeat;
   box-shadow: inset -1px 0 0 rgba(0, 0, 0, .75);
-  cursor: pointer;
+  cursor: grab;
   overflow: hidden;
+  touch-action: none;
 }
-.clip::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.75));
-}
+.clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.75)); }
 .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge); }
-.clip.saisi { opacity: .45; }
+.clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--rouge), 0 6px 18px rgba(0,0,0,.6); }
 .clip.hors-lecture { background-color: #2a1c1c; }
 .clip-nom {
-  position: absolute;
-  z-index: 1;
-  left: 6px;
-  right: 6px;
-  bottom: 5px;
-  font-size: 0.66rem;
-  font-weight: 600;
-  color: #f0f0f5;
-  line-height: 1.25;
-  max-height: 2.5em;
-  overflow: hidden;
+  position: absolute; z-index: 1; left: 6px; right: 6px; bottom: 5px;
+  font-size: 0.66rem; font-weight: 600; color: #f0f0f5; line-height: 1.25;
+  max-height: 2.5em; overflow: hidden;
 }
 .clip-duree {
-  position: absolute;
-  z-index: 1;
-  top: 5px;
-  left: 6px;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, .7);
-  font: 600 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #fff;
+  position: absolute; z-index: 1; top: 5px; left: 6px;
+  padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, .7);
+  font: 600 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fff;
 }
+
+/* Voie son, sous les plans. */
+.bande-son { position: relative; display: flex; height: 32px; margin-top: 4px; }
+.son-bloc {
+  display: flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 8px; border-radius: 4px;
+  background: linear-gradient(135deg, #2a3f6b, #1d2b49);
+  border: 1px solid #3d5a8f;
+  color: #cfe0ff; font-size: 0.66rem; font-weight: 600;
+  overflow: hidden; white-space: nowrap;
+}
+.son-bloc svg { width: 14px; height: 14px; flex: none; }
+.son-bloc.absent { background: #201c1c; color: #b08a8a; border-color: #4a3535; }
+
+.son-barre { display: flex; gap: 6px; align-items: center; }
+.son-ajout {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px; border-radius: 10px;
+  border: 1px dashed var(--trait); background: none; color: var(--doux);
+  font: 600 0.78rem/1 system-ui, sans-serif; cursor: pointer;
+}
+.son-ajout svg { width: 16px; height: 16px; }
+.son-ajout:hover { border-color: var(--rouge); color: var(--rouge); }
+.son-retirer {
+  flex: none; display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: 9px;
+  border: 1px solid var(--trait); background: var(--surface); color: var(--doux); cursor: pointer;
+}
+.son-retirer svg { width: 16px; height: 16px; }
+
+/* Tête de lecture : trait fin, mais large zone de préhension. */
 .tete {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 2px;
-  background: var(--rouge);
-  box-shadow: 0 0 6px rgba(230, 57, 70, .9);
-  pointer-events: none;
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 22px; margin-left: -11px;
+  cursor: ew-resize; touch-action: none; z-index: 3;
 }
+.tete::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 10px;
+  width: 2px; background: var(--rouge); box-shadow: 0 0 6px rgba(230, 57, 70, .9);
+}
+.tete-poignee {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--rouge); box-shadow: 0 0 8px rgba(230, 57, 70, .8);
+}
+
+/* Ajout d'un plan : renvoie à l'explorateur. */
+.ajout-flottant {
+  position: absolute; right: 10px; bottom: 52px; z-index: 4;
+  display: grid; place-items: center;
+  width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--fond);
+  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  color: #fff; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
+}
+.ajout-flottant svg { width: 22px; height: 22px; }
+
 .plan-courant {
-  font-size: 0.78rem;
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  font-size: 0.76rem;
   font-weight: 600;
   color: var(--doux);
   white-space: nowrap;
@@ -675,6 +781,10 @@ main {
       <span class="app-logo"><img src="icon.svg" alt=""></span>
       <span class="app-title">AMVAUTO</span>
       <span class="app-count" id="compteur"></span>
+      <span class="app-actions" id="app-actions" hidden>
+        <button type="button" id="btn-export" class="tete-btn rouge">Export</button>
+        <button type="button" id="btn-setting" class="tete-btn">Setting</button>
+      </span>
     </div>
   </header>
 
@@ -781,6 +891,12 @@ const TRAITS = {
   fait: '<path d="M5 13l4 4 10-10"/>',
   annuler: '<path d="M9 14L4 9l5-5"/><path d="M4 9h9a6 6 0 0 1 0 12H8"/>',
   retablir: '<path d="M15 14l5-5-5-5"/><path d="M20 9h-9a6 6 0 0 0 0 12h5"/>',
+  play: '<path d="M7 4.5l12 7.5-12 7.5z" fill="currentColor" stroke="none"/>',
+  pause: '<path d="M8 5v14M16 5v14" stroke-width="2.6"/>',
+  plein: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
+  plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
+  son: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+  pellicule: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14"/>',
 };
 
 const icone = (nom) =>
@@ -805,6 +921,8 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     $("vue-apropos").hidden = onglet !== "apropos";
     document.querySelector("main").classList.toggle("montage", onglet === "projet");
     $("barre-outils").hidden = onglet !== "projet";
+    $("compteur").hidden = onglet === "projet";
+    if (onglet !== "projet") $("app-actions").hidden = true;
     if (onglet === "projet") rendreProjet();
     else arreter();
   });
@@ -1459,38 +1577,16 @@ function totaux(projet) {
 }
 
 /* --- éditeur de montage ----------------------------------------------
-   Prévisualisation en haut, piste en bas : les plans s'enchaînent, la tête de
-   lecture avance, et la largeur d'un bloc vaut sa durée. */
+   Écran, transport, et une piste à deux voies : les plans et une bande son.
+   L'échelle est continue et se règle au pincement. */
 
-// Échelle de la piste, en pixels par seconde. Un plan de 73 secondes mesurerait
-// 3300 px au zoom maximum : l'échelle est réglable, et ajustée au montage à
-// l'ouverture pour qu'il tienne d'un bord à l'autre.
-const ECHELLES = [0.5, 1, 2, 4, 8, 15, 25, 40, 60, 100];
-const PAS_REGLE = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15 };
+const ECHELLE_MIN = 0.3;
+const ECHELLE_MAX = 240;
+const PAS_REGLE = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
-
-function ajusterEchelle(projet) {
-  const disponible = ($("vue-projet").clientWidth || 360) - 24;
-  const duree_totale = total(projet) || 1;
-  const ideale = disponible / duree_totale;
-  lecture.echelle = ECHELLES.reduce(
-    (retenue, valeur) => (valeur <= ideale ? valeur : retenue),
-    ECHELLES[0],
-  );
-}
-
-function zoomer(sens) {
-  const index = ECHELLES.indexOf(lecture.echelle);
-  const cible = Math.min(ECHELLES.length - 1, Math.max(0, (index < 0 ? 4 : index) + sens));
-  if (ECHELLES[cible] === lecture.echelle) return;
-  lecture.echelle = ECHELLES[cible];
-  redessinerPiste();
-}
-
-const jouables = (projet) => projet.plans.filter((plan) => !plan.youtube && plan.video);
 
 function duree(plan) {
   return plan.duree || DUREE_DEFAUT;
@@ -1508,15 +1604,33 @@ function offsets(plans) {
 function horloge(valeur, dixiemes = false) {
   const entier = Math.max(0, valeur);
   const minutes = Math.floor(entier / 60);
-  const restant = entier - minutes * 60;
-  const secondes_ = dixiemes ? restant.toFixed(1).padStart(4, "0") : String(Math.round(restant)).padStart(2, "0");
-  return `${String(minutes).padStart(2, "0")}:${secondes_}`;
+  const reste = entier - minutes * 60;
+  const sec = dixiemes ? reste.toFixed(1).padStart(4, "0") : String(Math.round(reste)).padStart(2, "0");
+  return `${String(minutes).padStart(2, "0")}:${sec}`;
+}
+
+const total = (projet) => projet.plans.reduce((somme, plan) => somme + duree(plan), 0);
+
+function ajusterEchelle(projet) {
+  const disponible = ($("vue-projet").clientWidth || 360) - 24;
+  lecture.echelle = Math.min(
+    ECHELLE_MAX,
+    Math.max(ECHELLE_MIN, disponible / Math.max(1, total(projet))),
+  );
+}
+
+function appliquerEchelle(valeur) {
+  const bornee = Math.min(ECHELLE_MAX, Math.max(ECHELLE_MIN, valeur));
+  if (Math.abs(bornee - lecture.echelle) < 0.001) return;
+  lecture.echelle = bornee;
+  redessinerPiste();
 }
 
 function rendreProjet() {
   const vue = $("vue-projet");
   const projet = projetActif();
   const morceaux = [barreProjets()];
+  $("app-actions").hidden = !projet || !projet.plans.length;
 
   if (!projet) {
     morceaux.push(note("Aucun projet. Ouvre un dossier, puis « + » sur un plan pour en démarrer un."));
@@ -1540,118 +1654,140 @@ function rendreProjet() {
   poserPlan(0, 0);
 }
 
+/* --- sélecteur de projets, chacun avec sa vignette -------------------- */
+function barreProjets() {
+  const barre = document.createElement("div");
+  barre.className = "projets";
+
+  for (const projet of state.projets) {
+    const carte = document.createElement("button");
+    carte.type = "button";
+    carte.className = "projet-carte" + (projet.id === state.actif ? " actif" : "");
+
+    const vignette = document.createElement("span");
+    vignette.className = "projet-vignette";
+    // La première image disponible du montage sert de repère ; à défaut, une
+    // amorce de pellicule.
+    const image = projet.plans.find((plan) => plan.preview)?.preview;
+    if (image) vignette.style.backgroundImage = `url("${image}")`;
+    else vignette.innerHTML = icone("pellicule");
+
+    const texte = document.createElement("span");
+    texte.className = "projet-texte";
+    const nom = document.createElement("span");
+    nom.className = "projet-nom";
+    nom.textContent = projet.nom;
+    const sous = document.createElement("span");
+    sous.className = "projet-sous";
+    sous.textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""} · ${horloge(total(projet))}`;
+    texte.append(nom, sous);
+
+    carte.append(vignette, texte);
+    carte.addEventListener("click", () => {
+      state.actif = projet.id;
+      sauver();
+      rendreProjet();
+      rendre();
+    });
+    barre.append(carte);
+  }
+
+  const nouveau = document.createElement("button");
+  nouveau.type = "button";
+  nouveau.className = "projet-carte neuf";
+  nouveau.innerHTML = `<span class="projet-vignette">${icone("plus")}</span>` +
+    `<span class="projet-texte"><span class="projet-nom">Nouveau</span></span>`;
+  nouveau.addEventListener("click", () => { creerProjet(); rendreProjet(); rendre(); });
+  barre.append(nouveau);
+  return barre;
+}
+
+/* --- l'éditeur -------------------------------------------------------- */
 function editeur(projet) {
   const bloc = document.createElement("div");
   bloc.className = "editeur";
 
-  // --- écran
   const ecran = document.createElement("div");
   ecran.className = "ecran";
+  ecran.id = "ecran";
   const video = document.createElement("video");
   video.id = "apercu";
   video.playsInline = true;
   video.preload = "auto";
   video.addEventListener("ended", planSuivant);
   video.addEventListener("error", () => {
-    const projet = projetActif();
-    const plan = projet?.plans[lecture.index];
+    const plan = projetActif()?.plans[lecture.index];
     const vide = $("ecran-vide");
     if (!plan || !vide) return;
     vide.textContent = `${plan.name} — fichier injoignable`;
     vide.hidden = false;
     if (lecture.jouant) planSuivant();
   });
-  video.addEventListener("play", () => { lecture.jouant = true; majTransport(); suivreTete(); });
-  video.addEventListener("pause", () => { lecture.jouant = false; majTransport(); });
+  video.addEventListener("play", () => { lecture.jouant = true; majTransport(); suivreTete(); demarrerSon(); });
+  video.addEventListener("pause", () => { lecture.jouant = false; majTransport(); arreterSon(); });
   const vide = document.createElement("div");
   vide.className = "ecran-vide";
   vide.id = "ecran-vide";
-  vide.textContent = "";
   ecran.append(video, vide);
 
-  // --- transport
-  const transport = document.createElement("div");
-  transport.className = "transport";
-  const bouton = document.createElement("button");
-  bouton.type = "button";
-  bouton.id = "lecture";
-  bouton.className = "lecture";
-  bouton.textContent = "▶";
-  bouton.addEventListener("click", basculerLecture);
-  const chrono = document.createElement("span");
-  chrono.className = "chrono";
-  chrono.id = "chrono";
-  const barre = document.createElement("div");
-  barre.className = "barre";
-  const remplie = document.createElement("div");
-  remplie.className = "barre-remplie";
-  remplie.id = "barre-remplie";
-  barre.append(remplie);
-  barre.addEventListener("click", (evt) => {
-    const rect = barre.getBoundingClientRect();
-    allerA(((evt.clientX - rect.left) / rect.width) * total(projet));
-  });
-  transport.append(bouton, chrono, barre);
-
-  bloc.append(ecran, transport, commandesZoom(projet), piste(projet), ligneDuPlan());
+  bloc.append(ecran, transport(), pisteComplete(projet));
   return bloc;
 }
 
-const total = (projet) => projet.plans.reduce((somme, plan) => somme + duree(plan), 0);
-
-function bilanProjet(projet) {
-  const bilan = totaux(projet);
-  const manquantes = projet.plans.length - bilan.mesures;
-  return (
-    `${projet.plans.length} plans · ${horloge(total(projet))} · ${bilan.mb.toFixed(0)} Mo` +
-    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "")
-  );
-}
-
-function commandesZoom(projet) {
+// Plein écran à gauche, lecture au centre, annuler et rétablir à droite.
+function transport() {
   const barre = document.createElement("div");
-  barre.className = "zoom";
+  barre.className = "transport";
 
-  const moins = document.createElement("button");
-  moins.type = "button";
-  moins.textContent = "−";
-  moins.title = "Dézoomer";
-  moins.addEventListener("click", () => zoomer(-1));
+  const rond = (nom, titre, action, id) => {
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.className = "rond";
+    bouton.innerHTML = icone(nom);
+    bouton.title = titre;
+    bouton.setAttribute("aria-label", titre);
+    if (id) bouton.id = id;
+    bouton.addEventListener("click", action);
+    return bouton;
+  };
 
-  const plus = document.createElement("button");
-  plus.type = "button";
-  plus.textContent = "+";
-  plus.title = "Zoomer";
-  plus.addEventListener("click", () => zoomer(1));
+  const gauche = document.createElement("span");
+  gauche.className = "transport-cote";
+  gauche.append(rond("plein", "Plein écran", pleinEcran));
 
-  const ajuster = document.createElement("button");
-  ajuster.type = "button";
-  ajuster.textContent = "Ajuster";
-  ajuster.title = "Faire tenir tout le montage à l'écran";
-  ajuster.addEventListener("click", () => { ajusterEchelle(projet); redessinerPiste(); });
+  const jouer = document.createElement("button");
+  jouer.type = "button";
+  jouer.id = "lecture";
+  jouer.className = "lecture";
+  jouer.innerHTML = icone("play");
+  jouer.title = "Lecture / pause";
+  jouer.setAttribute("aria-label", "Lecture ou pause");
+  jouer.addEventListener("click", basculerLecture);
 
-  const duree_totale = document.createElement("span");
-  duree_totale.className = "zoom-total";
-  duree_totale.id = "zoom-total";
-  duree_totale.textContent = bilanProjet(projet);
+  const droite = document.createElement("span");
+  droite.className = "transport-cote fin";
+  droite.append(
+    rond("annuler", "Annuler la dernière modification", () => parcourirHistoire(-1), "btn-annuler"),
+    rond("retablir", "Rétablir la modification annulée", () => parcourirHistoire(1), "btn-retablir"),
+  );
 
-  barre.append(moins, plus, ajuster, duree_totale);
+  barre.append(gauche, jouer, droite);
   return barre;
 }
 
-// Redessine la piste seule : reconstruire tout l'éditeur couperait la lecture.
-function redessinerPiste() {
-  const projet = projetActif();
-  const ancienne = $("piste");
-  if (!projet || !ancienne) return;
-  ancienne.replaceWith(piste(projet));
-  const bilan = $("zoom-total");
-  if (bilan) bilan.textContent = bilanProjet(projet);
-  selectionner(lecture.index);
-  majTransport();
+function pleinEcran() {
+  const ecran = $("ecran");
+  if (!ecran) return;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (ecran.requestFullscreen) ecran.requestFullscreen().catch(() => {});
+  else $("apercu")?.webkitEnterFullscreen?.();
 }
 
-function piste(projet) {
+/* --- la piste --------------------------------------------------------- */
+function pisteComplete(projet) {
+  const enveloppe = document.createElement("div");
+  enveloppe.className = "piste-enveloppe";
+
   const cadre = document.createElement("div");
   cadre.className = "piste";
   cadre.id = "piste";
@@ -1659,96 +1795,294 @@ function piste(projet) {
   const duree_totale = total(projet);
   const ligne = document.createElement("div");
   ligne.className = "ligne";
+  ligne.id = "ligne";
   ligne.style.width = `${Math.max(60, xDeSeconde(duree_totale))}px`;
 
-  // Règle : un repère toutes les N secondes, N choisi pour que les étiquettes
-  // ne se chevauchent jamais quelle que soit l'échelle.
   const regle = document.createElement("div");
   regle.className = "regle";
+  regle.id = "regle";
   const pas = PAS_REGLE.find((valeur) => xDeSeconde(valeur) >= 62) || PAS_REGLE[PAS_REGLE.length - 1];
-  for (let seconde = 0; seconde <= duree_totale; seconde += pas) {
+  for (let seconde = 0; seconde <= duree_totale + 0.001; seconde += pas) {
     const repere = document.createElement("span");
     repere.className = "repere";
     repere.style.left = `${xDeSeconde(seconde)}px`;
     repere.textContent = horloge(seconde);
     regle.append(repere);
   }
-  regle.addEventListener("click", (evt) => {
-    allerA(Math.max(0, evt.offsetX) / lecture.echelle);
-  });
 
   const rail = document.createElement("div");
   rail.className = "rail";
   rail.id = "rail";
+  projet.plans.forEach((plan, index) => rail.append(blocPlan(projet, plan, index)));
 
-  const debuts = offsets(projet.plans);
-  projet.plans.forEach((plan, index) => {
-    const clip = document.createElement("div");
-    clip.className = "clip";
-    clip.dataset.index = String(index);
-    clip.style.width = `${largeurClip(plan)}px`;
-    if (plan.preview) clip.style.backgroundImage = `url("${plan.preview}")`;
-    if (plan.youtube) clip.classList.add("hors-lecture");
-
-    const etiquette = document.createElement("span");
-    etiquette.className = "clip-nom";
-    etiquette.textContent = plan.name;
-    const chiffre = document.createElement("span");
-    chiffre.className = "clip-duree";
-    chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${plan.duree.toFixed(1)}s` : "…";
-    clip.append(etiquette, chiffre);
-
-    clip.addEventListener("click", () => { selectionner(index); allerA(debuts[index]); });
-
-    // Réordonnancement à la souris ; sur mobile, les flèches sous la piste.
-    clip.draggable = true;
-    clip.addEventListener("dragstart", (evt) => {
-      evt.dataTransfer.setData("text/plain", String(index));
-      clip.classList.add("saisi");
-    });
-    clip.addEventListener("dragend", () => clip.classList.remove("saisi"));
-    clip.addEventListener("dragover", (evt) => evt.preventDefault());
-    clip.addEventListener("drop", (evt) => {
-      evt.preventDefault();
-      const depuis = Number(evt.dataTransfer.getData("text/plain"));
-      if (Number.isInteger(depuis) && depuis !== index) reordonner(projet, depuis, index);
-    });
-
-    rail.append(clip);
-  });
+  const bande = document.createElement("div");
+  bande.className = "bande-son";
+  bande.id = "bande-son";
+  if (projet.audio) {
+    const bloc = document.createElement("div");
+    bloc.className = "son-bloc" + (lecture.audio ? "" : " absent");
+    bloc.style.width = `${Math.max(40, xDeSeconde(projet.audio.duree || duree_totale))}px`;
+    bloc.innerHTML = `${icone("son")}<span></span>`;
+    bloc.querySelector("span").textContent = lecture.audio
+      ? projet.audio.nom
+      : `${projet.audio.nom} — à rouvrir`;
+    bande.append(bloc);
+  }
 
   const tete = document.createElement("div");
   tete.className = "tete";
   tete.id = "tete";
+  tete.innerHTML = '<span class="tete-poignee"></span>';
 
-  ligne.append(regle, rail, tete);
+  ligne.append(regle, rail, bande, tete);
   cadre.append(ligne);
-  return cadre;
+
+  brancherScrub(regle);
+  brancherScrub(tete);
+  brancherPincement(cadre);
+
+  const ajouter = document.createElement("button");
+  ajouter.type = "button";
+  ajouter.className = "ajout-flottant";
+  ajouter.innerHTML = icone("plus");
+  ajouter.title = "Ajouter un plan depuis l'explorateur";
+  ajouter.setAttribute("aria-label", "Ajouter un plan");
+  ajouter.addEventListener("click", () => document.querySelector('[data-tab="explorer"]').click());
+
+  enveloppe.append(entetePiste(projet), cadre, boutonSon(projet), ajouter);
+  return enveloppe;
 }
 
-// Le plan sélectionné reste nommé sous la piste : c'est une information, pas
-// une commande, elle n'a rien à faire dans la barre d'outils.
-function ligneDuPlan() {
-  const ligne = document.createElement("div");
-  ligne.className = "plan-courant";
-  ligne.id = "plan-courant";
-  return ligne;
+// Timecode à gauche, sur la ligne des graduations, comme sur un banc de montage.
+function entetePiste(projet) {
+  const entete = document.createElement("div");
+  entete.className = "piste-entete";
+  const code = document.createElement("span");
+  code.className = "timecode";
+  code.id = "timecode";
+  code.textContent = `${horloge(0, true)} / ${horloge(total(projet))}`;
+  const bilan = document.createElement("span");
+  bilan.className = "piste-bilan";
+  bilan.id = "zoom-total";
+  bilan.textContent = bilanProjet(projet);
+  entete.append(code, bilan);
+  return entete;
 }
 
-function reordonner(projet, depuis, vers) {
-  if (vers < 0 || vers >= projet.plans.length || depuis === vers) return;
-  const [plan] = projet.plans.splice(depuis, 1);
-  projet.plans.splice(vers, 0, plan);
-  // La sélection suit le plan déplacé. Sans ça elle retombait sur le premier,
-  // et la pression suivante déplaçait le voisin : le plan faisait du surplace
-  // au lieu de traverser la piste.
-  lecture.index = vers;
-  sauver();
-  enregistrer(projet);
-  redessinerPiste();
+function bilanProjet(projet) {
+  const bilan = totaux(projet);
+  const manquantes = projet.plans.length - bilan.mesures;
+  return (
+    `${projet.plans.length} plans · ${bilan.mb.toFixed(0)} Mo` +
+    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "")
+  );
 }
 
-/* --- lecture enchaînée ------------------------------------------------ */
+function blocPlan(projet, plan, index) {
+  const clip = document.createElement("div");
+  clip.className = "clip";
+  clip.dataset.index = String(index);
+  clip.style.width = `${largeurClip(plan)}px`;
+  if (plan.preview) clip.style.backgroundImage = `url("${plan.preview}")`;
+  if (plan.youtube) clip.classList.add("hors-lecture");
+
+  const etiquette = document.createElement("span");
+  etiquette.className = "clip-nom";
+  etiquette.textContent = plan.name;
+  const chiffre = document.createElement("span");
+  chiffre.className = "clip-duree";
+  chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${plan.duree.toFixed(1)}s` : "…";
+  clip.append(etiquette, chiffre);
+
+  brancherGlisse(clip, projet, index);
+  return clip;
+}
+
+/* --- déplacer la tête de lecture au doigt ----------------------------- */
+function brancherScrub(element) {
+  element.addEventListener("pointerdown", (evt) => {
+    evt.preventDefault();
+    const ligne = $("ligne");
+    if (!ligne) return;
+    const gauche = ligne.getBoundingClientRect().left;
+    const viser = (x) => allerA(Math.max(0, x - gauche) / lecture.echelle);
+    viser(evt.clientX);
+    const bouger = (autre) => viser(autre.clientX);
+    const finir = () => {
+      window.removeEventListener("pointermove", bouger);
+      window.removeEventListener("pointerup", finir);
+      window.removeEventListener("pointercancel", finir);
+    };
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", finir);
+    window.addEventListener("pointercancel", finir);
+  });
+}
+
+/* --- déplacer un plan, réordonné en direct ---------------------------- */
+function brancherGlisse(clip, projet, index) {
+  clip.addEventListener("pointerdown", (evt) => {
+    if (evt.button) return;
+    const depart = evt.clientX;
+    let position = index;
+    let actif = false;
+
+    const bouger = (autre) => {
+      if (!actif && Math.abs(autre.clientX - depart) < 6) return;
+      if (!actif) {
+        actif = true;
+        clip.classList.add("saisi");
+      }
+      // Le plan change de place dès que le doigt franchit le milieu du voisin,
+      // sans attendre le relâchement : c'est ce qui rend le geste lisible.
+      const rail = $("rail");
+      if (!rail) return;
+      const blocs = [...rail.children];
+      const trouve = blocs.findIndex((bloc) => {
+        const rect = bloc.getBoundingClientRect();
+        return autre.clientX < rect.left + rect.width / 2;
+      });
+      const vise = trouve === -1 ? blocs.length - 1 : trouve;
+      if (vise !== position && vise >= 0) {
+        const [plan] = projet.plans.splice(position, 1);
+        projet.plans.splice(vise, 0, plan);
+        position = vise;
+        lecture.index = vise;
+        redessinerPiste();
+        $("rail")?.children[vise]?.classList.add("saisi");
+      }
+    };
+
+    const finir = () => {
+      window.removeEventListener("pointermove", bouger);
+      window.removeEventListener("pointerup", finir);
+      window.removeEventListener("pointercancel", finir);
+      $("rail")?.querySelector(".saisi")?.classList.remove("saisi");
+      if (actif) {
+        sauver();
+        enregistrer(projet);
+      } else {
+        selectionner(position);
+        allerA(offsets(projet.plans)[position]);
+      }
+    };
+
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", finir);
+    window.addEventListener("pointercancel", finir);
+  });
+}
+
+/* --- pincement à deux doigts ------------------------------------------ */
+function brancherPincement(cadre) {
+  let base = null;
+  const ecart = (touches) =>
+    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+
+  cadre.addEventListener("touchstart", (evt) => {
+    if (evt.touches.length === 2) base = { ecart: ecart(evt.touches), echelle: lecture.echelle };
+  }, { passive: true });
+
+  cadre.addEventListener("touchmove", (evt) => {
+    if (evt.touches.length !== 2 || !base) return;
+    evt.preventDefault();
+    appliquerEchelle(base.echelle * (ecart(evt.touches) / base.ecart));
+  }, { passive: false });
+
+  cadre.addEventListener("touchend", () => { base = null; });
+
+  // À la souris, l'équivalent habituel : Ctrl + molette.
+  cadre.addEventListener("wheel", (evt) => {
+    if (!evt.ctrlKey) return;
+    evt.preventDefault();
+    appliquerEchelle(lecture.echelle * (evt.deltaY < 0 ? 1.12 : 0.89));
+  }, { passive: false });
+}
+
+/* --- bande son -------------------------------------------------------- */
+function boutonSon(projet) {
+  const barre = document.createElement("div");
+  barre.className = "son-barre";
+
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.className = "son-ajout";
+  bouton.innerHTML = `${icone("son")}<span></span>`;
+  bouton.querySelector("span").textContent = projet.audio
+    ? (lecture.audio ? "Remplacer la musique" : "Rouvrir le fichier")
+    : "Ajouter une musique ou un SFX";
+
+  const champ = document.createElement("input");
+  champ.type = "file";
+  champ.accept = "audio/*";
+  champ.hidden = true;
+  champ.addEventListener("change", () => {
+    const fichier = champ.files?.[0];
+    if (fichier) chargerSon(projet, fichier);
+  });
+  bouton.addEventListener("click", () => champ.click());
+  barre.append(bouton, champ);
+
+  if (projet.audio) {
+    const retirer = document.createElement("button");
+    retirer.type = "button";
+    retirer.className = "son-retirer";
+    retirer.innerHTML = icone("retirer");
+    retirer.title = "Retirer la bande son";
+    retirer.setAttribute("aria-label", "Retirer la bande son");
+    retirer.addEventListener("click", () => {
+      arreterSon();
+      lecture.audio = null;
+      projet.audio = null;
+      sauver();
+      enregistrer(projet);
+      rendreProjet();
+    });
+    barre.append(retirer);
+  }
+  return barre;
+}
+
+// Le fichier vient de l'appareil : un navigateur ne peut pas le rouvrir seul au
+// rechargement, on ne garde donc que son nom et sa durée.
+function chargerSon(projet, fichier) {
+  arreterSon();
+  const url = URL.createObjectURL(fichier);
+  const son = new Audio(url);
+  son.preload = "metadata";
+  son.addEventListener("loadedmetadata", () => {
+    projet.audio = { nom: fichier.name, duree: Math.round(son.duration * 100) / 100 };
+    lecture.audio = son;
+    sauver();
+    enregistrer(projet);
+    rendreProjet();
+  }, { once: true });
+  son.addEventListener("error", () => {
+    URL.revokeObjectURL(url);
+    alert("Ce fichier audio n'a pas pu être lu.");
+  }, { once: true });
+}
+
+function demarrerSon() {
+  if (!lecture.audio) return;
+  lecture.audio.currentTime = Math.min(positionCourante(), lecture.audio.duration || 0);
+  lecture.audio.play().catch(() => {});
+}
+
+function arreterSon() {
+  lecture.audio?.pause();
+}
+
+/* --- lecture ---------------------------------------------------------- */
+function redessinerPiste() {
+  const projet = projetActif();
+  const ancienne = $("piste");
+  if (!projet || !ancienne) return;
+  ancienne.closest(".piste-enveloppe").replaceWith(pisteComplete(projet));
+  selectionner(lecture.index);
+  majTransport();
+}
+
 function poserPlan(index, decalage = 0, enchainer = false) {
   const projet = projetActif();
   if (!projet || !projet.plans[index]) return;
@@ -1756,11 +2090,11 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   const plan = projet.plans[index];
   const video = $("apercu");
   const vide = $("ecran-vide");
+  if (!video) return;
 
   selectionner(index);
 
   if (plan.youtube) {
-    // Une bande-annonce YouTube ne s'enchaîne pas : on la saute en lecture.
     video.removeAttribute("src");
     video.load();
     vide.textContent = `${plan.name} — bande-annonce YouTube, non lisible dans le montage`;
@@ -1790,11 +2124,8 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   majTransport();
 }
 
-// Le plan suivant se met en cache pendant que le courant se joue : sans ça,
-// l'enchaînement marque un temps d'arrêt.
 function precharger(index) {
-  const projet = projetActif();
-  const plan = projet?.plans[index];
+  const plan = projetActif()?.plans[index];
   if (!plan || plan.youtube || !plan.video) return;
   const sonde = document.createElement("video");
   sonde.preload = "auto";
@@ -1806,22 +2137,15 @@ function precharger(index) {
 function planSuivant() {
   const projet = projetActif();
   if (!projet) return;
-  if (lecture.index + 1 < projet.plans.length) {
-    poserPlan(lecture.index + 1, 0, true);
-  } else {
-    arreter();
-    poserPlan(0, 0);
-  }
+  if (lecture.index + 1 < projet.plans.length) poserPlan(lecture.index + 1, 0, true);
+  else { arreter(); poserPlan(0, 0); }
 }
 
 function basculerLecture() {
   const video = $("apercu");
-  if (lecture.jouant) {
-    video.pause();
-    return;
-  }
   const projet = projetActif();
-  if (!jouables(projet).length) return;
+  if (!video || !projet) return;
+  if (lecture.jouant) { video.pause(); return; }
   lecture.jouant = true;
   if (projet.plans[lecture.index]?.youtube) planSuivant();
   else video.play().catch(() => {});
@@ -1832,8 +2156,8 @@ function arreter() {
   lecture.jouant = false;
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   lecture.boucle = null;
-  const video = document.getElementById("apercu");
-  if (video) video.pause();
+  document.getElementById("apercu")?.pause();
+  arreterSon();
 }
 
 function allerA(secondesCible) {
@@ -1843,6 +2167,7 @@ function allerA(secondesCible) {
   let index = debuts.findIndex((debut, i) => secondesCible < debut + duree(projet.plans[i]));
   if (index < 0) index = projet.plans.length - 1;
   poserPlan(index, Math.max(0, secondesCible - debuts[index]));
+  if (lecture.audio) lecture.audio.currentTime = Math.min(secondesCible, lecture.audio.duration || 0);
 }
 
 function selectionner(index) {
@@ -1867,25 +2192,25 @@ function positionCourante() {
 
 function majTransport() {
   const projet = projetActif();
-  if (!projet || !$("chrono")) return;
-  const duree_totale = total(projet);
+  if (!projet || !$("timecode")) return;
   const position = positionCourante();
-  $("chrono").textContent = `${horloge(position, true)} / ${horloge(duree_totale)}`;
-  $("barre-remplie").style.width = `${Math.min(100, (position / duree_totale) * 100)}%`;
-  $("lecture").textContent = lecture.jouant ? "❚❚" : "▶";
+  $("timecode").textContent = `${horloge(position, true)} / ${horloge(total(projet))}`;
+  const jouer = $("lecture");
+  if (jouer) jouer.innerHTML = icone(lecture.jouant ? "pause" : "play");
 
   const tete = $("tete");
   if (tete) {
     const x = xDeSeconde(position);
     tete.style.left = `${x}px`;
-    const piste = $("piste");
-    if (lecture.jouant && piste) {
-      const marge = piste.clientWidth * 0.4;
-      if (x - piste.scrollLeft > piste.clientWidth - marge || x < piste.scrollLeft) {
-        piste.scrollLeft = Math.max(0, x - marge);
+    const cadre = $("piste");
+    if (lecture.jouant && cadre) {
+      const marge = cadre.clientWidth * 0.4;
+      if (x - cadre.scrollLeft > cadre.clientWidth - marge || x < cadre.scrollLeft) {
+        cadre.scrollLeft = Math.max(0, x - marge);
       }
     }
   }
+  majBoutonsHistoire();
 }
 
 function suivreTete() {
@@ -1897,116 +2222,100 @@ function suivreTete() {
   lecture.boucle = requestAnimationFrame(pas);
 }
 
-function barreProjets() {
-  const barre = document.createElement("div");
-  barre.className = "tools";
-  const etiquette = document.createElement("span");
-  etiquette.className = "label";
-  etiquette.textContent = "Projets";
-  barre.append(etiquette);
-
-  for (const projet of state.projets) {
-    const bouton = document.createElement("button");
-    bouton.type = "button";
-    bouton.textContent = `${projet.nom} (${projet.plans.length})`;
-    bouton.classList.toggle("on", projet.id === state.actif);
-    bouton.addEventListener("click", () => {
-      state.actif = projet.id;
-      sauver();
-      rendreProjet();
-      rendre();
-    });
-    barre.append(bouton);
-  }
-
-  const nouveau = document.createElement("button");
-  nouveau.type = "button";
-  nouveau.textContent = "+ Nouveau";
-  nouveau.addEventListener("click", () => { creerProjet(); rendreProjet(); rendre(); });
-  barre.append(nouveau);
-  return barre;
-}
-
+/* --- barre du bas ----------------------------------------------------- */
 function remplirBarreOutils(projet) {
   const actions = $("barre-outils");
   if (!actions) return;
 
-  // Icône seule, mais jamais muette : l'intitulé reste en infobulle et pour
-  // les lecteurs d'écran.
-  const bouton = (nom, titre, action, fort = false) => {
-    const element = document.createElement("button");
-    element.type = "button";
-    element.innerHTML = icone(nom);
-    element.title = titre;
-    element.setAttribute("aria-label", titre);
-    if (fort) element.className = "fort";
-    element.addEventListener("click", action);
-    return element;
-  };
-  const separateur = () => {
-    const trait = document.createElement("span");
-    trait.className = "separateur";
-    return trait;
-  };
+  const nom = document.createElement("span");
+  nom.className = "plan-courant";
+  nom.id = "plan-courant";
 
-  const annuler = bouton("annuler", "Annuler la dernière modification", () => parcourirHistoire(-1));
-  annuler.id = "btn-annuler";
-  const retablir = bouton("retablir", "Rétablir la modification annulée", () => parcourirHistoire(1));
-  retablir.id = "btn-retablir";
-
-  const reculer = bouton("reculer", "Reculer le plan sélectionné", () =>
-    reordonner(projet, lecture.index, lecture.index - 1));
-  const avancer = bouton("avancer", "Avancer le plan sélectionné", () =>
-    reordonner(projet, lecture.index, lecture.index + 1));
-  const retirer = bouton("retirer", "Retirer le plan sélectionné du montage", () => {
+  const retirer = document.createElement("button");
+  retirer.type = "button";
+  retirer.innerHTML = icone("supprimer");
+  retirer.title = "Retirer le plan sélectionné du montage";
+  retirer.setAttribute("aria-label", "Retirer le plan");
+  retirer.addEventListener("click", () => {
     projet.plans.splice(lecture.index, 1);
     sauver();
     enregistrer(projet);
     rendre();
-    if (!projet.plans.length) {
-      rendreProjet();
-      return;
-    }
-    // On reste là où on était plutôt que de repartir du début.
+    if (!projet.plans.length) { rendreProjet(); return; }
     lecture.index = Math.min(lecture.index, projet.plans.length - 1);
     redessinerPiste();
     poserPlan(lecture.index, 0);
   });
 
-  const edl = bouton("exporter", "Exporter le montage (.edl) pour Premiere, DaVinci ou Final Cut",
-    () => telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet)), true);
+  actions.replaceChildren(nom, retirer);
+  majBoutonsHistoire();
+}
 
-  const liste = bouton("liste", "Exporter la liste des plans (.txt)",
-    () => telecharger(`${nomDeFichier(projet)}.txt`, versTexte(projet)));
+/* --- export et réglages ----------------------------------------------- */
+$("btn-export").addEventListener("click", () => {
+  const projet = projetActif();
+  if (!projet?.plans.length) return;
+  telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet));
+});
 
-  const copier = bouton("liens", "Copier les liens des fichiers", async () => {
-    await navigator.clipboard.writeText(projet.plans.map((plan) => plan.video).join("\n"));
-    copier.innerHTML = icone("fait");
-    copier.classList.add("fait");
-    setTimeout(() => { copier.innerHTML = icone("liens"); copier.classList.remove("fait"); }, 1600);
-  });
+$("btn-setting").addEventListener("click", () => {
+  const projet = projetActif();
+  if (!projet) return;
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
 
-  const renommer = bouton("renommer", "Renommer le projet", () => {
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = projet.nom;
+  const meta = document.createElement("div");
+  meta.className = "lecteur-meta";
+  meta.textContent =
+    `${projet.plans.length} plans · ${secondes(total(projet))} · export sur une base de ` +
+    `${IMAGES_PAR_SECONDE} images par seconde`;
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+
+  const renommer = document.createElement("button");
+  renommer.type = "button";
+  renommer.textContent = "Renommer le projet";
+  renommer.addEventListener("click", () => {
     const nom = prompt("Nom du projet", projet.nom);
-    if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); enregistrer(projet); rendreProjet(); }
+    if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); enregistrer(projet); }
+    fermerFeuille();
+    rendreProjet();
   });
 
-  const supprimer = bouton("supprimer", "Supprimer le projet et ses plans", () => {
+  const supprimer = document.createElement("button");
+  supprimer.type = "button";
+  supprimer.textContent = "Supprimer le projet";
+  supprimer.addEventListener("click", () => {
     if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
     state.projets = state.projets.filter((autre) => autre.id !== projet.id);
     state.actif = state.projets[0]?.id || null;
+    histoire.projet = null;
     sauver();
+    fermerFeuille();
     rendreProjet();
     rendre();
   });
 
-  actions.replaceChildren(
-    annuler, retablir, separateur(),
-    reculer, avancer, retirer, separateur(),
-    edl, liste, copier, renommer, supprimer,
-  );
-  majBoutonsHistoire();
-}
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.className = "fort";
+  fermer.textContent = "Fermer";
+  fermer.addEventListener("click", fermerFeuille);
+
+  actions.append(renommer, supprimer, fermer);
+  corps.append(titre, meta, actions);
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
+});
 
 /* --- exports --------------------------------------------------------- */
 const nomDeFichier = (projet) => `amvauto-${projet.nom.toLowerCase().replace(/\W+/g, "-")}`;

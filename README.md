@@ -47,8 +47,9 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    sont posés par centaines à la demande plutôt qu'en une fois.
 8. **Monte le projet** : les plans retenus vont dans un ou plusieurs **projets**, conservés
    dans le navigateur. L'onglet Projet est un banc de montage — prévisualisation en haut,
-   piste en bas à échelle réglable (− / + / Ajuster, ajustée d'office à l'ouverture) avec
-   une règle graduée, chaque bloc étant large comme sa durée, tête de lecture qui suit, et
+   piste en bas à échelle continue réglée au pincement, avec une règle graduée et le timecode
+   à gauche, chaque bloc étant large comme sa durée, tête de lecture glissable au doigt, une
+   voie pour une musique ou un SFX pris sur l'appareil, et
    **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
    courant se joue). Clic sur un bloc pour s'y placer, glisser-déposer pour réordonner.
 
