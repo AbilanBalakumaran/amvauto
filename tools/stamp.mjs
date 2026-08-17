@@ -19,4 +19,5 @@ const remplacer = (chemin, motif, remplacement) => {
 
 remplacer("worker/src/version.js", /export const VERSION = "[^"]*";/, `export const VERSION = "${version}";`);
 remplacer("public/index.html", /const VERSION_PAGE = "[^"]*";/, `const VERSION_PAGE = "${version}";`);
+remplacer("public/sw.js", /const VERSION = "[^"]*";/, `const VERSION = "${version}";`);
 console.log("version", version);

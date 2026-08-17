@@ -83,6 +83,15 @@ Routes :
 | `GET /api/moods` | ambiances disponibles |
 | `GET /api/version` | horodatage du déploiement |
 
+### Application installable
+
+L'interface s'installe sur un téléphone (manifeste + service worker) et fonctionne hors
+ligne pour sa coquille — les rushs, eux, viennent du réseau. À chaque lancement elle
+vérifie sa version : un `sw.js` d'un octet différent suffit à installer le nouveau worker,
+qui prend la main aussitôt et fait recharger la page. Le nom du cache porte l'horodatage
+posé par `tools/stamp.mjs`, donc **aucun numéro à incrémenter à la main** — l'oublier une
+fois figerait l'application chez l'utilisateur.
+
 La page est servie en `no-store` et le Worker s'exécute avant les fichiers statiques
 (`run_worker_first`), sans quoi cet en-tête ne s'appliquerait jamais. Page et Worker portent
 le même horodatage, posé par `tools/stamp.mjs` au déploiement : quand ils diffèrent, la page

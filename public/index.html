@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>amvauto</title>
 <meta name="description" content="Explorateur de rushs sakuga : un animé, ses arcs, ses ambiances, ses plans nommés.">
+<link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#0a0a0a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -932,6 +935,12 @@ body.ecran-plein .ecran video { object-fit: contain; }
       reste à relier les fichiers une fois téléchargés. La base est de 24 images par seconde, et un
       plan dont la durée n'a pas pu être lue vaut 2 secondes, signalé comme tel dans le fichier.</p>
 
+      <h2>Installer l'application</h2>
+      <p>Sur iPhone : bouton <strong>Partager</strong> puis <strong>Sur l'écran d'accueil</strong>.
+      Sur Android : menu du navigateur puis <strong>Installer l'application</strong>. Elle se lance
+      alors en plein écran, sans barre d'adresse, et vérifie sa version à chaque ouverture — la mise
+      à jour se fait toute seule.</p>
+
       <h2>Version</h2>
       <p id="version-page">version inconnue</p>
 
@@ -947,17 +956,50 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 06:54";
+const VERSION_PAGE = "2026-08-17 07:01";
 
-// Si le Worker annonce une version plus récente que celle de cette page, c'est
-// que le navigateur en sert une copie périmée. On le dit, avec le moyen de la
-// rafraîchir — sinon une correction déployée passe pour une panne.
+// Installation et mise à jour. Le service worker est vérifié à chaque
+// lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
+// sans cette vérification une correction n'arriverait qu'au lancement suivant.
+// Le nouveau worker prend la main tout seul, la page se recharge une fois.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      const enregistrement = await navigator.serviceWorker.register("sw.js");
+      enregistrement.update().catch(() => {});
+      // Toutes les heures aussi, pour une application laissée ouverte.
+      setInterval(() => enregistrement.update().catch(() => {}), 3600000);
+
+      let recharge = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (recharge) return;
+        recharge = true;
+        location.reload();
+      });
+    } catch {
+      // Sans service worker l'application marche, elle ne s'installe pas.
+    }
+  });
+}
+
+// Filet pour les navigateurs sans service worker : si le serveur annonce une
+// version plus récente que celle-ci, c'est qu'une copie périmée est servie. On
+// recharge une fois, puis on se contente de le signaler.
 fetch("/api/version", { cache: "no-store" })
   .then((r) => r.json())
   .then(({ version }) => {
     const marque = document.getElementById("version-page");
     if (marque) marque.textContent = `version ${VERSION_PAGE}`;
     if (!version || version === VERSION_PAGE) return;
+
+    // Une seule tentative automatique par session : si le rechargement ne
+    // suffit pas, mieux vaut un bandeau qu'une page qui se recharge en boucle.
+    if (!sessionStorage.getItem("amvauto-maj")) {
+      sessionStorage.setItem("amvauto-maj", version);
+      location.replace(`${location.pathname}?v=${Date.now()}`);
+      return;
+    }
+
     const bandeau = document.createElement("div");
     bandeau.className = "bandeau-version";
     bandeau.innerHTML = `<span>Nouvelle version disponible (${version}) — celle-ci date du ${VERSION_PAGE}.</span>`;
