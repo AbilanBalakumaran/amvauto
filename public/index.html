@@ -956,7 +956,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 07:01";
+const VERSION_PAGE = "2026-08-17 07:08";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -970,9 +970,13 @@ if ("serviceWorker" in navigator) {
       // Toutes les heures aussi, pour une application laissée ouverte.
       setInterval(() => enregistrement.update().catch(() => {}), 3600000);
 
+      // Au tout premier lancement, le worker prend la main sur une page qui
+      // n'en avait pas : recharger n'apporterait rien et ferait clignoter
+      // l'application. On ne recharge que sur une vraie mise à jour.
+      const premiereInstallation = !navigator.serviceWorker.controller;
       let recharge = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (recharge) return;
+        if (recharge || premiereInstallation) return;
         recharge = true;
         location.reload();
       });
@@ -1099,14 +1103,21 @@ document.addEventListener("click", (evt) => {
   if (!boite.contains(evt.target) && evt.target !== $("anime")) boite.hidden = true;
 });
 
-const rapide = await fetch("/api/suggest?q=").then((r) => r.json()).catch(() => ({ series: [] }));
-$("rapide").replaceChildren(...rapide.series.slice(0, 8).map((serie) => {
-  const bouton = document.createElement("button");
-  bouton.type = "button";
-  bouton.textContent = serie.display;
-  bouton.addEventListener("click", () => { $("anime").value = serie.display; ouvrir(); });
-  return bouton;
-}));
+// Surtout pas d'attente réseau ici : un « await » à ce niveau suspend la suite
+// du module, donc le branchement des onglets et des boutons. Le temps que
+// l'API réponde, l'interface entière restait inerte — le bouton lecture avec.
+fetch("/api/suggest?q=")
+  .then((r) => r.json())
+  .then((rapide) => {
+    $("rapide").replaceChildren(...rapide.series.slice(0, 8).map((serie) => {
+      const bouton = document.createElement("button");
+      bouton.type = "button";
+      bouton.textContent = serie.display;
+      bouton.addEventListener("click", () => { $("anime").value = serie.display; ouvrir(); });
+      return bouton;
+    }));
+  })
+  .catch(() => {});
 
 /* --- bandes-annonces (AniList, appelé directement) -------------------- */
 // AniList refuse les requêtes venant d'un Worker mais autorise le CORS : c'est
