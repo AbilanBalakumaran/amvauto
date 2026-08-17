@@ -56,10 +56,13 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
    courant se joue). Clic sur un bloc pour s'y placer. **Déplacer un plan est un mode qui
    s'active**, verrouillé par défaut : changer l'ordre des scènes est le geste le plus facile
-   à faire par accident, et le plus coûteux à défaire quand on ne s'en aperçoit pas.
+   à faire par accident, et le plus coûteux à défaire quand on ne s'en aperçoit pas. Le même
+   interrupteur gouverne le rognage par les bords : un seul mode pour les deux gestes qui
+   touchent aux plans, et hors de ce mode la piste ne sert qu'à naviguer.
 
-9. **Coupe les plans.** Les bords du bloc sélectionné se tirent au doigt pour rogner
-   l'entrée et la sortie ; deux boutons ramènent le début ou la fin sur la tête de lecture,
+9. **Coupe les plans.** Dans le mode modification, les bords du bloc sélectionné se tirent
+   au doigt pour rogner l'entrée et la sortie — hors de ce mode ils n'existent pas, sans quoi
+   les 14 px de chaque bord rognaient le plan alors qu'on croyait déplacer le curseur ; deux boutons ramènent le début ou la fin sur la tête de lecture,
    ce qui reste praticable à fort zoom là où un glissé demanderait des milliers de pixels ;
    un coup de ciseaux coupe le plan sous la tête en deux morceaux indépendants — le même
    rush peut donc servir plusieurs fois, coupé différemment. Rien n'est réécrit : la coupe
@@ -184,6 +187,11 @@ image figée :
   pendant qu'un doigt glisse fait qu'il abandonne celui en cours et ne signale jamais son
   arrivée : la tête avance, l'image reste. On n'en demande donc qu'un à la fois, en gardant
   la dernière position voulue pour la poser dès que le précédent est arrivé.
+- **Une toile n'a pas de `videoWidth`.** Le moniteur garde la dernière image décodée pour
+  la montrer pendant qu'un déplacement est en cours ; elle vit dans une toile, et le calcul
+  de format ne lisait que `videoWidth` et `naturalWidth`. La condition échouait donc, la
+  fonction sortait après avoir peint le fond, et le moniteur passait au noir à chaque
+  déplacement — ce qui donnait l'impression que l'aperçu ne suivait pas la tête.
 - **Un geste sur la piste ne survit pas à une reconstruction.** Refaire l'arborescence sous
   le doigt détache l'élément saisi, et le navigateur annule le geste : un import qui se
   terminait au mauvais moment interrompait ainsi un rognage en pleine manipulation. Les
