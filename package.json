@@ -1,0 +1,13 @@
+{
+  "name": "amvauto",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Propose des rushs sakuga exploitables pour monter un AMV, à partir d'un nom d'animé.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
