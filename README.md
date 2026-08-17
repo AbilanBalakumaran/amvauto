@@ -53,13 +53,16 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    par graduation (24 i/s) —, tête de lecture glissable au doigt, une voie pour une musique
    ou un SFX pris sur l'appareil, et
    **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
-   courant se joue). Clic sur un bloc pour s'y placer, glisser-déposer pour réordonner.
+   courant se joue). Clic sur un bloc pour s'y placer. **Déplacer un plan est un mode qui
+   s'active**, verrouillé par défaut : changer l'ordre des scènes est le geste le plus facile
+   à faire par accident, et le plus coûteux à défaire quand on ne s'en aperçoit pas.
 
-9. **Coupe les plans.** Un rush dure souvent plus que ce qu'on veut en garder. Les bords
-   du bloc se tirent au doigt pour rogner l'entrée et la sortie, et un coup de ciseaux
-   coupe le plan sous la tête de lecture en deux morceaux indépendants — le même rush peut
-   donc servir plusieurs fois, coupé différemment. Rien n'est réécrit : la coupe déplace
-   deux bornes dans le fichier source, elle est donc instantanée et s'annule sans coût.
+9. **Coupe les plans.** Les bords du bloc sélectionné se tirent au doigt pour rogner
+   l'entrée et la sortie ; deux boutons ramènent le début ou la fin sur la tête de lecture,
+   ce qui reste praticable à fort zoom là où un glissé demanderait des milliers de pixels ;
+   un coup de ciseaux coupe le plan sous la tête en deux morceaux indépendants — le même
+   rush peut donc servir plusieurs fois, coupé différemment. Rien n'est réécrit : la coupe
+   déplace deux bornes dans le fichier source, elle est donc instantanée et s'annule sans coût.
    Ces bornes partent dans l'EDL comme points d'entrée et de sortie source, si bien que
    Premiere ou DaVinci retrouve exactement le même découpage.
 
@@ -174,6 +177,16 @@ image figée :
   pendant qu'un doigt glisse fait qu'il abandonne celui en cours et ne signale jamais son
   arrivée : la tête avance, l'image reste. On n'en demande donc qu'un à la fois, en gardant
   la dernière position voulue pour la poser dès que le précédent est arrivé.
+- **Un geste sur la piste ne survit pas à une reconstruction.** Refaire l'arborescence sous
+  le doigt détache l'élément saisi, et le navigateur annule le geste : un import qui se
+  terminait au mauvais moment interrompait ainsi un rognage en pleine manipulation. Les
+  reconstructions venues du fond attendent donc la fin du geste. De même, un bloc porte une
+  image de fond et du texte : sans le lui interdire, le navigateur y voit de quoi lancer son
+  propre glisser-déposer, prend la main et annule le nôtre au deuxième déplacement.
+- **Le trait de la tête de lecture est décoratif.** Il traverse toute la piste : s'il capte
+  les gestes, il rend intouchable ce qui passe dessous — les poignées de rognage du premier
+  plan étaient ainsi inatteignables. Seul le bouton rond en haut se saisit ; on se déplace
+  aussi depuis la règle.
 - **La pellicule est peinte par fenêtre, pas par plan.** Un plan d'une minute zoomé à
   l'image mesure des dizaines de milliers de pixels — largeur qu'aucune toile n'accepte, et
   le bloc restait noir. Seule la partie visible est dessinée, dans une toile de la taille de

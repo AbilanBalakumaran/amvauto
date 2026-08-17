@@ -167,6 +167,14 @@ main {
   color: #fff;
 }
 .barre-outils .separateur { flex: none; width: 1px; margin: 4px 2px; background: var(--trait); }
+/* Un mode actif se voit : sinon on ne sait pas si un glissé va déplacer un plan
+   ou non, et c'est précisément ce doute qu'on veut supprimer. */
+.barre-outils button.on {
+  background: linear-gradient(135deg, var(--rouge), var(--rouge-fonce));
+  border-color: var(--rouge-fonce);
+  color: #fff;
+}
+.barre-outils button.on:hover { color: #fff; }
 
 .bottom-nav {
   order: 2;
@@ -732,6 +740,11 @@ body.ecran-plein .ecran video { object-fit: contain; }
 .clip canvas.bande[hidden] { display: none; }
 .clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,.68)); }
 .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge); }
+/* Un bloc porte une image de fond et du texte : sans ces trois lignes, le
+   navigateur y voit de quoi lancer son propre glisser-déposer ou une sélection,
+   prend la main sur le geste et annule le nôtre au deuxième déplacement. */
+.clip, .clip * { user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+body.reordre .clip { touch-action: none; }
 .clip-import {
   position: absolute;
   z-index: 2;
@@ -776,6 +789,11 @@ body.ecran-plein .ecran video { object-fit: contain; }
 .poignee.gauche::before { left: 2px; }
 .poignee.droite::before { right: 2px; }
 .clip.actif .poignee { display: block; }
+/* Les deux gestes ne cohabitent pas sur le même bord : en mode déplacement, les
+   poignées s'effacent et les blocs annoncent qu'ils se saisissent. */
+body.reordre .clip .poignee { display: none; }
+body.reordre .clip { cursor: grab; }
+body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--rouge), inset 0 0 22px rgba(230, 57, 70, .35); }
 /* Un plan coupé se signale : sinon on cherche pourquoi le rush entier ne passe
    pas. */
 .clip.rogne .clip-duree { color: #ffd7a1; }
@@ -822,10 +840,14 @@ body.ecran-plein .ecran video { object-fit: contain; }
 .son-retirer svg { width: 16px; height: 16px; }
 
 /* Tête de lecture : trait fin, mais large zone de préhension. */
+/* Le trait de la tête de lecture traverse toute la piste : s'il capte les
+   gestes, il rend intouchable ce qui passe dessous — les poignées de rognage du
+   premier plan étaient ainsi inatteignables. Le trait est donc décoratif, et
+   seul son bouton en haut se saisit. On se déplace aussi depuis la règle. */
 .tete {
   position: absolute; top: 0; bottom: 0; left: 0;
   width: 22px; margin-left: -11px;
-  cursor: ew-resize; touch-action: none; z-index: 3;
+  pointer-events: none; z-index: 3;
 }
 .tete::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 10px;
@@ -835,6 +857,12 @@ body.ecran-plein .ecran video { object-fit: contain; }
   position: absolute; top: 0; left: 50%; transform: translateX(-50%);
   width: 14px; height: 14px; border-radius: 50%;
   background: var(--rouge); box-shadow: 0 0 8px rgba(230, 57, 70, .8);
+  pointer-events: auto; cursor: ew-resize; touch-action: none;
+}
+/* Zone de saisie élargie au doigt, sans grossir le rond. */
+.tete-poignee::before {
+  content: ""; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+  width: 38px; height: 38px; border-radius: 50%;
 }
 
 /* Ajout d'un plan : renvoie à l'explorateur. */
@@ -1012,7 +1040,7 @@ body.ecran-plein .ecran video { object-fit: contain; }
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const VERSION_PAGE = "2026-08-17 12:00";
+const VERSION_PAGE = "2026-08-17 12:38";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1072,7 +1100,7 @@ fetch("/api/version", { cache: "no-store" })
   })
   .catch(() => {});
 const PAR_PAGE = 100;
-const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], actif: null };
+const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], actif: null, reordre: false };
 
 // L'extension vient du fichier, pas d'une supposition : AnimeThemes sert du
 // WebM, Sakugabooru du MP4, et une bande-annonce n'est pas un fichier.
@@ -1101,6 +1129,9 @@ const TRAITS = {
   son: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
   pellicule: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14"/>',
   couper: '<circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M7.8 16.2L18 5M16.2 16.2L6 5"/>',
+  deplacer: '<path d="M7 9L4 12l3 3M17 9l3 3-3 3"/><path d="M4 12h16"/><path d="M12 5v14" stroke-dasharray="2 2.5"/>',
+  entree: '<path d="M6 5v14h3"/><path d="M20 12H11"/><path d="M14 8l-3 4 3 4"/>',
+  sortie: '<path d="M18 5v14h-3"/><path d="M4 12h9"/><path d="M10 8l3 4-3 4"/>',
 };
 
 const icone = (nom) =>
@@ -1568,16 +1599,21 @@ function charger() {
     const brut = JSON.parse(localStorage.getItem(CLE) || "{}");
     state.projets = Array.isArray(brut.projets) ? brut.projets : [];
     state.actif = brut.actif || state.projets[0]?.id || null;
+    // Déplacer les plans est un mode qu'on active : par défaut, un doigt qui
+    // traîne sur la piste ne doit pas pouvoir changer l'ordre des scènes.
+    state.reordre = Boolean(brut.reordre);
   } catch {
     state.projets = [];
     state.actif = null;
+    state.reordre = false;
   }
+  document.body.classList.toggle("reordre", state.reordre);
   majBadge();
 }
 
 function sauver() {
   try {
-    localStorage.setItem(CLE, JSON.stringify({ projets: state.projets, actif: state.actif }));
+    localStorage.setItem(CLE, JSON.stringify({ projets: state.projets, actif: state.actif, reordre: state.reordre }));
   } catch {
     // Quota plein : le projet reste utilisable dans l'onglet ouvert.
   }
@@ -1793,7 +1829,7 @@ function mesurerSuivant() {
         // réglage fait à la main.
         const projet = projetActif();
         if (projet && !lecture.echelleManuelle) ajusterEchelle(projet);
-        redessinerPiste();
+        redessinerPisteDifferee();
       }
     }
     finir();
@@ -2549,7 +2585,7 @@ function pisteComplete(projet) {
   cadre.append(ligne);
 
   brancherScrub(regle);
-  brancherScrub(tete);
+  brancherScrub(tete.querySelector(".tete-poignee"));
   brancherPincement(cadre);
 
   const ajouter = document.createElement("button");
@@ -2646,6 +2682,7 @@ function brancherRognage(poignee, projet, index, cote) {
 
     const plan = projet.plans[index];
     const depart = evt.clientX;
+    debutGeste();
     const entree0 = entreeDe(plan);
     const sortie0 = sortieDe(plan);
     let demande = null;
@@ -2673,6 +2710,7 @@ function brancherRognage(poignee, projet, index, cote) {
     };
 
     const finir = () => {
+      finGeste();
       window.removeEventListener("pointermove", bouger);
       window.removeEventListener("pointerup", finir);
       window.removeEventListener("pointercancel", finir);
@@ -2739,10 +2777,12 @@ function brancherScrub(element) {
     const gauche = ligne.getBoundingClientRect().left;
     const viser = (x) => allerA(Math.max(0, x - gauche) / lecture.echelle);
     lecture.scrub = true;
+    debutGeste();
     viser(evt.clientX);
     const bouger = (autre) => viser(autre.clientX);
     const finir = () => {
       lecture.scrub = false;
+      finGeste();
       window.removeEventListener("pointermove", bouger);
       window.removeEventListener("pointerup", finir);
       window.removeEventListener("pointercancel", finir);
@@ -2755,28 +2795,42 @@ function brancherScrub(element) {
 
 /* --- déplacer un plan, réordonné en direct ---------------------------- */
 function brancherGlisse(clip, projet, index) {
+  clip.draggable = false;
+  clip.addEventListener("dragstart", (evt) => evt.preventDefault());
   clip.addEventListener("pointerdown", (evt) => {
     if (evt.button) return;
+    // En mode déplacement, le geste est à nous : on empêche le navigateur de
+    // lancer le sien, faute de quoi il annule le nôtre en cours de route.
+    if (state.reordre) evt.preventDefault();
     const depart = evt.clientX;
     let position = index;
     let actif = false;
+    debutGeste();
 
     const bouger = (autre) => {
+      // Hors mode déplacement, un doigt qui traîne ne touche pas à l'ordre des
+      // plans : c'est le geste le plus facile à faire par accident, et le plus
+      // coûteux à défaire quand on ne s'en aperçoit pas.
+      if (!state.reordre) return;
       if (!actif && Math.abs(autre.clientX - depart) < 6) return;
       if (!actif) {
         actif = true;
         clip.classList.add("saisi");
       }
-      // Le plan change de place dès que le doigt franchit le milieu du voisin,
-      // sans attendre le relâchement : c'est ce qui rend le geste lisible.
+      // Le plan se pose là où est le doigt, pas selon le milieu d'un voisin :
+      // viser un milieu au pixel près ne marchait qu'un sens sur deux, parce
+      // qu'un geste qui s'arrête pile sur la limite ne la franchit pas.
       const rail = $("rail");
       if (!rail) return;
       const blocs = [...rail.children];
-      const trouve = blocs.findIndex((bloc) => {
+      const dedans = blocs.findIndex((bloc) => {
         const rect = bloc.getBoundingClientRect();
-        return autre.clientX < rect.left + rect.width / 2;
+        return autre.clientX >= rect.left && autre.clientX <= rect.right;
       });
-      const vise = trouve === -1 ? blocs.length - 1 : trouve;
+      const premier = blocs[0].getBoundingClientRect();
+      const vise = dedans !== -1
+        ? dedans
+        : autre.clientX < premier.left ? 0 : blocs.length - 1;
       if (vise !== position && vise >= 0) {
         const [plan] = projet.plans.splice(position, 1);
         projet.plans.splice(vise, 0, plan);
@@ -2788,6 +2842,7 @@ function brancherGlisse(clip, projet, index) {
     };
 
     const finir = () => {
+      finGeste();
       window.removeEventListener("pointermove", bouger);
       window.removeEventListener("pointerup", finir);
       window.removeEventListener("pointercancel", finir);
@@ -2917,6 +2972,29 @@ function arreterSon() {
 }
 
 /* --- lecture ---------------------------------------------------------- */
+/* Un geste en cours interdit de refaire la piste sous le doigt : reconstruire
+   l'arborescence détache l'élément saisi et le navigateur annule le geste. Les
+   reconstructions venues du fond — une durée mesurée, un import terminé —
+   attendent donc la fin du geste. Sans ça, un rognage ou un déplacement
+   s'interrompt tout seul en pleine manipulation, ce qui donne l'impression que
+   la poignée ne répond pas. */
+let gestes = 0;
+let pisteSale = false;
+
+const debutGeste = () => { gestes += 1; };
+function finGeste() {
+  gestes = Math.max(0, gestes - 1);
+  if (!gestes && pisteSale) {
+    pisteSale = false;
+    redessinerPiste();
+  }
+}
+
+function redessinerPisteDifferee() {
+  if (gestes) { pisteSale = true; return; }
+  redessinerPiste();
+}
+
 function redessinerPiste() {
   const projet = projetActif();
   const ancienne = $("piste");
@@ -3451,7 +3529,7 @@ function apresImport(plan) {
   bandes.delete(plan.id);
   const attente = elementAttente();
   if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
-  redessinerPiste();
+  redessinerPisteDifferee();
 }
 
 // Tous les plans du projet sont importés, le plan courant d'abord.
@@ -3551,12 +3629,42 @@ function remplirBarreOutils(projet) {
   nom.className = "plan-courant";
   nom.id = "plan-courant";
 
+  // Rogner à la tête : à fort zoom, tirer une poignée sur plusieurs secondes
+  // demanderait des milliers de pixels de glissé. On pose la tête où l'on veut
+  // et on coupe là — c'est aussi ainsi qu'on travaille sur un banc de montage.
+  const entree = document.createElement("button");
+  entree.type = "button";
+  entree.innerHTML = icone("entree");
+  entree.title = "Faire commencer le plan à la tête de lecture";
+  entree.setAttribute("aria-label", "Début du plan à la tête");
+  entree.addEventListener("click", () => rognerAuCurseur("entree"));
+
+  const sortie = document.createElement("button");
+  sortie.type = "button";
+  sortie.innerHTML = icone("sortie");
+  sortie.title = "Faire finir le plan à la tête de lecture";
+  sortie.setAttribute("aria-label", "Fin du plan à la tête");
+  sortie.addEventListener("click", () => rognerAuCurseur("sortie"));
+
   const couper = document.createElement("button");
   couper.type = "button";
   couper.innerHTML = icone("couper");
   couper.title = "Couper le plan à la tête de lecture";
   couper.setAttribute("aria-label", "Couper à la tête de lecture");
   couper.addEventListener("click", couperAuCurseur);
+
+  // Mode déplacement : tant qu'il est éteint, l'ordre des plans ne peut pas
+  // changer par mégarde.
+  const deplacer = document.createElement("button");
+  deplacer.type = "button";
+  deplacer.id = "btn-reordre";
+  deplacer.innerHTML = icone("deplacer");
+  deplacer.addEventListener("click", () => {
+    state.reordre = !state.reordre;
+    document.body.classList.toggle("reordre", state.reordre);
+    sauver();
+    majReordre();
+  });
 
   const retirer = document.createElement("button");
   retirer.type = "button";
@@ -3574,8 +3682,55 @@ function remplirBarreOutils(projet) {
     poserPlan(lecture.index, 0);
   });
 
-  actions.replaceChildren(nom, couper, retirer);
+  actions.replaceChildren(nom, entree, sortie, couper, deplacer, retirer);
+  majReordre();
   majBoutonsHistoire();
+}
+
+function majReordre() {
+  const bouton = $("btn-reordre");
+  if (!bouton) return;
+  bouton.classList.toggle("on", state.reordre);
+  bouton.title = state.reordre
+    ? "Déplacement des plans actif — appuyer pour le verrouiller"
+    : "Déplacement des plans verrouillé — appuyer pour l'activer";
+  bouton.setAttribute("aria-pressed", String(state.reordre));
+  bouton.setAttribute("aria-label", bouton.title);
+}
+
+// Ramène le début ou la fin du plan sélectionné sur la tête de lecture.
+function rognerAuCurseur(cote) {
+  const projet = projetActif();
+  if (!projet?.plans.length) return;
+  const debuts = offsets(projet.plans);
+  const index = Math.min(lecture.index, projet.plans.length - 1);
+  const plan = projet.plans[index];
+  const dans = lecture.position - debuts[index];
+
+  const dire = (texte) => {
+    const etiquette = $("plan-courant");
+    if (!etiquette) return;
+    etiquette.textContent = texte;
+    setTimeout(() => selectionner(lecture.index), 1800);
+  };
+  if (plan.youtube) return dire("Une bande-annonce ne se rogne pas");
+  // Hors du plan, ou si près du bord qu'il n'en resterait rien : on refuse
+  // plutôt que de produire une miette.
+  if (dans < 0 || dans > duree(plan)) return dire("La tête n'est pas sur le plan sélectionné");
+  if (cote === "entree" && dans > duree(plan) - PLAN_MINI) return dire("Trop près de la fin du plan");
+  if (cote === "sortie" && dans < PLAN_MINI) return dire("Trop près du début du plan");
+
+  const point = entreeDe(plan) + dans;
+  if (cote === "entree") plan.entree = point;
+  else plan.sortie = point;
+
+  bandes.delete(plan.id);
+  sauver();
+  enregistrer(projet);
+  redessinerPiste();
+  // Le début a bougé : la tête reste sur la borne, qui est maintenant ici.
+  allerA(cote === "entree" ? offsets(projet.plans)[index] : lecture.position);
+  selectionner(index);
 }
 
 /* --- export et réglages ----------------------------------------------- */
