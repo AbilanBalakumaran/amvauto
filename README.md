@@ -247,6 +247,53 @@ image figée :
   par nos soins n'est jamais relancée — le rattrapage qui rejoue en sourdine après un refus
   confondait notre propre pause avec un refus du navigateur, et repartait sur le morceau coupé.
   Arrivé au bout, un appui sur lecture reprend depuis le début.
+- **La pellicule est peinte à l'ouverture d'un projet.** Rien ne s'en chargeait : elle
+  n'apparaissait que si un autre événement provoquait un redessin — une durée mesurée, un import
+  qui se termine. Sur un projet déjà en cache, rien ne venait et les blocs restaient noirs.
+- **Aucune colonne vide.** À défaut de l'image de son instant, une colonne reçoit l'image connue
+  la plus proche : la bande reste continue et se précise à mesure que les images arrivent, au
+  lieu de se remplir par plaques. L'image d'entrée d'un plan, elle, ne patiente pas derrière
+  l'import — elle ne coûte qu'une lecture par plage, quand l'import en télécharge vingt
+  mégaoctets.
+- **La sonde à imagettes passe par le relais tant que la copie locale n'est pas là.** Une image
+  prise en direct sur la source « teinte » définitivement toute toile où on la dessine — la
+  pellicule, puis le moniteur — et interdit d'en relire les pixels. Le relais, lui, renvoie les
+  en-têtes qui l'autorisent.
+- **La vignette de la source est la première image du fichier.** C'est ce que le moniteur
+  affichait faute de mieux, tant que le lecteur n'avait rien à montrer — y compris sur un plan
+  fractionné dont on venait de retirer le début, où elle exhibait précisément ce qu'on avait
+  supprimé. Le repli puise maintenant dans la réserve d'imagettes du plan, à la position de la
+  tête, puis dans son image d'entrée ; la vignette de la source ne sert plus que si le plan
+  commence bien au début de son fichier, et à défaut on laisse du noir — une image fausse est
+  pire que pas d'image. Un plan rogné n'a pas non plus d'affiche. Vérifié en fractionnant un
+  plan, en supprimant la première partie et en rechargeant : le moniteur ne dessine plus que la
+  vidéo, là où il commençait par la vignette.
+- **Le plan suivant est garé sur son point d'entrée.** Il est préchargé pendant que le plan
+  courant se joue, mais il restait au début de son fichier : à la bascule, le lecteur devient
+  visible immédiatement et montrait les premières images du fichier — celles-là mêmes qui
+  avaient été coupées — le temps que la position s'applique. Mesuré : 0 s au lieu de 4 s avant
+  correction. Le moniteur refuse en outre de dessiner une image située avant le point d'entrée.
+- **Une cible périmée n'est pas une consigne.** La reprise de position, qui repose la cible tant
+  qu'elle n'est pas atteinte, ne distinguait pas un reste d'une demande vivante : posée juste
+  avant un démarrage, elle tirait le lecteur en arrière pendant qu'il jouait. Interdire toute
+  reprise pendant la lecture a été une erreur — cela abandonnait aussi les positions demandées
+  par l'utilisateur, et l'image ne suivait plus le curseur. Le critère est donc la fraîcheur :
+  une cible redemandée dans les 400 dernières millisecondes est une consigne et s'applique
+  toujours, même vers l'arrière ; une cible plus ancienne que la lecture a dépassée est un reste
+  et s'oublie. Les deux exigences sont vérifiées ensemble — l'image suit le curseur à l'arrêt
+  comme pendant la lecture, et quarante relevés sur quatre secondes de lecture ne montrent aucun
+  retour en arrière.
+- **Un fichier ne suit pas un doigt.** Un lecteur ne traite qu'un déplacement à la fois, là où
+  un défilement rapide en demanderait des dizaines par seconde : l'image se figeait le temps que
+  le lecteur rattrape. Pendant un déplacement, l'aperçu montre donc l'imagette déjà capturée la
+  plus proche — basse définition mais immédiate — et l'image pleine reprend la main dès que le
+  doigt s'arrête. C'est ainsi qu'un banc de montage donne l'impression de faire défiler les
+  images. Pour que cette réserve soit assez dense, chaque plan importé se fait échantillonner en
+  tâche de fond, une image toutes les 0,4 s et au plus quarante-huit par plan, ces demandes
+  passant après tout ce qui est affiché. Les images sont retrouvées par dichotomie dans une liste
+  triée par instant, indépendamment de la grille sur laquelle elles ont été prises. Mesuré sur un
+  balayage de bout en bout dans les deux sens, à 25 ms par pas : 12 relevés, 12 images
+  différentes, contre 7 ou 8 sans la réserve.
 - **La sonde à imagettes doit avoir joué une fois.** Sur iPhone, un lecteur qui n'a jamais reçu
   l'ordre de jouer ne charge rien — `preload` est ignoré en réseau mobile — et une vidéo détachée
   du document ou masquée n'est pas décodée du tout. La sonde qui fabrique la pellicule était dans

@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 03:19";
+const VERSION_PAGE = "2026-08-18 04:42";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2092,6 +2092,12 @@ function rendreProjet() {
   vue.replaceChildren(...morceaux);
   remplirBarreOutils(projet);
   poserPlan(0, 0);
+  // La pellicule est peinte tout de suite : rien d'autre ne s'en chargeait à
+  // l'ouverture d'un projet. Elle n'apparaissait que si un autre événement
+  // provoquait un redessin — une durée mesurée, un import qui se termine — et
+  // sur un projet déjà en cache, rien ne venait : les blocs restaient vides.
+  redessinerBandes();
+  requestAnimationFrame(ordonnancerBandes);
 }
 
 /* --- sélecteur de projets, chacun avec sa vignette -------------------- */
@@ -2325,13 +2331,51 @@ function dessinerMoniteur() {
   // l'image. Retomber alors sur la vignette du plan donnerait une image fixe
   // qui ne bouge plus : on garde la dernière image décodée à la place.
   let source = null;
-  if (video && video.readyState >= 2 && video.videoWidth) {
+
+  /* Doigt en mouvement : le lecteur ne peut pas suivre. Un fichier ne traite
+     qu'un déplacement à la fois, et il en faudrait des dizaines par seconde.
+     On montre donc l'imagette déjà capturée la plus proche — la même que celle
+     de la pellicule, en basse définition mais immédiate — et l'image pleine
+     reprend la main dès que le doigt s'arrête. C'est ainsi qu'un banc de
+     montage donne l'impression de faire défiler les images. */
+  if (lecture.scrub) {
+    const cible = positionCible();
+    if (cible && !cible.plan.youtube) {
+      const temps = entreeDe(cible.plan) + cible.dans;
+      const pas = pasGrille();
+      const juste = video && video.readyState >= 2 && video.videoWidth
+        && video.dataset.plan === cible.plan.id
+        && Math.abs(video.currentTime - temps) <= 0.08;
+      if (!juste) source = imagetteLaPlusProche(bandeDe(cible.plan), temps, 0.6);
+      // On demande au passage l'imagette de l'endroit survolé : le défilement
+      // se densifie là où le doigt passe.
+      demanderImagette(cible.plan, temps, pas);
+    }
+  }
+
+  if (source) {
+    // une imagette de défilement a déjà été retenue
+  } else if (video && video.readyState >= 2 && video.videoWidth
+             && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - 0.15)) {
+    // La dernière condition écarte une image située avant le point d'entrée :
+    // elle a été retirée du montage, elle n'a rien à faire à l'écran, même une
+    // fraction de seconde pendant qu'un plan se met en place.
     source = video;
     derniereImage.plan = plan?.id || null;
   } else if (derniereImage.plan && derniereImage.plan === plan?.id && derniereImage.toile.width) {
     source = derniereImage.toile;
-  } else {
-    source = vignetteDe(plan);
+  } else if (plan) {
+    /* Aucune image du lecteur : on puise dans la réserve du plan, à la position
+       de la tête. La vignette de la source ne vient qu'en dernier, et seulement
+       si le plan commence bien au début de son fichier — c'est la première image
+       de ce fichier, et sur un plan fractionné dont on a retiré le début, elle
+       montrait justement ce qu'on venait de supprimer. Faute de mieux, du noir :
+       une image fausse est pire que pas d'image. */
+    const cible = positionCible();
+    const dans = cible && cible.plan.id === plan.id ? cible.dans : 0;
+    source = imagetteLaPlusProche(bandeDe(plan), entreeDe(plan) + dans, 1.5)
+      || bandeDe(plan).couverture?.image
+      || (rogne(plan) ? null : vignetteDe(plan));
   }
   if (!source) return;
 
@@ -2393,7 +2437,18 @@ function bandeDe(plan) {
     // « couverture » : la dernière image d'entrée obtenue pour ce plan. Elle sert
     // de secours pendant qu'on tire une poignée, le temps que l'image du nouveau
     // point d'entrée soit capturée.
-    bande = { images: new Map(), demandes: new Map(), epuise: false, ordre: [], couverture: null };
+    bande = {
+      images: new Map(),
+      demandes: new Map(),
+      epuise: false,
+      ordre: [],
+      couverture: null,
+      // Toutes les images de ce plan, triées par instant : c'est ce qui permet
+      // de trouver la plus proche d'une position quelconque sans dépendre de la
+      // grille sur laquelle elle a été prise.
+      parTemps: [],
+      prechauffe: false,
+    };
     bandes.set(plan.id, bande);
   }
   return bande;
@@ -2423,6 +2478,36 @@ function imagetteProche(bande, temps, pas) {
   return null;
 }
 
+// Insertion à sa place dans la liste triée, et recherche de la plus proche par
+// dichotomie : appelées à chaque image du moniteur pendant un défilement.
+function rangerParTemps(bande, temps, image) {
+  let bas = 0, haut = bande.parTemps.length;
+  while (bas < haut) {
+    const milieu = (bas + haut) >> 1;
+    if (bande.parTemps[milieu].temps < temps) bas = milieu + 1;
+    else haut = milieu;
+  }
+  bande.parTemps.splice(bas, 0, { temps, image });
+}
+
+function imagetteLaPlusProche(bande, temps, tolerance) {
+  const liste = bande.parTemps;
+  if (!liste.length) return null;
+  let bas = 0, haut = liste.length - 1;
+  while (bas < haut) {
+    const milieu = (bas + haut) >> 1;
+    if (liste[milieu].temps < temps) bas = milieu + 1;
+    else haut = milieu;
+  }
+  const candidats = [liste[bas], liste[bas - 1]].filter(Boolean);
+  let meilleur = null, ecart = Infinity;
+  for (const c of candidats) {
+    const d = Math.abs(c.temps - temps);
+    if (d < ecart) { ecart = d; meilleur = c; }
+  }
+  return ecart <= tolerance ? meilleur.image : null;
+}
+
 // Comme imagetteProche, mais elle refuse une image trop éloignée de l'instant
 // demandé : mieux vaut ne rien montrer qu'une image qui ment.
 function imagetteAssezProche(bande, temps, pas, tolerance) {
@@ -2443,9 +2528,12 @@ function demanderImagette(plan, temps, pas, exact = false) {
   if (plan.youtube || !plan.video || !plan.duree) return;
   // Une copie locale est en route : on l'attend plutôt que de retélécharger le
   // même fichier pour en tirer des imagettes. Sur un téléphone en 4G, ce serait
-  // payer deux fois la même vidéo — et l'attente est courte.
-  if (!estLocal(plan) && importPrevu(plan)) return;
+  // payer deux fois la même vidéo. L'image d'entrée fait exception : c'est la
+  // couverture du bloc, elle doit être là tout de suite, et elle ne coûte qu'une
+  // seule lecture.
+  if (!exact && !estLocal(plan) && importPrevu(plan)) return;
   bande.demandes.set(identifiant, instant);
+  pellicule.demandees += 1;
   attenteImagettes.push({ plan, temps: instant, identifiant });
   servirImagettes();
 }
@@ -2486,7 +2574,7 @@ function reveillerSonde(sonde) {
   essai.then(() => sonde.pause()).catch(() => { delete sonde.dataset.reveille; });
 }
 
-const pellicule = { prises: 0, ratees: 0, dernier: "" };
+const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" };
 
 function servirImagettes() {
   if (sondeOccupee) return;
@@ -2496,10 +2584,18 @@ function servirImagettes() {
   const bande = bandeDe(plan);
   if (bande.images.has(identifiant)) { bande.demandes.delete(identifiant); return servirImagettes(); }
   sondeOccupee = true;
+  pellicule.lancees += 1;
 
   if (!sondeBande) sondeBande = creerSondeBande();
   const sonde = sondeBande;
-  const source = sourceDe(plan);
+  /* Tant que la copie locale n'est pas là, la sonde passe par notre relais
+     plutôt que par la source : le relais renvoie les en-têtes qui autorisent la
+     page à relire les pixels. Une imagette prise en direct sur la source
+     « teinte » définitivement toute toile où on la dessine — la pellicule, puis
+     le moniteur — et interdit d'en relire quoi que ce soit. Sur une copie
+     locale, la question ne se pose pas : elle vient de la page elle-même. */
+  const local = estLocal(plan);
+  const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(plan.video)}`;
   const exact = identifiant.startsWith("exact:");
 
   let fini = false;
@@ -2521,8 +2617,14 @@ function servirImagettes() {
       bande.images.set(identifiant, image);
       if (exact) bande.couverture = { temps, image };
       bande.ordre.push(identifiant);
+      rangerParTemps(bande, temps, image);
       // Mémoire bornée : au-delà du plafond, les plus anciennes images sortent.
-      while (bande.ordre.length > IMAGETTES_MAX) bande.images.delete(bande.ordre.shift());
+      while (bande.ordre.length > IMAGETTES_MAX) {
+        const vieille = bande.images.get(bande.ordre[0]);
+        bande.images.delete(bande.ordre.shift());
+        const rang = bande.parTemps.findIndex((e) => e.image === vieille);
+        if (rang >= 0) bande.parTemps.splice(rang, 1);
+      }
       redessinerBandes();
     } else {
       pellicule.ratees += 1;
@@ -2565,6 +2667,9 @@ function servirImagettes() {
   if (sonde.dataset.source !== source) {
     sonde.dataset.source = source;
     delete sonde.dataset.reveille;
+    // À poser avant la source, sans quoi il n'a aucun effet.
+    if (local) sonde.removeAttribute("crossorigin");
+    else sonde.crossOrigin = "anonymous";
     sonde.src = source;
     sonde.load();
     sonde.addEventListener("loadedmetadata", viser, { once: true });
@@ -2579,13 +2684,55 @@ function servirImagettes() {
 
 // Les demandes en attente ne valent que pour ce qui est à l'écran : au
 // pincement suivant, elles ne servent plus à rien.
+/* Réserve d'images d'un plan.
+
+   Un banc de montage construit ses vignettes une fois pour toutes après
+   l'import, et ne dépend plus d'elles ensuite. C'est ce qui permet de faire
+   défiler le curseur vite en voyant les images : un fichier ne se déplace que
+   d'une position à la fois, il ne peut pas suivre un doigt, mais des images
+   déjà prises s'affichent instantanément.
+
+   On en prend une toutes les 0,4 s environ, plafonnées à quarante-huit par
+   plan, en tâche de fond et seulement sur la copie locale. Ces demandes sont
+   déposées au fond de la file : tout ce que l'utilisateur regarde passe avant. */
+const PAS_RESERVE = 0.4;
+const RESERVE_MAX = 48;
+
+function prechaufferPellicule(plan) {
+  const bande = bandeDe(plan);
+  if (bande.prechauffe || plan.youtube || !plan.duree || !estLocal(plan)) return;
+  bande.prechauffe = true;
+  const duree = dureeSource(plan);
+  const pas = Math.max(PAS_RESERVE, duree / RESERVE_MAX);
+  const demandes = [];
+  for (let temps = 0; temps < duree - IMAGE; temps += pas) {
+    const identifiant = cle(pas, Math.round(temps / pas));
+    if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) continue;
+    bande.demandes.set(identifiant, temps);
+    demandes.push({ plan, temps, identifiant, reserve: true });
+  }
+  // En tête de tableau : la file se sert par la fin, donc ces images passent
+  // après toutes celles qu'on demande pour l'affichage.
+  attenteImagettes.unshift(...demandes);
+  servirImagettes();
+}
+
 function viderAttenteImagettes() {
-  for (const { plan, identifiant } of attenteImagettes) bandeDe(plan).demandes.delete(identifiant);
+  // Seules les demandes d'affichage sont abandonnées : la réserve du plan, elle,
+  // sert à tous les zooms et n'a pas à être refaite.
+  const gardees = [];
+  for (const demande of attenteImagettes) {
+    if (demande.reserve) gardees.push(demande);
+    else bandeDe(demande.plan).demandes.delete(demande.identifiant);
+  }
   attenteImagettes.length = 0;
+  attenteImagettes.push(...gardees);
 }
 
 function ordonnancerBandes() {
   redessinerBandes();
+  // Chaque plan déjà sur l'appareil se constitue sa réserve d'images.
+  for (const plan of projetActif()?.plans || []) prechaufferPellicule(plan);
 }
 
 /* Peint la partie visible de chaque bloc. Chaque colonne de 96 px porte
@@ -2667,7 +2814,12 @@ function redessinerBandes() {
           bloc.dataset.couverture = instant.toFixed(2);
         }
       } else {
-        image = imagetteProche(bande, temps, pas);
+        // Une colonne sans image laissait un trou noir au milieu de la
+        // pellicule, le temps qu'elle soit capturée. On y met l'image connue la
+        // plus proche : la bande reste continue et se précise à mesure que les
+        // images arrivent, au lieu de se remplir par plaques.
+        image = imagetteProche(bande, temps, pas)
+          || imagetteLaPlusProche(bande, temps, Math.max(1, (largeurColonne / dpr) / lecture.echelle * 4));
       }
       if (image) {
         const facteur = Math.max(largeurColonne / image.width, hauteurPx / image.height);
@@ -2699,6 +2851,13 @@ function preparerSuivant(index) {
   attente.muted = true;
   attente.src = source;
   attente.load();
+  // Et garé sur son point d'entrée, pas au début du fichier : à la bascule, le
+  // lecteur devient visible immédiatement, et il montrait jusqu'ici les
+  // premières images du fichier — celles-là mêmes qui avaient été coupées — le
+  // temps que la position s'applique.
+  const garer = () => demanderPosition(attente, entreeDe(plan));
+  attente.addEventListener("loadedmetadata", garer, { once: true });
+  if (attente.readyState >= 1) garer();
 }
 
 // Plein écran à gauche, lecture au centre, annuler et rétablir à droite.
@@ -3505,7 +3664,9 @@ function basculerLecture() {
   if (video.dataset.plan !== cible.plan.id || video.dataset.source !== source) {
     video.dataset.plan = cible.plan.id;
     video.dataset.source = source;
-    video.poster = cible.plan.preview || "";
+    // Pas d'affiche sur un plan rogné : c'est la première image du fichier,
+    // souvent celle qu'on vient de retirer du montage.
+    video.poster = (!rogne(cible.plan) && cible.plan.preview) || "";
     video.src = source;
   }
   viser(video, entreeDe(cible.plan) + cible.dans, cible.plan);
@@ -3686,7 +3847,9 @@ function demanderPosition(video, temps) {
   if (!video || !Number.isFinite(temps)) return;
   video.dataset.vise = String(temps);
   // Une cible a une fin de validité : sans elle, une position jamais atteinte
-  // ramènerait le lecteur en arrière indéfiniment.
+  // ramènerait le lecteur en arrière indéfiniment. Et l'heure de sa demande,
+  // qui distingue une consigne que l'on vient de donner d'un reste oublié.
+  video.dataset.viseQuand = String(performance.now());
   video.dataset.viseFin = String(performance.now() + 4000);
   rattraperPosition(video);
 }
@@ -3694,6 +3857,7 @@ function demanderPosition(video, temps) {
 const oublierPosition = (video) => {
   delete video.dataset.vise;
   delete video.dataset.viseFin;
+  delete video.dataset.viseQuand;
 };
 
 /* Le lecteur est ramené vers sa cible tant qu'il ne l'a pas atteinte, et cette
@@ -3709,6 +3873,14 @@ function rattraperPosition(video) {
   const vise = Number(video.dataset.vise);
   if (!Number.isFinite(vise)) return;
   if (performance.now() > Number(video.dataset.viseFin)) return oublierPosition(video);
+  /* Une cible que la lecture a dépassée et qu'on n'a pas redemandée depuis est
+     un reste : l'appliquer ramènerait en arrière, et l'on reverrait des images
+     déjà passées. Une cible fraîche, elle, est une consigne — un appui sur la
+     piste pendant la lecture, même vers l'arrière — et doit toujours être
+     suivie. La version précédente les confondait et abandonnait les deux : le
+     curseur se déplaçait sans que l'image suive. */
+  const fraiche = performance.now() - Number(video.dataset.viseQuand) < 400;
+  if (!fraiche && !video.paused && video.currentTime > vise + 0.35) return oublierPosition(video);
   // Un déplacement est déjà en route : on le laisse finir, la cible reste notée.
   if (video.seeking || video.readyState < 1) return;
   if (Math.abs(video.currentTime - vise) <= 0.06) return oublierPosition(video);
@@ -3943,6 +4115,7 @@ function apresImport(plan) {
   redessinerPisteDifferee();
   // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
   redessinerBandes();
+  prechaufferPellicule(plan);
 }
 
 // Tous les plans du projet sont importés, le plan courant d'abord.
@@ -4221,7 +4394,8 @@ $("btn-setting").addEventListener("click", () => {
           `${video?.dataset.vise ? ` · vise ${Math.round(Number(video.dataset.vise) * 100) / 100} s` : ""}` +
           `${video?.seeking ? " · déplacement en cours" : ""}`,
         `  média ${estLocal(cible.plan) ? "importé sur l'appareil" : "distant"}`,
-        `  pellicule : ${pellicule.prises} image(s) prise(s), ${pellicule.ratees} échec(s)` +
+        `  pellicule : ${pellicule.demandees} demandée(s), ${pellicule.lancees} lancée(s), ` +
+          `${pellicule.prises} prise(s), ${pellicule.ratees} échec(s)` +
           `${pellicule.dernier ? ` — dernier : ${pellicule.dernier}` : ""}`,
       ];
     })(),
