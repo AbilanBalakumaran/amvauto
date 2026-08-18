@@ -563,6 +563,44 @@ Ce qui a changé :
 - Un rose du thème rouge d'avant traînait encore sur les étiquettes, posé sur un
   fond vert.
 
+### Le décalage qui restait : la forme, pas la boîte
+
+Une seconde capture, prise sur l'iPhone, montrait encore un décalage. Les boîtes
+étaient pourtant centrées au pixel. Le défaut était **d'un cran en dessous** :
+chaque dessin est tracé dans une grille de 24 sur 24, et **treize des
+vingt-deux n'étaient pas centrés dans leur propre grille**. Le tiret d'entrée
+penchait d'une unité à droite, celui de sortie d'une unité à gauche, les ciseaux
+tombaient de 0,8 vers le bas, la corbeille de 0,5 — une unité vaut quatre pour
+cent de la largeur du dessin, soit près d'un point sur un bouton de la barre
+d'outils. Le bouton avait beau être juste, la forme qu'il contenait ne l'était
+pas.
+
+Plutôt que de retoucher des tracés — qu'on relit ensuite mal —, on décale le
+cadre de lecture : déplacer l'origine de la grille de (dx, dy) recentre le
+dessin d'autant, sans toucher à une seule coordonnée. Vérifié dessin par dessin :
+vingt et un tombent maintenant exactement au centre, et aucun n'est rogné par son
+cadre. Le vingt-deuxième est le triangle de lecture, décalé d'une unité à droite
+**volontairement** : un triangle centré géométriquement paraît penché à gauche.
+
+Deux autres causes tenaient au rendu, et pas à la mise en page :
+
+- **Trois dessins avaient une taille impaire dans une boîte paire** — 21 dans 40,
+  29 dans 54, 19 dans 38. Le milieu tombe alors sur un demi-point, qui n'existe
+  pas sur un écran à deux ou trois pixels par point : le dessin se pose entre
+  deux pixels et paraît décalé. Tous les dessins sont maintenant pairs, et une
+  mesure vérifie qu'ils atterrissent sur des pixels entiers aux trois densités.
+- **La barre d'onglets répartissait ses boutons par espaces égaux** autour de
+  largeurs fixes : 31,5 points de marge sur un écran de 414. Les trois boutons se
+  partagent désormais la largeur à parts égales.
+- **L'aperçu, en 16/9 sur une largeur quelconque, avait une hauteur à virgule**
+  — 382 points de large font 214,875 de haut — et toute la colonne en dessous se
+  posait entre deux pixels. Cette hauteur est arrondie une fois.
+
+Enfin, les boutons perdent leur habillage natif (`appearance: none`). Safari leur
+applique un rendu système avec ses propres marges internes et sa propre façon
+d'aligner le contenu : c'est la raison la plus probable pour qu'un même bouton
+paraisse centré sur un ordinateur et de travers sur un iPhone.
+
 Reste un demi-point de décalage vers le bas sur les petites étiquettes. Il tient
 aux métriques de la police à cette taille, il vaut deux sous-pixels sur un écran
 de téléphone, et le corriger demanderait un calage dépendant de la police — ce

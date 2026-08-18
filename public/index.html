@@ -25,6 +25,26 @@
 
 * { box-sizing: border-box; }
 
+/* Les boutons perdent leur habillage natif.
+
+   Safari applique aux boutons un rendu système qui lui est propre : marges
+   internes, alignement du contenu sur une ligne de texte, et une interprétation
+   à lui des dispositions en grille. C'est la raison la plus probable pour qu'un
+   même bouton paraisse centré sur un ordinateur et légèrement de travers sur un
+   iPhone. On repart donc d'une boîte nue.
+
+   Et un dessin posé en bloc, jamais en ligne : en ligne, il repose sur une ligne
+   de texte qui réserve sous lui la place des jambages, ce qui le remonte d'un
+   point sans que rien ne le signale. */
+button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+button svg, .puce svg, .badge-score svg { display: block; }
+
 [hidden] { display: none !important; }
 
 * {
@@ -204,7 +224,7 @@ main {
   color: var(--texte);
   cursor: pointer;
 }
-.barre-outils button svg { width: 21px; height: 21px; }
+.barre-outils button svg { width: 20px; height: 20px; }
 .barre-outils button.fait { color: var(--vert); border-color: var(--vert); }
 .barre-outils button:disabled { opacity: .32; cursor: default; }
 .barre-outils button:disabled:hover { border-color: var(--trait); color: var(--texte); }
@@ -237,13 +257,16 @@ main {
   margin: 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-evenly;
 }
 .tab-btn {
   /* Icônes seules : le nom de l'onglet n'apprend rien qu'un dossier, une
-     pellicule et un « i » ne disent déjà. La barre y gagne en hauteur utile. */
+     pellicule et un « i » ne disent déjà. La barre y gagne en hauteur utile.
+
+     Les trois boutons se partagent toute la largeur à parts égales. Ils étaient
+     répartis par espaces égaux autour de largeurs fixes, ce qui donnait des
+     positions à virgule — 31,5 points de marge sur un écran de 414 — et le
+     dessin se posait entre deux pixels. */
   flex: 1;
-  max-width: 96px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -257,7 +280,7 @@ main {
   cursor: pointer;
   font: 600 0.82rem/1 system-ui, sans-serif;
 }
-.tab-btn svg { width: 29px; height: 29px; }
+.tab-btn svg { width: 28px; height: 28px; }
 .tab-btn.active { color: var(--vert); }
 .tab-badge {
   display: inline-flex;
@@ -812,7 +835,7 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   color: var(--texte);
   cursor: pointer;
 }
-.rond svg { width: 19px; height: 19px; }
+.rond svg { width: 20px; height: 20px; }
 .rond:hover { border-color: var(--vert); color: var(--vert); }
 .rond:disabled { opacity: .3; cursor: default; }
 .lecture {
@@ -1360,7 +1383,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 12:47";
+const VERSION_PAGE = "2026-08-18 13:11";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1471,9 +1494,31 @@ const TRAITS = {
   sortie: '<path d="M18 5v14h-3"/><path d="M4 12h9"/><path d="M10 8l3 4-3 4"/>',
 };
 
-const icone = (nom) =>
-  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ` +
-  `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TRAITS[nom]}</svg>`;
+/* Chaque dessin est tracé dans une grille de 24 sur 24, et son encre doit tomber
+   au milieu de cette grille. Treize ne le faisaient pas : mesurés, ils portaient
+   jusqu'à une unité d'écart — quatre pour cent de leur largeur, soit près d'un
+   point sur un bouton de la barre d'outils. Le bouton avait beau être centré au
+   pixel près, la forme qu'il contenait était de travers, et c'est cela qui se
+   voyait.
+
+   Plutôt que de retoucher des tracés — qu'on relit ensuite mal —, on décale le
+   cadre de lecture : déplacer l'origine de la grille de (dx, dy) recentre le
+   dessin d'autant, sans toucher à une seule coordonnée.
+
+   Une exception, volontaire : le triangle de lecture reste décalé d'une unité
+   vers la droite. Un triangle centré géométriquement paraît penché à gauche —
+   tous les lecteurs le décalent, et le corriger le rendrait bancal. */
+const CENTRES = {
+  reculer: [-1, 0], avancer: [1, 0], annuler: [-0.5, 0.5], retablir: [0.5, 0.5],
+  entree: [1, 0], sortie: [-1, 0], renommer: [-0.19, 0.69], couper: [0, 0.8],
+  son: [-0.5, 0.25], exporter: [0, -0.5], liste: [-0.5, 0], supprimer: [0, 0.5],
+};
+
+const icone = (nom) => {
+  const [dx, dy] = CENTRES[nom] || [0, 0];
+  return `<svg viewBox="${dx} ${dy} 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TRAITS[nom]}</svg>`;
+};
 
 const PROVENANCE = {
   sakugabooru: "Sakugabooru",
@@ -2760,7 +2805,24 @@ function veillerCoherence(video, plan) {
    et l'image reste nette parce que c'est exactement ce qu'il montre. */
 const PIXELS_MONITEUR = 1280 * 720;   // plafond, quel que soit l'écran
 
+/* L'écran de l'aperçu garde un rapport de 16/9. Sur une largeur qui n'est pas
+   un multiple de 16, cela donne une hauteur à virgule — 382 points de large font
+   214,875 de haut — et tout ce qui suit se retrouve posé entre deux pixels : la
+   barre de transport, ses boutons, leurs dessins. Sur un écran à deux ou trois
+   pixels par point, cela se voit comme un flou et comme un décalage. On arrondit
+   donc cette hauteur une fois, et la colonne entière retombe sur la grille. */
+function arrondirEcran() {
+  const ecran = document.querySelector(".ecran");
+  if (!ecran) return;
+  const large = ecran.getBoundingClientRect().width;
+  if (!large) return;
+  const haut = Math.round((large * 9) / 16);
+  const pose = `${haut}px`;
+  if (ecran.style.height !== pose) ecran.style.height = pose;
+}
+
 function ajusterMoniteur(toile) {
+  arrondirEcran();
   const densite = Math.min(2, window.devicePixelRatio || 1);
   const large = toile.clientWidth * densite;
   const haut = toile.clientHeight * densite;
