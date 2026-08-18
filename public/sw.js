@@ -6,7 +6,7 @@
 // ouverte. Sans cette estampille automatique, il faudrait penser à incrémenter
 // un numéro à chaque déploiement — et l'oublier une fois suffit à figer
 // l'application chez l'utilisateur.
-const VERSION = "2026-08-18 04:22";
+const VERSION = "2026-08-18 04:42";
 const CACHE = `amvauto-${VERSION}`;
 
 const COQUILLE = [

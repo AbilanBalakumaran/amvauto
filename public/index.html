@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 04:22";
+const VERSION_PAGE = "2026-08-18 04:42";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2092,6 +2092,12 @@ function rendreProjet() {
   vue.replaceChildren(...morceaux);
   remplirBarreOutils(projet);
   poserPlan(0, 0);
+  // La pellicule est peinte tout de suite : rien d'autre ne s'en chargeait à
+  // l'ouverture d'un projet. Elle n'apparaissait que si un autre événement
+  // provoquait un redessin — une durée mesurée, un import qui se termine — et
+  // sur un projet déjà en cache, rien ne venait : les blocs restaient vides.
+  redessinerBandes();
+  requestAnimationFrame(ordonnancerBandes);
 }
 
 /* --- sélecteur de projets, chacun avec sa vignette -------------------- */
@@ -2522,9 +2528,12 @@ function demanderImagette(plan, temps, pas, exact = false) {
   if (plan.youtube || !plan.video || !plan.duree) return;
   // Une copie locale est en route : on l'attend plutôt que de retélécharger le
   // même fichier pour en tirer des imagettes. Sur un téléphone en 4G, ce serait
-  // payer deux fois la même vidéo — et l'attente est courte.
-  if (!estLocal(plan) && importPrevu(plan)) return;
+  // payer deux fois la même vidéo. L'image d'entrée fait exception : c'est la
+  // couverture du bloc, elle doit être là tout de suite, et elle ne coûte qu'une
+  // seule lecture.
+  if (!exact && !estLocal(plan) && importPrevu(plan)) return;
   bande.demandes.set(identifiant, instant);
+  pellicule.demandees += 1;
   attenteImagettes.push({ plan, temps: instant, identifiant });
   servirImagettes();
 }
@@ -2565,7 +2574,7 @@ function reveillerSonde(sonde) {
   essai.then(() => sonde.pause()).catch(() => { delete sonde.dataset.reveille; });
 }
 
-const pellicule = { prises: 0, ratees: 0, dernier: "" };
+const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" };
 
 function servirImagettes() {
   if (sondeOccupee) return;
@@ -2575,10 +2584,18 @@ function servirImagettes() {
   const bande = bandeDe(plan);
   if (bande.images.has(identifiant)) { bande.demandes.delete(identifiant); return servirImagettes(); }
   sondeOccupee = true;
+  pellicule.lancees += 1;
 
   if (!sondeBande) sondeBande = creerSondeBande();
   const sonde = sondeBande;
-  const source = sourceDe(plan);
+  /* Tant que la copie locale n'est pas là, la sonde passe par notre relais
+     plutôt que par la source : le relais renvoie les en-têtes qui autorisent la
+     page à relire les pixels. Une imagette prise en direct sur la source
+     « teinte » définitivement toute toile où on la dessine — la pellicule, puis
+     le moniteur — et interdit d'en relire quoi que ce soit. Sur une copie
+     locale, la question ne se pose pas : elle vient de la page elle-même. */
+  const local = estLocal(plan);
+  const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(plan.video)}`;
   const exact = identifiant.startsWith("exact:");
 
   let fini = false;
@@ -2650,6 +2667,9 @@ function servirImagettes() {
   if (sonde.dataset.source !== source) {
     sonde.dataset.source = source;
     delete sonde.dataset.reveille;
+    // À poser avant la source, sans quoi il n'a aucun effet.
+    if (local) sonde.removeAttribute("crossorigin");
+    else sonde.crossOrigin = "anonymous";
     sonde.src = source;
     sonde.load();
     sonde.addEventListener("loadedmetadata", viser, { once: true });
@@ -2794,7 +2814,12 @@ function redessinerBandes() {
           bloc.dataset.couverture = instant.toFixed(2);
         }
       } else {
-        image = imagetteProche(bande, temps, pas);
+        // Une colonne sans image laissait un trou noir au milieu de la
+        // pellicule, le temps qu'elle soit capturée. On y met l'image connue la
+        // plus proche : la bande reste continue et se précise à mesure que les
+        // images arrivent, au lieu de se remplir par plaques.
+        image = imagetteProche(bande, temps, pas)
+          || imagetteLaPlusProche(bande, temps, Math.max(1, (largeurColonne / dpr) / lecture.echelle * 4));
       }
       if (image) {
         const facteur = Math.max(largeurColonne / image.width, hauteurPx / image.height);
@@ -4369,7 +4394,8 @@ $("btn-setting").addEventListener("click", () => {
           `${video?.dataset.vise ? ` · vise ${Math.round(Number(video.dataset.vise) * 100) / 100} s` : ""}` +
           `${video?.seeking ? " · déplacement en cours" : ""}`,
         `  média ${estLocal(cible.plan) ? "importé sur l'appareil" : "distant"}`,
-        `  pellicule : ${pellicule.prises} image(s) prise(s), ${pellicule.ratees} échec(s)` +
+        `  pellicule : ${pellicule.demandees} demandée(s), ${pellicule.lancees} lancée(s), ` +
+          `${pellicule.prises} prise(s), ${pellicule.ratees} échec(s)` +
           `${pellicule.dernier ? ` — dernier : ${pellicule.dernier}` : ""}`,
       ];
     })(),

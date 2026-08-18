@@ -247,6 +247,18 @@ image figée :
   par nos soins n'est jamais relancée — le rattrapage qui rejoue en sourdine après un refus
   confondait notre propre pause avec un refus du navigateur, et repartait sur le morceau coupé.
   Arrivé au bout, un appui sur lecture reprend depuis le début.
+- **La pellicule est peinte à l'ouverture d'un projet.** Rien ne s'en chargeait : elle
+  n'apparaissait que si un autre événement provoquait un redessin — une durée mesurée, un import
+  qui se termine. Sur un projet déjà en cache, rien ne venait et les blocs restaient noirs.
+- **Aucune colonne vide.** À défaut de l'image de son instant, une colonne reçoit l'image connue
+  la plus proche : la bande reste continue et se précise à mesure que les images arrivent, au
+  lieu de se remplir par plaques. L'image d'entrée d'un plan, elle, ne patiente pas derrière
+  l'import — elle ne coûte qu'une lecture par plage, quand l'import en télécharge vingt
+  mégaoctets.
+- **La sonde à imagettes passe par le relais tant que la copie locale n'est pas là.** Une image
+  prise en direct sur la source « teinte » définitivement toute toile où on la dessine — la
+  pellicule, puis le moniteur — et interdit d'en relire les pixels. Le relais, lui, renvoie les
+  en-têtes qui l'autorisent.
 - **La vignette de la source est la première image du fichier.** C'est ce que le moniteur
   affichait faute de mieux, tant que le lecteur n'avait rien à montrer — y compris sur un plan
   fractionné dont on venait de retirer le début, où elle exhibait précisément ce qu'on avait
