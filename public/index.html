@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-17 16:54";
+const VERSION_PAGE = "2026-08-18 02:30";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2204,6 +2204,7 @@ function creerLecteur(nom) {
     video.addEventListener(signal, () => appliquerCible(video));
   }
   video.addEventListener("seeked", () => {
+    rattraperPosition(video);
     if (video === elementActif() && !lecture.jouant && video.readyState < 2) secouer(video);
   });
   video.addEventListener("play", () => {
@@ -2252,12 +2253,55 @@ function demarrerMoniteur() {
   lecture.moniteur = requestAnimationFrame(pas);
 }
 
+/* Chien de garde de l'aperçu.
+
+   Tout ce qui précède vise à ce que l'image corresponde à la tête de lecture,
+   mais un lecteur média peut échouer de façons qu'on ne prévoit pas : une
+   source qui ne se charge pas, un déplacement refusé, un enchaînement qui ne
+   bascule pas. Plutôt que d'afficher durablement une image qui ment, on
+   constate l'écart et on repose le plan.
+
+   Le contrôle ne vaut qu'à l'arrêt : pendant la lecture, la tête avance d'elle-
+   même et un léger décalage est normal. */
+const veille = { depuis: 0, dernier: 0 };
+
+function veillerCoherence(video, plan) {
+  const projet = projetActif();
+  if (!projet?.plans.length || lecture.demande || lecture.scrub || lecture.secousse) {
+    veille.depuis = 0;
+    return;
+  }
+  const cible = positionCible();
+  if (!cible || cible.plan.youtube) { veille.depuis = 0; return; }
+
+  const bonPlan = video?.dataset.plan === cible.plan.id;
+  const attendu = entreeDe(cible.plan) + cible.dans;
+  const bonneImage = video && video.readyState >= 1 && Math.abs(video.currentTime - attendu) <= 0.35;
+  // Un déplacement en cours ou une cible encore en route ne sont pas un écart.
+  const enRoute = video?.seeking || video?.dataset.vise !== undefined || lecture.cible;
+  if ((bonPlan && bonneImage) || enRoute) { veille.depuis = 0; return; }
+
+  const maintenant = performance.now();
+  if (!veille.depuis) { veille.depuis = maintenant; return; }
+  // Un écart qui dure est un défaut ; on le corrige, sans s'acharner.
+  if (maintenant - veille.depuis < 800 || maintenant - veille.dernier < 1500) return;
+  veille.depuis = 0;
+  veille.dernier = maintenant;
+  noter(`désaccord corrigé (plan ${bonPlan ? "bon" : "faux"})`, video);
+  poserPlan(cible.index, cible.dans);
+}
+
 function dessinerMoniteur() {
   const toile = $("moniteur");
   if (!toile) { if (lecture.moniteur) cancelAnimationFrame(lecture.moniteur); lecture.moniteur = null; return; }
   const ctx = toile.getContext("2d");
   const plan = projetActif()?.plans[lecture.index];
   const video = elementActif();
+  // La position demandée est reprise ici, à chaque image : c'est ce qui garantit
+  // que l'image finit par correspondre au curseur, quoi qu'il arrive aux
+  // événements du lecteur.
+  rattraperPosition(video);
+  veillerCoherence(video, plan);
 
   // Resynchronisation : si le fichier tourne réellement alors que
   // l'application se croit à l'arrêt, la tête de lecture resterait figée. On
@@ -3410,6 +3454,9 @@ function viser(video, temps, plan) {
   const planId = typeof plan === "string" ? plan : plan.id;
   const url = typeof plan === "string" ? null : sourceDe(plan);
   lecture.cible = { planId, url, temps, essais: 0, fragment: false, limite: performance.now() + 5000 };
+  // Les deux mécanismes visent le même instant : sans cela, celui qui aboutit en
+  // dernier ramènerait le lecteur sur une position périmée.
+  demanderPosition(video, temps);
   noter("cible posée", video);
   appliquerCible(video);
 }
@@ -3517,20 +3564,40 @@ function deverrouiller() {
    position voulue pour la poser dès que le précédent est arrivé. Le doigt peut
    aller aussi vite qu'il veut, l'image le rattrape toujours. */
 function demanderPosition(video, temps) {
-  if (!video) return;
+  if (!video || !Number.isFinite(temps)) return;
   video.dataset.vise = String(temps);
-  if (video.seeking) return;
-  const suivre = () => {
-    // Une lecture lancée entre-temps commande : on ne la ramène pas en arrière.
-    if (lecture.demande && !lecture.scrub) return;
-    const attendu = Number(video.dataset.vise);
-    if (Number.isFinite(attendu) && Math.abs(video.currentTime - attendu) > 0.02) {
-      video.currentTime = attendu;
-      video.addEventListener("seeked", suivre, { once: true });
-    }
-  };
-  video.currentTime = temps;
-  video.addEventListener("seeked", suivre, { once: true });
+  // Une cible a une fin de validité : sans elle, une position jamais atteinte
+  // ramènerait le lecteur en arrière indéfiniment.
+  video.dataset.viseFin = String(performance.now() + 4000);
+  rattraperPosition(video);
+}
+
+const oublierPosition = (video) => {
+  delete video.dataset.vise;
+  delete video.dataset.viseFin;
+};
+
+/* Le lecteur est ramené vers sa cible tant qu'il ne l'a pas atteinte, et cette
+   reprise ne dépend d'aucun événement : « seeked » se perd sur mobile, et une
+   consigne posée pendant qu'un déplacement est en cours est ignorée en silence.
+   La version précédente confiait justement la reprise à un « seeked » qu'elle
+   n'avait pas toujours posé — sur un fichier distant, où un déplacement dure
+   des centaines de millisecondes, la dernière position demandée n'arrivait
+   jamais et l'image restait celle d'avant. Ici la convergence est vérifiée à
+   chaque image du moniteur, donc elle finit toujours par aboutir. */
+function rattraperPosition(video) {
+  if (!video) return;
+  const vise = Number(video.dataset.vise);
+  if (!Number.isFinite(vise)) return;
+  if (performance.now() > Number(video.dataset.viseFin)) return oublierPosition(video);
+  // Un déplacement est déjà en route : on le laisse finir, la cible reste notée.
+  if (video.seeking || video.readyState < 1) return;
+  if (Math.abs(video.currentTime - vise) <= 0.06) return oublierPosition(video);
+  try {
+    video.currentTime = Math.min(vise, video.duration || vise);
+  } catch {
+    // Lecteur pas encore prêt : on retentera à l'image suivante.
+  }
 }
 
 function appliquerSeek(jouer = false) {
@@ -3989,6 +4056,22 @@ $("btn-setting").addEventListener("click", () => {
     `  état ${video?.readyState ?? "?"}/4 · position ${video ? Math.round(video.currentTime * 100) / 100 : "?"} s` +
       `${video?.error ? ` · erreur ${video.error.code}` : ""}`,
     `  tête à ${Math.round(lecture.position * 100) / 100} s · plan ${lecture.index + 1}`,
+    ...(() => {
+      // Ce que la tête désigne, et ce que le moniteur montre : la seule ligne
+      // qui tranche quand l'aperçu semble ne pas suivre le curseur.
+      const cible = positionCible();
+      if (!cible) return [];
+      const affiche = projet.plans.findIndex((p) => p.id === video?.dataset.plan);
+      return [
+        `  la tête désigne le plan ${cible.index + 1} à ${Math.round(cible.dans * 100) / 100} s ` +
+          `(${Math.round((entreeDe(cible.plan) + cible.dans) * 100) / 100} s dans le fichier)`,
+        `  le moniteur montre le plan ${affiche >= 0 ? affiche + 1 : "?"} ` +
+          `à ${video ? Math.round(video.currentTime * 100) / 100 : "?"} s` +
+          `${video?.dataset.vise ? ` · vise ${Math.round(Number(video.dataset.vise) * 100) / 100} s` : ""}` +
+          `${video?.seeking ? " · déplacement en cours" : ""}`,
+        `  média ${estLocal(cible.plan) ? "importé sur l'appareil" : "distant"}`,
+      ];
+    })(),
     "",
     "Dernières demandes de position :",
     ...(journal.length

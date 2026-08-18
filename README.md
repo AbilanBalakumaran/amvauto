@@ -198,6 +198,18 @@ recale sur lui.
 Deux points valent d'être retenus, parce qu'ils donnaient tous les deux l'impression d'une
 image figée :
 
+- **La position visée est reprise, pas notifiée.** Une consigne de position posée pendant
+  qu'un déplacement est en cours est ignorée en silence, et l'événement qui annonce l'arrivée
+  se perd sur mobile. La cible est donc gardée sur le lecteur et reposée à chaque image du
+  moniteur jusqu'à ce qu'elle soit atteinte, avec une date de péremption pour ne pas ramener
+  indéfiniment un lecteur qui n'y arrive pas.
+- **Un chien de garde surveille l'accord entre la tête et l'image.** Tout le reste vise à ce
+  que l'aperçu montre ce que le curseur désigne, mais un lecteur média échoue de façons qu'on
+  ne prévoit pas. À l'arrêt, si le plan affiché n'est pas celui sous la tête, ou s'en écarte de
+  plus de 0,35 s pendant plus de 800 ms sans déplacement en cours, le plan est reposé. Vérifié
+  en simulant un lecteur qui n'accepte qu'une consigne de position sur trois : l'image est
+  fausse juste après le geste, et correcte deux secondes plus tard, à chaque fois.
+  L'onglet Setting affiche en clair ce que la tête désigne et ce que le moniteur montre.
 - **Un lecteur ne traite qu'un déplacement à la fois.** Lui en demander un par image
   pendant qu'un doigt glisse fait qu'il abandonne celui en cours et ne signale jamais son
   arrivée : la tête avance, l'image reste. On n'en demande donc qu'un à la fois, en gardant
