@@ -108,7 +108,7 @@ body {
 .app-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
 main.montage { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 8px; }
-main.montage #vue-projet { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+main.montage #vue-projet { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--e3); }
 main.montage .editeur { flex: 1; min-height: 0; margin-bottom: 0; }
 main.montage .ecran { flex: none; max-height: 34vh; }
 main.montage .piste-enveloppe { flex: 1; min-height: 0; }
@@ -140,8 +140,8 @@ main {
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 16px;
+  gap: var(--e3);
+  padding: 0 var(--e4);
 }
 .app-logo { flex: none; width: 32px; height: 32px; border-radius: 9px; overflow: hidden; }
 .app-logo img { width: 100%; height: 100%; display: block; }
@@ -153,9 +153,15 @@ main {
   color: #f5f5f5;
 }
 .app-count { margin-left: auto; font-size: 0.78rem; color: var(--doux); }
-.app-actions { margin-left: auto; display: flex; gap: 7px; }
+.app-actions { margin-left: auto; display: flex; gap: var(--e2); }
 .tete-btn {
-  padding: 7px 14px;
+  /* Hauteur fixe : les deux boutons de l'en-tête se répondaient à un point
+     près, et un point de différence entre deux voisins identiques se voit. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 var(--e4);
   border-radius: 8px;
   border: 1px solid var(--trait);
   background: var(--surface);
@@ -242,8 +248,8 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 4px 10px;
+  gap: var(--e2);
+  padding: var(--e1) var(--e3);
   background: transparent;
   color: var(--doux);
   border-radius: 8px;
@@ -254,8 +260,12 @@ main {
 .tab-btn svg { width: 29px; height: 29px; }
 .tab-btn.active { color: var(--vert); }
 .tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 18px;
-  padding: 2px 5px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: 999px;
   background: var(--vert);
   color: #fff;
@@ -279,6 +289,9 @@ main {
 #anime:focus { outline: none; border-color: var(--vert-fonce); }
 .btn-go {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 12px 18px;
   border: none;
   border-radius: 10px;
@@ -316,7 +329,7 @@ main {
 .suggest button:last-child { border-bottom: none; }
 .suggest button:hover { background: rgba(53, 194, 77, 0.14); color: var(--vert); }
 
-.quick { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 18px; }
+.quick { display: flex; flex-wrap: wrap; gap: var(--e2); margin-bottom: var(--e4); }
 .quick button {
   padding: 7px 12px;
   border-radius: 999px;
@@ -404,7 +417,14 @@ main {
 .badge-score.vide { background: none; border: 1px solid var(--trait); color: var(--doux); }
 .badge-score {
   flex: none;
-  padding: 5px 8px;
+  /* Une colonne de chiffres se lit d'une ligne à l'autre : même hauteur, même
+     largeur minimale, sinon « 7 » et « 82 » décalent tout ce qui suit. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  min-width: 34px;
+  padding: 0 var(--e2);
   border-radius: 6px;
   background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
@@ -412,12 +432,18 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
-.puces { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.puces { display: flex; flex-wrap: wrap; gap: var(--e1); margin-top: var(--e1); }
 .puce {
-  padding: 3px 7px;
+  /* Hauteur fixe : les étiquettes d'une même ligne doivent former un bandeau
+     régulier, quel que soit leur texte. */
+  display: inline-flex;
+  align-items: center;
+  height: 21px;
+  padding: 0 7px;
   border-radius: 5px;
   background: rgba(53, 194, 77, 0.16);
-  color: #ff8a94;
+  /* Ce rose venait du thème rouge d'avant : il restait posé sur un fond vert. */
+  color: #9fe7ae;
   font-size: 0.7rem;
   font-weight: 600;
 }
@@ -425,18 +451,29 @@ main {
 .puce.src { background: rgba(255, 255, 255, 0.06); color: #9a9aa8; }
 .puce.alerte { background: none; border: 1px solid #7a2b2b; color: #e08a8a; }
 
+/* Centrer par la boîte, jamais par la ligne de texte.
+
+   Un caractère posé seul dans un bouton n'est pas centré : le navigateur le
+   place sur une ligne dont la hauteur se calcule à partir des métriques de la
+   police — jambages compris, même quand le signe n'en a pas. Mesuré, chaque
+   pastille et chaque bouton de texte portait son contenu de 0,7 à 1 point trop
+   haut, toujours dans le même sens. Sur un « ✓ » de dix-huit points, cela se
+   voit. Une grille centrée règle la question pour de bon, et les deux signes de
+   ce bouton sont désormais des dessins, à la géométrie exacte, comme partout
+   ailleurs dans l'application. */
 .btn-pick {
   flex: none;
+  display: grid;
+  place-items: center;
   width: 38px;
   height: 38px;
   border-radius: 8px;
   border: 1px solid var(--trait);
   background: #111;
   color: var(--texte);
-  font-size: 1.15rem;
-  line-height: 1;
   cursor: pointer;
 }
+.btn-pick svg { width: 20px; height: 20px; display: block; }
 .btn-pick.on { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
 
 .tools { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
@@ -474,7 +511,7 @@ main {
 /* Sur petit écran, le nom du plan prime : la vignette rétrécit et le nom
    s'autorise deux lignes au lieu d'être coupé au troisième mot. */
 @media (max-width: 560px) {
-  .row { gap: 9px; padding: 10px 11px; }
+  .row { gap: var(--e2); padding: var(--e3); }
   .vignette { width: 72px; }
   .row .nom {
     white-space: normal;
@@ -510,7 +547,7 @@ main {
   border: 1px solid var(--trait);
 }
 .lecteur video { width: 100%; display: block; background: #000; border-radius: 14px 14px 0 0; }
-.lecteur-corps { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.lecteur-corps { padding: var(--e4) var(--e4) var(--e5); display: flex; flex-direction: column; gap: var(--e3); }
 .lecteur-titre { font-weight: 700; font-size: 1.02rem; }
 .lecteur-meta { font-size: 0.82rem; color: var(--doux); line-height: 1.5; }
 .lecteur-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -559,8 +596,8 @@ main {
   z-index: 200;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: var(--e3);
+  padding: var(--e3) var(--e4);
   background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
   font: 600 0.78rem/1.3 system-ui, sans-serif;
@@ -573,7 +610,7 @@ main {
    place avant les boutons, et les boutons se resserrent plutôt que de sortir. */
 @media (max-width: 360px) {
   .app-title { font-size: 0.86rem; }
-  .app-actions { gap: 6px; }
+  .app-actions { gap: var(--e1); }
   .tete-btn { padding: 6px 9px; font-size: 0.7rem; }
 }
 .app-header-inner { min-width: 0; }
@@ -651,8 +688,8 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   z-index: 6;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 14px;
+  gap: var(--e4);
+  padding: var(--e2) var(--e4);
   border-radius: 999px;
   background: rgba(0, 0, 0, .62);
   backdrop-filter: blur(8px);
@@ -731,8 +768,8 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   flex: none;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 6px 12px 6px 6px;
+  gap: var(--e2);
+  padding: var(--e2) var(--e3) var(--e2) var(--e2);
   border-radius: 10px;
   border: 1px solid var(--trait);
   background: var(--surface);
@@ -753,13 +790,15 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   color: var(--vert);
 }
 .projet-vignette svg { width: 18px; height: 18px; }
-.projet-texte { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* La vignette et le texte font la même hauteur : trois points d'écart entre
+   deux voisins d'une même carte, et la carte paraît bancale. */
+.projet-texte { display: flex; flex-direction: column; gap: 2px; min-width: 0; justify-content: center; min-height: 30px; }
 .projet-nom { font: 700 0.82rem/1.1 system-ui, sans-serif; white-space: nowrap; }
 .projet-sous { font: 500 0.68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--doux); }
 .projet-carte.neuf .projet-vignette { color: var(--doux); background: #141414; }
 
 /* --- transport : plein écran, lecture, historique ------------------- */
-.transport { display: flex; align-items: center; gap: 10px; }
+.transport { display: flex; align-items: center; gap: var(--e3); }
 .transport-cote { flex: 1; display: flex; gap: 8px; }
 .transport-cote.fin { justify-content: flex-end; }
 .rond {
@@ -791,7 +830,7 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .lecture svg { width: 22px; height: 22px; }
 
 /* --- piste ----------------------------------------------------------- */
-.piste-enveloppe { position: relative; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.piste-enveloppe { position: relative; display: flex; flex-direction: column; gap: var(--e2); min-height: 0; }
 .piste-entete { display: flex; align-items: baseline; gap: var(--e3); padding: 0 2px; }
 .timecode {
   font: 700 0.86rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -945,8 +984,8 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 /* Voie son, sous les plans. */
 .bande-son { position: relative; display: flex; height: 32px; margin-top: 4px; }
 .son-bloc {
-  display: flex; align-items: center; gap: 6px;
-  height: 100%; padding: 0 8px; border-radius: 4px;
+  display: flex; align-items: center; gap: var(--e2);
+  height: 100%; padding: 0 var(--e2); border-radius: 4px;
   background: linear-gradient(135deg, #2a3f6b, #1d2b49);
   border: 1px solid #3d5a8f;
   color: #cfe0ff; font-size: 0.66rem; font-weight: 600;
@@ -955,7 +994,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 .son-bloc svg { width: 14px; height: 14px; flex: none; }
 .son-bloc.absent { background: #201c1c; color: #b08a8a; border-color: #4a3535; }
 
-.son-barre { display: flex; gap: 6px; align-items: center; }
+.son-barre { display: flex; gap: var(--e2); align-items: center; }
 .son-ajout {
   flex: 1;
   display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -1321,7 +1360,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 12:18";
+const VERSION_PAGE = "2026-08-18 12:47";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1800,7 +1839,7 @@ function ligneFichier(rush) {
   const choisir = document.createElement("button");
   choisir.type = "button";
   choisir.className = "btn-pick" + (dansProjet(rush.id) ? " on" : "");
-  choisir.textContent = dansProjet(rush.id) ? "✓" : "+";
+  choisir.innerHTML = icone(dansProjet(rush.id) ? "fait" : "plus");
   choisir.title = "Ajouter à un projet";
   choisir.addEventListener("click", (evt) => {
     evt.stopPropagation();
@@ -2156,7 +2195,7 @@ function basculerDans(projet, rush, bouton, apres) {
   if (bouton) {
     const dedans = dansProjet(rush.id);
     bouton.classList.toggle("on", dedans);
-    bouton.textContent = dedans ? "✓" : "+";
+    bouton.innerHTML = icone(dedans ? "fait" : "plus");
   }
   if (apres) apres();
 }

@@ -525,6 +525,49 @@ Entre les deux, de 768 à 1023 points, la barre reste en bas mais la lecture
 respire déjà. **Rien de tout cela ne touche au téléphone** : vérifié à 320, 414,
 820, 1440 et 1920 points, sans débordement horizontal nulle part.
 
+## Centrage et espacement, mesurés au pixel
+
+Un « ✓ » posé de travers dans son bouton a lancé une revue de tous les contrôles.
+La cause était générale : **on centrait par la ligne de texte, pas par la
+boîte**. Un caractère seul dans un bouton n'est pas centré — le navigateur le
+pose sur une ligne dont la hauteur vient des métriques de la police, jambages
+compris, même quand le signe n'en a aucun. Mesuré, chaque pastille et chaque
+bouton de texte portait son contenu de 0,7 à 1 point trop haut, toujours dans le
+même sens.
+
+La mesure a été faite deux fois, et la seconde a corrigé la première. Comparer le
+rectangle du texte au rectangle de la boîte donne une réponse commode mais
+fausse : ce rectangle est celui de la ligne, pas celui de l'encre. La vérité se
+lit en capturant chaque contrôle à quatre fois la définition et en cherchant où
+sont réellement les pixels qui diffèrent du fond. C'est ce que l'œil juge, et
+rien d'autre.
+
+Ce qui a changé :
+
+- **Les deux signes du bouton d'ajout sont devenus des dessins.** Un « ✓ » et un
+  « + » de police n'ont ni la même hauteur ni le même centre optique ; les
+  dessins de l'application sont tracés sur une grille de 24 et tombent juste par
+  construction. Vérifié : décalage de 0,00 point en x comme en y.
+- **Tout ce qui centre du contenu le fait par sa boîte** — notes, étiquettes,
+  pastilles, boutons de texte.
+- **Les colonnes de chiffres ne bougent plus** : la note a une largeur minimale
+  et une hauteur fixe, si bien que « 7 » et « 82 » n'écartent plus ce qui suit.
+- **Les étiquettes ont une hauteur fixe**, pour former un bandeau régulier quel
+  que soit leur texte.
+- **Les écarts sont tous sur l'échelle.** Il en restait douze pris au cas par cas
+  — 5, 6, 7, 9, 10, 14 px — dans l'en-tête, les onglets, les lignes de
+  l'explorateur, les étiquettes, le transport, les cartes de projet.
+- **Deux voisins de même nature ont la même taille** : les boutons de l'en-tête
+  se répondaient à un point près ; la vignette d'une carte de projet dépassait
+  son texte de trois points.
+- Un rose du thème rouge d'avant traînait encore sur les étiquettes, posé sur un
+  fond vert.
+
+Reste un demi-point de décalage vers le bas sur les petites étiquettes. Il tient
+aux métriques de la police à cette taille, il vaut deux sous-pixels sur un écran
+de téléphone, et le corriger demanderait un calage dépendant de la police — ce
+serait échanger un défaut invisible contre un défaut fragile.
+
 ## Audit : quatorze défauts trouvés et corrigés
 
 Une revue complète du code et un passage en force sur l'interface, geste par
