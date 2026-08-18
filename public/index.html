@@ -1,0 +1,4360 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>amvauto</title>
+<meta name="description" content="Explorateur de rushs sakuga : un animé, ses arcs, ses ambiances, ses plans nommés.">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Nom sous l'icône, sur l'écran d'accueil : capitale initiale. -->
+<meta name="apple-mobile-web-app-title" content="Amvauto">
+<script>if (navigator.standalone) document.documentElement.classList.add("autonome");</script>
+<style>
+@font-face {
+  font-family: "Obelix Pro";
+  src: url("fonts/ObelixProB-cyr.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #35C24D #161616;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #161616; }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #35C24D, #12762E);
+  border-radius: 6px;
+  border: 2px solid #161616;
+}
+::-webkit-scrollbar-thumb:hover { background: #4ee06a; }
+
+:root {
+  --header-h: 50px;
+  --nav-h: 54px;
+  --vert: #35C24D;
+  --vert-fonce: #12762E;
+  --fond: #0a0a0a;
+  --surface: #161616;
+  --trait: rgba(255, 255, 255, 0.08);
+  --texte: #f0f0f5;
+  --doux: #888;
+}
+
+/* Un seul écran de démarrage, et seulement dans l'application installée.
+   Les images de lancement d'iOS ont été retirées : le système en gardait une
+   copie prise à l'installation, si bien qu'après l'avoir changée on voyait
+   l'ancienne puis la nouvelle — deux écrans pour un lancement. Le système
+   n'affiche donc plus que le noir du manifeste, que celui-ci prolonge sans
+   rupture. Dans un onglet, le navigateur a déjà sa propre page de chargement :
+   inutile d'en ajouter une. */
+.demarrage {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  place-items: center;
+  align-content: center;
+  background: var(--fond);
+  transition: opacity .35s ease;
+}
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  .demarrage { display: grid; }
+}
+/* Repli pour les iOS d'avant la requête « display-mode ». */
+html.autonome .demarrage { display: grid; }
+/* Exactement la taille du logo sur les écrans de lancement du système (46 % du
+   petit côté) : les deux écrans se superposent au pixel, si bien que le passage
+   de l'un à l'autre ne se voit pas. */
+.demarrage img { width: 46vmin; height: 46vmin; }
+.demarrage.parti { opacity: 0; pointer-events: none; }
+
+html { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: var(--fond);
+  color: var(--texte);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+main.montage { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 8px; }
+main.montage #vue-projet { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+main.montage .editeur { flex: 1; min-height: 0; margin-bottom: 0; }
+main.montage .ecran { flex: none; max-height: 34vh; }
+main.montage .piste-enveloppe { flex: 1; min-height: 0; }
+main.montage .piste { flex: 1; min-height: 100px; }
+main.montage .ligne { height: 100%; display: flex; flex-direction: column; }
+main.montage .rail { flex: 1; min-height: 0; }
+main.montage .clip { height: 100%; }
+
+main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 16px 16px 32px;
+}
+
+.app-header {
+  flex: none;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: var(--fond);
+  border-bottom: 1px solid var(--trait);
+}
+.app-header-inner {
+  max-width: 900px;
+  height: var(--header-h);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+}
+.app-logo { flex: none; width: 32px; height: 32px; border-radius: 9px; overflow: hidden; }
+.app-logo img { width: 100%; height: 100%; display: block; }
+.app-title {
+  font-family: "Obelix Pro", "Arial Black", system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.06em;
+  color: #f5f5f5;
+}
+.app-count { margin-left: auto; font-size: 0.78rem; color: var(--doux); }
+.app-actions { margin-left: auto; display: flex; gap: 7px; }
+.tete-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  font: 700 0.8rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.tete-btn.accent {
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  border-color: var(--vert-fonce);
+  color: #fff;
+}
+.tete-btn:hover { border-color: var(--vert); }
+
+/* Barre d'outils du montage : elle s'intercale entre le contenu et la barre
+   d'onglets au lieu de la recouvrir, et rend à la piste la hauteur que les
+   gros boutons lui prenaient. */
+.barre-outils {
+  order: 1;
+  flex: none;
+  display: flex;
+  gap: 5px;
+  padding: 7px 10px;
+  overflow-x: auto;
+  background: var(--fond);
+  border-top: 1px solid var(--trait);
+  scrollbar-width: none;
+}
+.barre-outils::-webkit-scrollbar { display: none; }
+.barre-outils { align-items: center; }
+.barre-outils button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  cursor: pointer;
+}
+.barre-outils button svg { width: 21px; height: 21px; }
+.barre-outils button.fait { color: var(--vert); border-color: var(--vert); }
+.barre-outils button:disabled { opacity: .32; cursor: default; }
+.barre-outils button:disabled:hover { border-color: var(--trait); color: var(--texte); }
+.barre-outils button:hover { border-color: var(--vert); color: var(--vert); }
+.barre-outils button.fort {
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  border-color: var(--vert-fonce);
+  color: #fff;
+}
+.barre-outils .separateur { flex: none; width: 1px; margin: 4px 2px; background: var(--trait); }
+/* Un mode actif se voit : sinon on ne sait pas si un glissé va déplacer un plan
+   ou non, et c'est précisément ce doute qu'on veut supprimer. */
+.barre-outils button.on {
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  border-color: var(--vert-fonce);
+  color: #fff;
+}
+.barre-outils button.on:hover { color: #fff; }
+
+.bottom-nav {
+  order: 2;
+  flex: none;
+  padding-bottom: min(env(safe-area-inset-bottom, 0px), 24px);
+  background: var(--fond);
+  border-top: 1px solid var(--trait);
+}
+.bottom-nav-inner {
+  max-width: 900px;
+  height: var(--nav-h);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+}
+.tab-btn {
+  /* Icônes seules : le nom de l'onglet n'apprend rien qu'un dossier, une
+     pellicule et un « i » ne disent déjà. La barre y gagne en hauteur utile. */
+  flex: 1;
+  max-width: 96px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--doux);
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font: 600 0.82rem/1 system-ui, sans-serif;
+}
+.tab-btn svg { width: 29px; height: 29px; }
+.tab-btn.active { color: var(--vert); }
+.tab-badge {
+  min-width: 18px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--vert);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+/* --- recherche ------------------------------------------------------ */
+.search { position: relative; margin-bottom: 14px; }
+.search-row { display: flex; gap: 8px; }
+#anime {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #333;
+  background: var(--surface);
+  color: var(--texte);
+  font-size: 1rem;
+}
+#anime:focus { outline: none; border-color: var(--vert-fonce); }
+.btn-go {
+  flex: none;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff;
+  font: 700 0.92rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.btn-go:disabled { opacity: 0.55; cursor: progress; }
+
+.suggest {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--trait);
+  border-radius: 10px;
+  overflow: hidden auto;
+  max-height: 300px;
+}
+.suggest button {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--trait);
+  color: var(--texte);
+  font-size: 0.92rem;
+  text-align: left;
+  cursor: pointer;
+}
+.suggest button:last-child { border-bottom: none; }
+.suggest button:hover { background: rgba(53, 194, 77, 0.14); color: var(--vert); }
+
+.quick { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 18px; }
+.quick button {
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--doux);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.quick button:hover { border-color: rgba(53, 194, 77, 0.6); color: var(--texte); }
+
+/* --- fil d'ariane --------------------------------------------------- */
+.crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--trait);
+  font-size: 0.86rem;
+}
+.crumbs button {
+  padding: 4px 7px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--vert);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.crumbs button:hover { background: rgba(53, 194, 77, 0.14); }
+.crumbs .sep { color: #555; }
+.crumbs .here { color: var(--doux); padding: 4px 7px; }
+
+/* --- listes --------------------------------------------------------- */
+.rows { display: flex; flex-direction: column; gap: 8px; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.row:hover { border-color: rgba(53, 194, 77, 0.6); }
+.row .glyph { flex: none; width: 26px; height: 26px; color: var(--vert); }
+.row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.row .nom {
+  display: block;
+  font-weight: 600;
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .sous { display: block; margin-top: 3px; font-size: 0.78rem; color: var(--doux); }
+.row .chevron { flex: none; color: #555; font-size: 1.1rem; }
+
+.vignette.vide {
+  display: grid;
+  place-items: center;
+  color: #666;
+  font-size: 0.72rem;
+  border: 1px solid var(--trait);
+}
+.vignette {
+  flex: none;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #000;
+}
+
+.badge-score.vide { background: none; border: 1px solid var(--trait); color: var(--doux); }
+.badge-score {
+  flex: none;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff;
+  font: 700 0.78rem/1 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.puces { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.puce {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: rgba(53, 194, 77, 0.16);
+  color: #ff8a94;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.puce.tech { background: rgba(255, 255, 255, 0.08); color: #cfcfd8; }
+.puce.src { background: rgba(255, 255, 255, 0.06); color: #9a9aa8; }
+.puce.alerte { background: none; border: 1px solid #7a2b2b; color: #e08a8a; }
+
+.btn-pick {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--trait);
+  background: #111;
+  color: var(--texte);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.btn-pick.on { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
+
+.tools { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.tools .label { font-size: 0.78rem; color: var(--doux); }
+.tools button {
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--doux);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.tools button.on { background: linear-gradient(135deg, rgba(53,194,77,.3), rgba(193,18,31,.2)); border-color: var(--vert-fonce); color: var(--texte); }
+
+.note { padding: 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--trait); color: var(--doux); font-size: 0.9rem; }
+.note.erreur { border-color: #7a2b2b; color: #e59a9a; }
+.note strong { color: var(--texte); }
+
+.encore {
+  padding: 13px;
+  border-radius: 10px;
+  border: 1px dashed var(--trait);
+  background: none;
+  color: var(--doux);
+  font: 600 0.85rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.encore:hover { border-color: var(--vert); color: var(--vert); }
+
+.squelette { height: 66px; border-radius: 10px; background: var(--surface); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Sur petit écran, le nom du plan prime : la vignette rétrécit et le nom
+   s'autorise deux lignes au lieu d'être coupé au troisième mot. */
+@media (max-width: 560px) {
+  .row { gap: 9px; padding: 10px 11px; }
+  .vignette { width: 72px; }
+  .row .nom {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    font-size: 0.9rem;
+  }
+  .row .sous { font-size: 0.72rem; }
+  .badge-score { padding: 4px 6px; font-size: 0.72rem; }
+  .btn-pick { width: 34px; height: 34px; }
+  .app-title { font-size: 1.1rem; }
+}
+
+/* --- lecteur -------------------------------------------------------- */
+.lecteur {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.lecteur-boite {
+  width: 100%;
+  max-width: 720px;
+  max-height: 100%;
+  overflow-y: auto;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--trait);
+}
+.lecteur video { width: 100%; display: block; background: #000; border-radius: 14px 14px 0 0; }
+.lecteur-corps { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.lecteur-titre { font-weight: 700; font-size: 1.02rem; }
+.lecteur-meta { font-size: 0.82rem; color: var(--doux); line-height: 1.5; }
+.lecteur-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.lecteur-actions a, .lecteur-actions button {
+  flex: 1 1 120px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--trait);
+  background: #111;
+  color: var(--texte);
+  font: 600 0.85rem/1 system-ui, sans-serif;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.lecteur-actions .fort { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
+
+/* --- éditeur de montage --------------------------------------------- */
+.editeur { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+
+.ecran {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--trait);
+}
+.moniteur { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
+/* Les deux lecteurs alimentent le moniteur : ils ne sont jamais montrés, mais
+   restent dans le document — un média retiré du DOM est déchargé. */
+.lecteur-cache {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0.01;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+}
+.bandeau-version {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff;
+  font: 600 0.78rem/1.3 system-ui, sans-serif;
+}
+.bandeau-version button {
+  margin-left: auto;
+  flex: none;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .6);
+  background: rgba(0, 0, 0, .25);
+  color: #fff;
+  font: 700 0.78rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+/* En plein écran sur iPhone, la page passe sous la barre d'état : une croix à
+   12 px du haut se retrouve collée à l'heure et au réseau. Elle descend donc de
+   la hauteur de cette barre, plus une marge pour le pouce. */
+.sortie-plein {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, .65);
+  color: #fff;
+  cursor: pointer;
+}
+.sortie-plein svg { width: 20px; height: 20px; }
+
+/* Repli quand le navigateur refuse le plein écran natif (Safari iPhone). */
+body.ecran-plein .ecran {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  /* Sans neutraliser le format 16/9, la hauteur reste calculée sur la largeur
+     et l'écran ne couvre qu'un quart de la page. */
+  aspect-ratio: auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  border: 0;
+  background: #000;
+}
+body.ecran-plein .ecran video { object-fit: contain; }
+body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px); right: 14px; }
+
+/* Contrôles de lecture en plein écran : on ne quitte plus l'écran pour mettre
+   en pause. Ils s'effacent au bout de trois secondes sans geste, comme dans un
+   lecteur vidéo, et reviennent au moindre contact. */
+.plein-transport {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(8px);
+  transition: opacity .25s;
+}
+.plein-transport.efface { opacity: 0; pointer-events: none; }
+.plein-transport button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  cursor: pointer;
+}
+.plein-transport button.lecture {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+}
+.plein-transport button svg { width: 22px; height: 22px; }
+.plein-transport button.lecture svg { width: 26px; height: 26px; }
+.plein-timecode {
+  font: 700 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  padding: 0 4px;
+}
+
+.ecran-vide {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  text-align: center;
+  color: var(--doux);
+  font-size: 0.85rem;
+  background: #000;
+}
+
+.transport { display: flex; align-items: center; gap: 12px; }
+.lecture {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.chrono {
+  flex: none;
+  font: 600 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doux);
+  font-variant-numeric: tabular-nums;
+}
+.barre { flex: 1; height: 6px; border-radius: 3px; background: #272727; cursor: pointer; }
+.barre-remplie {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--vert), var(--vert-fonce));
+}
+
+/* --- sélecteur de projets ------------------------------------------- */
+.projets { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.projets::-webkit-scrollbar { display: none; }
+.projet-carte {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px 6px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  cursor: pointer;
+  text-align: left;
+}
+.projet-carte.actif { border-color: var(--vert); background: linear-gradient(135deg, rgba(53,194,77,.22), rgba(193,18,31,.14)); }
+.projet-vignette {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 30px;
+  border-radius: 6px;
+  background: #000 center/cover no-repeat;
+  border: 1px solid var(--trait);
+  color: var(--vert);
+}
+.projet-vignette svg { width: 18px; height: 18px; }
+.projet-texte { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.projet-nom { font: 700 0.82rem/1.1 system-ui, sans-serif; white-space: nowrap; }
+.projet-sous { font: 500 0.68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--doux); }
+.projet-carte.neuf .projet-vignette { color: var(--doux); background: #141414; }
+
+/* --- transport : plein écran, lecture, historique ------------------- */
+.transport { display: flex; align-items: center; gap: 10px; }
+.transport-cote { flex: 1; display: flex; gap: 8px; }
+.transport-cote.fin { justify-content: flex-end; }
+.rond {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  cursor: pointer;
+}
+.rond svg { width: 19px; height: 19px; }
+.rond:hover { border-color: var(--vert); color: var(--vert); }
+.rond:disabled { opacity: .3; cursor: default; }
+.lecture {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff;
+  cursor: pointer;
+}
+.lecture svg { width: 22px; height: 22px; }
+
+/* --- piste ----------------------------------------------------------- */
+.piste-enveloppe { position: relative; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.piste-entete { display: flex; align-items: baseline; gap: 10px; padding: 0 2px; }
+.timecode {
+  font: 700 0.86rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--texte);
+  font-variant-numeric: tabular-nums;
+  /* Un timecode coupé en deux lignes décale toute la règle : il ne se coupe
+     jamais, c'est le bilan à côté qui cède la place. */
+  white-space: nowrap;
+  flex: none;
+}
+.piste-bilan { min-width: 0; }
+.piste-bilan {
+  margin-left: auto;
+  font: 500 0.7rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doux);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* La position horizontale vaut exactement le temps : règle, blocs et tête de
+   lecture partagent la même mesure. */
+.piste {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 10px 8px;
+  background: var(--surface);
+  border: 1px solid var(--trait);
+  border-radius: 12px;
+  touch-action: pan-x;
+}
+.ligne { position: relative; min-width: 100%; }
+.regle {
+  position: relative;
+  height: 24px;
+  cursor: ew-resize;
+  border-bottom: 1px solid var(--trait);
+  touch-action: none;
+}
+.repere {
+  position: absolute;
+  top: 7px;
+  padding-left: 4px;
+  border-left: 1px solid #3a3a3a;
+  font: 600 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--doux);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.rail { position: relative; display: flex; gap: 0; min-height: 62px; padding-top: 6px; }
+.clip {
+  position: relative;
+  flex: none;
+  height: 100%;
+  min-height: 56px;
+  border-radius: 4px;
+  background: #202020 center/cover no-repeat;
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, .75);
+  cursor: grab;
+  overflow: hidden;
+  touch-action: none;
+}
+/* Seule la partie visible du bloc est peinte : la position et la largeur sont
+   posées par le script à chaque défilement. */
+.clip canvas.bande { position: absolute; top: 0; bottom: 0; height: 100%; display: block; }
+.clip canvas.bande[hidden] { display: none; }
+.clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,.68)); }
+.clip.actif { box-shadow: inset 0 0 0 2px var(--vert); }
+/* Un bloc porte une image de fond et du texte : sans ces trois lignes, le
+   navigateur y voit de quoi lancer son propre glisser-déposer ou une sélection,
+   prend la main sur le geste et annule le nôtre au deuxième déplacement. */
+.clip, .clip * { user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+.clip { touch-action: none; }
+/* La bande son, elle, reste le rail pour faire défiler la piste au doigt. */
+.bande-son { touch-action: pan-x; }
+.clip-import {
+  position: absolute;
+  z-index: 2;
+  left: 4px;
+  right: 4px;
+  bottom: 3px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .18);
+  overflow: hidden;
+}
+.clip-import-jauge { display: block; height: 100%; width: 0; background: var(--vert); }
+/* Un liseré vert discret : le plan est sur l'appareil, il se parcourt
+   instantanément. */
+.clip.local { box-shadow: inset -1px 0 0 rgba(0,0,0,.75), inset 0 -3px 0 rgba(80, 200, 130, .55); }
+.clip.local.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 -3px 0 rgba(80, 200, 130, .55); }
+.clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--vert), 0 6px 18px rgba(0,0,0,.6); }
+/* Poignées de rognage : visibles seulement sur le plan sélectionné, larges au
+   doigt (14 px) mais dessinées fines pour ne pas manger le bloc. */
+.poignee {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  display: none;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.poignee::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.55);
+}
+.poignee.gauche { left: 0; }
+.poignee.droite { right: 0; }
+.poignee { width: 18px; }
+.poignee.gauche::before { left: 2px; }
+.poignee.droite::before { right: 2px; }
+/* Les poignées n'existent que dans le mode d'édition. Hors de ce mode, toucher
+   la piste ne fait qu'une chose : déplacer la tête de lecture. Sinon les 14 px
+   de chaque bord du bloc sélectionné rognaient le plan alors qu'on croyait
+   déplacer le curseur — le bloc raccourcissait, la tête restait à son début, et
+   l'aperçu montrait la nouvelle bordure. */
+body.reordre .clip.actif .poignee { display: block; }
+body.reordre .clip { cursor: grab; }
+body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22px rgba(53, 194, 77, .35); }
+/* Un plan coupé se signale : sinon on cherche pourquoi le rush entier ne passe
+   pas. */
+.clip.rogne .clip-duree { color: #ffd7a1; }
+.clip.hors-lecture { background-color: #2a1c1c; }
+.clip-nom {
+  position: absolute; z-index: 1; left: 6px; right: 6px; bottom: 5px;
+  font-size: 0.66rem; font-weight: 600; color: #f0f0f5; line-height: 1.25;
+  max-height: 2.5em; overflow: hidden;
+}
+.clip-duree {
+  position: absolute; z-index: 1; top: 5px; left: 6px;
+  padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, .7);
+  font: 600 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fff;
+}
+
+/* Voie son, sous les plans. */
+.bande-son { position: relative; display: flex; height: 32px; margin-top: 4px; }
+.son-bloc {
+  display: flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 8px; border-radius: 4px;
+  background: linear-gradient(135deg, #2a3f6b, #1d2b49);
+  border: 1px solid #3d5a8f;
+  color: #cfe0ff; font-size: 0.66rem; font-weight: 600;
+  overflow: hidden; white-space: nowrap;
+}
+.son-bloc svg { width: 14px; height: 14px; flex: none; }
+.son-bloc.absent { background: #201c1c; color: #b08a8a; border-color: #4a3535; }
+
+.son-barre { display: flex; gap: 6px; align-items: center; }
+.son-ajout {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px; border-radius: 10px;
+  border: 1px dashed var(--trait); background: none; color: var(--doux);
+  font: 600 0.78rem/1 system-ui, sans-serif; cursor: pointer;
+}
+.son-ajout svg { width: 16px; height: 16px; }
+.son-ajout:hover { border-color: var(--vert); color: var(--vert); }
+.son-retirer {
+  flex: none; display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: 9px;
+  border: 1px solid var(--trait); background: var(--surface); color: var(--doux); cursor: pointer;
+}
+.son-retirer svg { width: 16px; height: 16px; }
+
+/* Tête de lecture : trait fin, mais large zone de préhension. */
+/* Le trait de la tête de lecture traverse toute la piste : s'il capte les
+   gestes, il rend intouchable ce qui passe dessous — les poignées de rognage du
+   premier plan étaient ainsi inatteignables. Le trait est donc décoratif, et
+   seul son bouton en haut se saisit. On se déplace aussi depuis la règle. */
+.tete {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 22px; margin-left: -11px;
+  pointer-events: none; z-index: 3;
+}
+.tete::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 10px;
+  width: 2px; background: var(--vert); box-shadow: 0 0 6px rgba(53, 194, 77, .9);
+}
+.tete-poignee {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--vert); box-shadow: 0 0 8px rgba(53, 194, 77, .8);
+  pointer-events: auto; cursor: ew-resize; touch-action: none;
+}
+/* Zone de saisie élargie au doigt, sans grossir le rond. */
+.tete-poignee::before {
+  content: ""; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+  width: 38px; height: 38px; border-radius: 50%;
+}
+
+/* Ajout d'un plan : renvoie à l'explorateur. */
+.ajout-flottant {
+  position: absolute; right: 10px; bottom: 52px; z-index: 4;
+  display: grid; place-items: center;
+  width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--fond);
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
+}
+.ajout-flottant svg { width: 22px; height: 22px; }
+
+.plan-courant {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--doux);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row.plan { cursor: pointer; }
+.rang {
+  flex: none;
+  min-width: 26px;
+  font: 700 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--vert);
+  font-variant-numeric: tabular-nums;
+}
+.row.plan .sous { font-variant-numeric: tabular-nums; }
+
+.panier-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.panier-actions button {
+  flex: 1 1 130px;
+  padding: 11px;
+  border-radius: 10px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  font: 600 0.85rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.panier-actions button.fort { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
+
+.apropos h2 { font-family: "Obelix Pro", "Arial Black", system-ui, sans-serif; font-size: 1rem; letter-spacing: .05em; margin: 20px 0 8px; }
+.apropos p, .apropos li { font-size: 0.88rem; color: #bbb; line-height: 1.6; }
+.apropos a { color: var(--vert); }
+</style>
+</head>
+<body>
+
+<!-- Écran de démarrage : la page est en cache, il s'affiche donc sans attendre
+     le réseau et prend le relais de l'écran de lancement du système. -->
+<div class="demarrage" id="demarrage" aria-hidden="true">
+  <img src="icon.svg" alt="" width="190" height="190">
+</div>
+
+<nav class="bottom-nav">
+  <div class="bottom-nav-inner">
+    <button type="button" class="tab-btn active" data-tab="explorer" title="Explorer" aria-label="Explorer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    </button>
+    <button type="button" class="tab-btn" data-tab="projet" title="Projet" aria-label="Projet">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 6v12M17 6v12"/></svg>
+      <span class="tab-badge" id="badge" hidden>0</span>
+    </button>
+    <button type="button" class="tab-btn" data-tab="apropos" title="Infos" aria-label="Infos">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+    </button>
+  </div>
+</nav>
+
+<div class="barre-outils" id="barre-outils" hidden></div>
+
+<div class="app-shell">
+  <header class="app-header">
+    <div class="app-header-inner">
+      <span class="app-logo"><img src="icon.svg" alt=""></span>
+      <span class="app-title">AMVAUTO</span>
+      <span class="app-count" id="compteur"></span>
+      <span class="app-actions" id="app-actions" hidden>
+        <button type="button" id="btn-export" class="tete-btn accent">Export</button>
+        <button type="button" id="btn-setting" class="tete-btn">Setting</button>
+      </span>
+    </div>
+  </header>
+
+  <main>
+    <section id="vue-explorer">
+      <div class="search">
+        <div class="search-row">
+          <input type="search" id="anime" placeholder="Un animé : Chainsaw Man, Frieren…" autocomplete="off" spellcheck="false" aria-label="Nom de l'animé">
+          <button type="button" class="btn-go" id="go">Ouvrir</button>
+        </div>
+        <div class="suggest" id="suggest" hidden></div>
+      </div>
+      <div class="quick" id="rapide"></div>
+      <div id="sortie"></div>
+    </section>
+
+    <section id="vue-projet" hidden></section>
+
+    <section id="vue-apropos" class="apropos" hidden>
+      <h2>Ce que tu regardes</h2>
+      <p>Trois sources alimentent l'explorateur :</p>
+      <ul>
+        <li><a href="https://www.sakugabooru.com" target="_blank" rel="noopener">Sakugabooru</a> —
+        les <strong>cuts</strong> : des plans d'animation isolés d'un épisode, avec l'animateur qui
+        les a dessinés. Jusqu'à 300 par série.</li>
+        <li><a href="https://animethemes.moe" target="_blank" rel="noopener">AnimeThemes</a> —
+        les <strong>openings et endings</strong> en fichiers WebM, souvent en 1080p Blu-ray et sans
+        crédits : aucun texte à masquer au montage.</li>
+        <li><a href="https://anilist.co" target="_blank" rel="noopener">AniList</a> — les
+        <strong>bandes-annonces officielles</strong>, chargées directement par ton navigateur.
+        Seules entrées qui ne sont pas des fichiers : YouTube n'expose pas de lien direct, elles se
+        lisent ici et se récupèrent avec un téléchargeur.</li>
+      </ul>
+      <p>Si une source tombe, les autres répondent quand même.</p>
+
+      <h2>Les noms de fichiers</h2>
+      <p>Sakugabooru ne nomme pas ses plans. Le nom affiché est reconstruit à partir des tags :
+      l'épisode, l'action principale, deux détails visuels, et la figure de style quand il y en a
+      une (Itano circus, Kanada light flare, Obari punch).</p>
+
+      <h2>Le classement</h2>
+      <p>Un générique n'a pas de votes : sa note vient de ce qu'est le fichier — définition,
+      Blu-ray ou WEB, avec ou sans crédits. Une bande-annonce n'offre aucun signal exploitable,
+      elle affiche un tiret plutôt qu'une note inventée. Pour les cuts, le score n'est pas celui du site. Il part des votes, normalisés par lot — 4000 votes sur un
+      blockbuster ne valent pas 40 sur un animé confidentiel — puis tient compte de la durée utile du
+      plan, de la résolution, du décor animé et des impact frames. Le CGI et les captures web sont
+      pénalisés : ils se marient mal avec du 2D au montage.</p>
+
+      <h2>Les dossiers</h2>
+      <p>La série principale, puis un dossier par arc quand la série en a un de taggé (Mugen Train,
+      Reze, Thousand Year Blood War), les films, et les génériques à part. Dedans, deux dossiers
+      seulement : <strong>Combats</strong> et
+      <strong>Moments calmes</strong>. Un plan ne peut être rangé qu'à un seul endroit, comme dans un
+      vrai système de fichiers, et son nom découle du même choix que son dossier.</p>
+
+      <h2>Les projets</h2>
+      <p>Un projet est un montage en préparation : une suite <strong>ordonnée</strong> de plans,
+      conservée dans ce navigateur d'une visite à l'autre, et tu peux en tenir plusieurs en
+      parallèle.</p>
+      <p>L'onglet Projet est un banc de montage : une prévisualisation en haut, une piste en bas où
+      chaque bloc est <strong>large comme sa durée</strong>. La lecture <strong>enchaîne les
+      plans</strong> — le suivant est mis en cache pendant que le courant se joue — et la tête de
+      lecture suit. Clique un bloc pour t'y placer, la barre de progression pour te déplacer dans
+      le montage, glisse un bloc pour le réordonner (les flèches font la même chose au doigt).</p>
+      <p>La durée de chaque plan n'est exposée par aucune source : elle est lue directement dans le
+      fichier, en ne chargeant que ses métadonnées. C'est ce qui permet d'afficher un vrai
+      chronométrage et d'exporter une <strong>conduite de montage EDL</strong> — le format que
+      Premiere, DaVinci et Final Cut savent ouvrir. L'EDL reconstruit l'ordre et les durées ; il
+      reste à relier les fichiers une fois téléchargés. La base est de 24 images par seconde, et un
+      plan dont la durée n'a pas pu être lue vaut 2 secondes, signalé comme tel dans le fichier.</p>
+
+      <h2>Installer l'application</h2>
+      <p>Sur iPhone : bouton <strong>Partager</strong> puis <strong>Sur l'écran d'accueil</strong>.
+      Sur Android : menu du navigateur puis <strong>Installer l'application</strong>. Elle se lance
+      alors en plein écran, sans barre d'adresse, et vérifie sa version à chaque ouverture — la mise
+      à jour se fait toute seule.</p>
+
+      <h2>Version</h2>
+      <p id="version-page">version inconnue</p>
+
+      <h2>Contenu</h2>
+      <p>Rien n'est réhébergé ici : les extraits sont servis par Sakugabooru et restent la propriété
+      de leurs studios.</p>
+    </section>
+  </main>
+</div>
+
+<div class="lecteur" id="lecteur" hidden></div>
+<div class="lecteur" id="feuille" hidden></div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+
+// L'écran de démarrage, allumé ou éteint. On le rallume juste avant un
+// rechargement : sans cela l'application se montre une fraction de seconde,
+// disparaît, et se remontre — ce qui se lit comme deux démarrages.
+const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
+const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
+const VERSION_PAGE = "2026-08-18 03:19";
+
+// Installation et mise à jour. Le service worker est vérifié à chaque
+// lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
+// sans cette vérification une correction n'arriverait qu'au lancement suivant.
+// Le nouveau worker prend la main tout seul, la page se recharge une fois.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      const enregistrement = await navigator.serviceWorker.register("sw.js");
+      enregistrement.update().catch(() => {});
+      // Toutes les heures aussi, pour une application laissée ouverte.
+      setInterval(() => enregistrement.update().catch(() => {}), 3600000);
+
+      // Au tout premier lancement, le worker prend la main sur une page qui
+      // n'en avait pas : recharger n'apporterait rien et ferait clignoter
+      // l'application. On ne recharge que sur une vraie mise à jour.
+      const premiereInstallation = !navigator.serviceWorker.controller;
+      let recharge = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (recharge || premiereInstallation) return;
+        recharge = true;
+        // L'écran de démarrage se rallume d'abord : l'utilisateur voit un seul
+        // écran noir continu au lieu de deux démarrages successifs.
+        montrerDemarrage();
+        location.reload();
+      });
+    } catch {
+      // Sans service worker l'application marche, elle ne s'installe pas.
+    }
+  });
+}
+
+// Filet pour les navigateurs sans service worker : si le serveur annonce une
+// version plus récente que celle-ci, c'est qu'une copie périmée est servie. On
+// recharge une fois, puis on se contente de le signaler.
+fetch("/api/version", { cache: "no-store" })
+  .then((r) => r.json())
+  .then(({ version }) => {
+    const marque = document.getElementById("version-page");
+    if (marque) marque.textContent = `version ${VERSION_PAGE}`;
+    if (!version || version === VERSION_PAGE) return;
+
+    // Quand un service worker pilote déjà la page, c'est lui qui recharge après
+    // avoir installé la nouvelle version : recharger ici aussi ferait deux
+    // démarrages pour une seule mise à jour. On se contente alors du bandeau.
+    if (navigator.serviceWorker?.controller) {
+      // Une seule tentative automatique par session : si le rechargement ne
+      // suffit pas, mieux vaut un bandeau qu'une page qui se recharge en boucle.
+    } else if (!sessionStorage.getItem("amvauto-maj")) {
+      sessionStorage.setItem("amvauto-maj", version);
+      montrerDemarrage();
+      location.replace(`${location.pathname}?v=${Date.now()}`);
+      return;
+    }
+
+    const bandeau = document.createElement("div");
+    bandeau.className = "bandeau-version";
+    bandeau.innerHTML = `<span>Nouvelle version disponible (${version}) — celle-ci date du ${VERSION_PAGE}.</span>`;
+    const recharger = document.createElement("button");
+    recharger.type = "button";
+    recharger.textContent = "Recharger";
+    recharger.addEventListener("click", () => location.replace(`${location.pathname}?v=${Date.now()}`));
+    bandeau.append(recharger);
+    document.body.prepend(bandeau);
+  })
+  .catch(() => {});
+const PAR_PAGE = 100;
+const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], actif: null, reordre: false };
+
+// L'extension vient du fichier, pas d'une supposition : AnimeThemes sert du
+// WebM, Sakugabooru du MP4, et une bande-annonce n'est pas un fichier.
+function nomFichier(rush) {
+  if (rush.youtube) return rush.name;
+  const extension = (rush.video.match(/\.(mp4|webm|mkv|mov)(?:\?|$)/i) || [])[1];
+  return extension ? `${rush.name}.${extension.toLowerCase()}` : rush.name;
+}
+
+const TRAITS = {
+  reculer: '<path d="M14 6l-6 6 6 6"/>',
+  avancer: '<path d="M10 6l6 6-6 6"/>',
+  retirer: '<path d="M6 6l12 12M18 6L6 18"/>',
+  exporter: '<path d="M12 4v10"/><path d="M8 12l4 4 4-4"/><path d="M5 19h14"/>',
+  liste: '<path d="M8 7h11M8 12h11M8 17h11"/><path d="M4 7h.01M4 12h.01M4 17h.01"/>',
+  liens: '<path d="M10.5 13.5a4 4 0 0 0 5.7 0l2-2a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M13.5 10.5a4 4 0 0 0-5.7 0l-2 2a4 4 0 0 0 5.7 5.7l1-1"/>',
+  renommer: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
+  supprimer: '<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/>',
+  fait: '<path d="M5 13l4 4 10-10"/>',
+  annuler: '<path d="M9 14L4 9l5-5"/><path d="M4 9h9a6 6 0 0 1 0 12H8"/>',
+  retablir: '<path d="M15 14l5-5-5-5"/><path d="M20 9h-9a6 6 0 0 0 0 12h5"/>',
+  play: '<path d="M7 4.5l12 7.5-12 7.5z" fill="currentColor" stroke="none"/>',
+  pause: '<path d="M8 5v14M16 5v14" stroke-width="2.6"/>',
+  plein: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
+  plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"/>',
+  son: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+  pellicule: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14"/>',
+  couper: '<circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M7.8 16.2L18 5M16.2 16.2L6 5"/>',
+  deplacer: '<path d="M7 9L4 12l3 3M17 9l3 3-3 3"/><path d="M4 12h16"/><path d="M12 5v14" stroke-dasharray="2 2.5"/>',
+  entree: '<path d="M6 5v14h3"/><path d="M20 12H11"/><path d="M14 8l-3 4 3 4"/>',
+  sortie: '<path d="M18 5v14h-3"/><path d="M4 12h9"/><path d="M10 8l3 4-3 4"/>',
+};
+
+const icone = (nom) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ` +
+  `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TRAITS[nom]}</svg>`;
+
+const PROVENANCE = {
+  sakugabooru: "Sakugabooru",
+  animethemes: "AnimeThemes",
+  anilist: "AniList",
+};
+
+const SVG_DOSSIER = '<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+
+/* --- onglets -------------------------------------------------------- */
+document.querySelectorAll(".tab-btn").forEach((bouton) => {
+  bouton.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === bouton));
+    const onglet = bouton.dataset.tab;
+    $("vue-explorer").hidden = onglet !== "explorer";
+    $("vue-projet").hidden = onglet !== "projet";
+    $("vue-apropos").hidden = onglet !== "apropos";
+    document.querySelector("main").classList.toggle("montage", onglet === "projet");
+    $("barre-outils").hidden = onglet !== "projet";
+    $("compteur").hidden = onglet === "projet";
+    if (onglet !== "projet") $("app-actions").hidden = true;
+    if (onglet === "projet") rendreProjet();
+    else arreter();
+  });
+});
+
+/* --- suggestions ---------------------------------------------------- */
+const boite = $("suggest");
+let minuteur;
+$("anime").addEventListener("input", (evt) => {
+  clearTimeout(minuteur);
+  const valeur = evt.target.value;
+  minuteur = setTimeout(async () => {
+    if (!valeur.trim()) return (boite.hidden = true);
+    const data = await fetch(`/api/suggest?q=${encodeURIComponent(valeur)}`).then((r) => r.json());
+    if (!data.series.length) return (boite.hidden = true);
+    boite.replaceChildren(...data.series.map((serie) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.textContent = serie.display;
+      item.addEventListener("click", () => { $("anime").value = serie.display; boite.hidden = true; ouvrir(); });
+      return item;
+    }));
+    boite.hidden = false;
+  }, 140);
+});
+$("anime").addEventListener("keydown", (evt) => {
+  if (evt.key === "Enter") { boite.hidden = true; ouvrir(); }
+  if (evt.key === "Escape") boite.hidden = true;
+});
+document.addEventListener("click", (evt) => {
+  if (!boite.contains(evt.target) && evt.target !== $("anime")) boite.hidden = true;
+});
+
+// Surtout pas d'attente réseau ici : un « await » à ce niveau suspend la suite
+// du module, donc le branchement des onglets et des boutons. Le temps que
+// l'API réponde, l'interface entière restait inerte — le bouton lecture avec.
+fetch("/api/suggest?q=")
+  .then((r) => r.json())
+  .then((rapide) => {
+    $("rapide").replaceChildren(...rapide.series.slice(0, 8).map((serie) => {
+      const bouton = document.createElement("button");
+      bouton.type = "button";
+      bouton.textContent = serie.display;
+      bouton.addEventListener("click", () => { $("anime").value = serie.display; ouvrir(); });
+      return bouton;
+    }));
+  })
+  .catch(() => {});
+
+/* --- bandes-annonces (AniList, appelé directement) -------------------- */
+// AniList refuse les requêtes venant d'un Worker mais autorise le CORS : c'est
+// la seule source que la page interroge elle-même. Elle arrive après coup, sans
+// retarder l'affichage de l'arborescence.
+const ANILIST_QUERY = `query ($s: String) {
+  Page(perPage: 8) {
+    media(search: $s, type: ANIME, sort: POPULARITY_DESC) {
+      id seasonYear format
+      title { romaji english }
+      trailer { id site thumbnail }
+      coverImage { large }
+    }
+  }
+}`;
+const FORMATS = { TV: "série", MOVIE: "film", OVA: "OVA", ONA: "ONA", SPECIAL: "spécial" };
+
+async function bandesAnnonces(anime) {
+  try {
+    const reponse = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: ANILIST_QUERY, variables: { s: anime } }),
+    });
+    if (!reponse.ok) return [];
+    const data = await reponse.json();
+    return (data?.data?.Page?.media || [])
+      .filter((media) => media.trailer?.id && media.trailer.site === "youtube")
+      .map((media) => {
+        const titre = media.title?.romaji || media.title?.english || "Sans titre";
+        return {
+          id: `al-${media.id}`,
+          name: `PV · ${titre}${media.seasonYear ? ` (${media.seasonYear})` : ""}`,
+          // Aucun signal de qualité exploitable : pas de note plutôt qu'une note inventée.
+          score: null,
+          votes: null,
+          moods: [],
+          technique: null,
+          flags: [FORMATS[media.format], "lien YouTube"].filter(Boolean),
+          artists: [],
+          width: 0,
+          height: 0,
+          mb: 0,
+          episode: null,
+          provider: "anilist",
+          ref: titre,
+          video: `https://www.youtube.com/watch?v=${media.trailer.id}`,
+          youtube: media.trailer.id,
+          preview: media.trailer.thumbnail || media.coverImage?.large || null,
+          page: `https://anilist.co/anime/${media.id}`,
+          tags: [],
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/* --- chargement ----------------------------------------------------- */
+$("go").addEventListener("click", () => ouvrir());
+
+async function ouvrir() {
+  const anime = $("anime").value.trim();
+  if (!anime || state.occupe) return;
+  boite.hidden = true;
+  state.occupe = true;
+  $("go").disabled = true;
+  squelettes();
+
+  try {
+    const reponse = await fetch(`/api/tree?anime=${encodeURIComponent(anime)}`);
+    const data = await reponse.json();
+    if (!reponse.ok) throw new Error(data.error || "réponse invalide");
+    state.arbre = data;
+    state.chemin = [];
+    state.montres = PAR_PAGE;
+    $("compteur").textContent = `${data.total} rushs`;
+    rendre();
+
+    const pv = await bandesAnnonces(anime);
+    if (pv.length && state.arbre === data) {
+      data.arcs.push({
+        key: "pv",
+        label: "Bandes-annonces",
+        count: pv.length,
+        folders: [{ key: "trailer", label: "PV officiels", count: pv.length, rushes: pv }],
+      });
+      data.total += pv.length;
+      $("compteur").textContent = `${data.total} rushs`;
+      if (!state.chemin.length) rendre();
+    }
+  } catch (erreur) {
+    $("sortie").replaceChildren(note(erreur.message, true));
+  } finally {
+    state.occupe = false;
+    $("go").disabled = false;
+  }
+}
+
+function squelettes() {
+  const liste = document.createElement("div");
+  liste.className = "rows";
+  for (let i = 0; i < 6; i += 1) {
+    const bloc = document.createElement("div");
+    bloc.className = "squelette";
+    liste.append(bloc);
+  }
+  $("sortie").replaceChildren(liste);
+}
+
+function note(texte, erreur = false) {
+  const bloc = document.createElement("div");
+  bloc.className = erreur ? "note erreur" : "note";
+  bloc.textContent = texte;
+  return bloc;
+}
+
+/* --- explorateur ---------------------------------------------------- */
+function rendre() {
+  if (!state.arbre) return;
+  const morceaux = [filDAriane()];
+  const [arcIndex, dossierIndex] = state.chemin;
+
+  if (arcIndex === undefined) {
+    morceaux.push(listeDossiers(state.arbre.arcs, (arc) => ({
+      titre: arc.label,
+      sous: `${arc.count} rushs · ${arc.folders.map((f) => f.label.toLowerCase()).join(", ")}`,
+    })));
+  } else if (dossierIndex === undefined) {
+    const arc = state.arbre.arcs[arcIndex];
+    morceaux.push(listeDossiers(arc.folders, (dossier) => ({
+      titre: dossier.label,
+      sous: `${dossier.count} rush${dossier.count > 1 ? "s" : ""}`,
+    })));
+  } else {
+    const dossier = state.arbre.arcs[arcIndex].folders[dossierIndex];
+    const entete = note(`${dossier.count} plan${dossier.count > 1 ? "s" : ""} dans ce dossier`);
+    morceaux.push(entete, barreDeTri(), listeFichiers(trier(dossier.rushes)));
+  }
+
+  $("sortie").replaceChildren(...morceaux);
+}
+
+function filDAriane() {
+  const fil = document.createElement("nav");
+  fil.className = "crumbs";
+  const [arcIndex, dossierIndex] = state.chemin;
+
+  const etapes = [{ label: state.arbre.anime, profondeur: 0 }];
+  if (arcIndex !== undefined) etapes.push({ label: state.arbre.arcs[arcIndex].label, profondeur: 1 });
+  if (dossierIndex !== undefined) {
+    etapes.push({ label: state.arbre.arcs[arcIndex].folders[dossierIndex].label, profondeur: 2 });
+  }
+
+  etapes.forEach((etape, index) => {
+    if (index) {
+      const sep = document.createElement("span");
+      sep.className = "sep";
+      sep.textContent = "/";
+      fil.append(sep);
+    }
+    if (index === etapes.length - 1) {
+      const ici = document.createElement("span");
+      ici.className = "here";
+      ici.textContent = etape.label;
+      fil.append(ici);
+    } else {
+      const lien = document.createElement("button");
+      lien.type = "button";
+      lien.textContent = etape.label;
+      lien.addEventListener("click", () => {
+        state.chemin = state.chemin.slice(0, etape.profondeur);
+        state.montres = PAR_PAGE;
+        rendre();
+      });
+      fil.append(lien);
+    }
+  });
+  return fil;
+}
+
+function listeDossiers(elements, decrire) {
+  const liste = document.createElement("div");
+  liste.className = "rows";
+  elements.forEach((element, index) => {
+    const { titre, sous } = decrire(element);
+    const ligne = document.createElement("button");
+    ligne.type = "button";
+    ligne.className = "row";
+    ligne.innerHTML = `${SVG_DOSSIER}<span class="grow"><span class="nom"></span><span class="sous"></span></span><span class="chevron">›</span>`;
+    ligne.querySelector(".nom").textContent = titre;
+    ligne.querySelector(".sous").textContent = sous;
+    ligne.addEventListener("click", () => {
+      state.chemin = [...state.chemin, index];
+      state.montres = PAR_PAGE;
+      rendre();
+    });
+    liste.append(ligne);
+  });
+  return liste;
+}
+
+function barreDeTri() {
+  const barre = document.createElement("div");
+  barre.className = "tools";
+  const etiquette = document.createElement("span");
+  etiquette.className = "label";
+  etiquette.textContent = "Trier par";
+  barre.append(etiquette);
+  for (const [cle, texte] of [["episode", "Épisode"], ["score", "Score"], ["nom", "Nom"]]) {
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.textContent = texte;
+    bouton.classList.toggle("on", state.tri === cle);
+    bouton.addEventListener("click", () => { state.tri = cle; state.montres = PAR_PAGE; rendre(); });
+    barre.append(bouton);
+  }
+  return barre;
+}
+
+function trier(rushes) {
+  const copie = [...rushes];
+  if (state.tri === "score") return copie.sort((a, b) => b.score - a.score);
+  if (state.tri === "nom") return copie.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  return copie.sort((a, b) => (a.episode ?? 1e6) - (b.episode ?? 1e6) || b.score - a.score);
+}
+
+function listeFichiers(rushes) {
+  const liste = document.createElement("div");
+  liste.className = "rows";
+  const visibles = rushes.slice(0, state.montres);
+  for (const rush of visibles) liste.append(ligneFichier(rush));
+
+  if (rushes.length > visibles.length) {
+    const encore = document.createElement("button");
+    encore.type = "button";
+    encore.className = "encore";
+    const reste = rushes.length - visibles.length;
+    encore.textContent = `Afficher ${Math.min(PAR_PAGE, reste)} de plus (${reste} restants)`;
+    encore.addEventListener("click", () => { state.montres += PAR_PAGE; rendre(); });
+    liste.append(encore);
+  }
+  return liste;
+}
+
+function ligneFichier(rush) {
+  const ligne = document.createElement("div");
+  ligne.className = "row";
+
+  let vignette;
+  if (rush.preview) {
+    vignette = document.createElement("img");
+    vignette.className = "vignette";
+    vignette.src = rush.preview;
+    vignette.alt = "";
+    vignette.loading = "lazy";
+  } else {
+    vignette = document.createElement("span");
+    vignette.className = "vignette vide";
+    vignette.textContent = rush.youtube ? "▶" : "webm";
+  }
+
+  const centre = document.createElement("span");
+  centre.className = "grow";
+  const nom = document.createElement("span");
+  nom.className = "nom";
+  nom.textContent = nomFichier(rush);
+  const sous = document.createElement("span");
+  sous.className = "sous";
+  sous.textContent = [
+    rush.artists.join(", ") || (rush.provider === "sakugabooru" ? "animateur non identifié" : null),
+    rush.ref || null,
+    rush.height ? `${rush.width}×${rush.height}` : null,
+    rush.mb ? `${rush.mb} Mo` : null,
+  ].filter(Boolean).join(" · ");
+  const puces = document.createElement("span");
+  puces.className = "puces";
+  puces.append(puce(PROVENANCE[rush.provider] || rush.provider, "src"));
+  if (rush.technique) puces.append(puce(rush.technique, "tech"));
+  for (const marque of rush.flags) {
+    puces.append(puce(marque, rush.provider === "sakugabooru" ? "alerte" : "tech"));
+  }
+  centre.append(nom, sous, puces);
+
+  const score = document.createElement("span");
+  score.className = "badge-score" + (rush.score === null ? " vide" : "");
+  score.textContent = rush.score === null ? "—" : rush.score.toFixed(0);
+  score.title = rush.score === null ? "Pas de signal de qualité pour cette source" : "Note d'utilisabilité au montage";
+
+  const choisir = document.createElement("button");
+  choisir.type = "button";
+  choisir.className = "btn-pick" + (dansProjet(rush.id) ? " on" : "");
+  choisir.textContent = dansProjet(rush.id) ? "✓" : "+";
+  choisir.title = "Ajouter à un projet";
+  choisir.addEventListener("click", (evt) => {
+    evt.stopPropagation();
+    ajouterAUnProjet(rush, choisir);
+  });
+
+  ligne.append(vignette, centre, score, choisir);
+  ligne.addEventListener("click", () => lire(rush));
+  return ligne;
+}
+
+function puce(texte, variante = "") {
+  const element = document.createElement("span");
+  element.className = `puce ${variante}`.trim();
+  element.textContent = texte;
+  return element;
+}
+
+/* --- lecteur -------------------------------------------------------- */
+function lire(rush) {
+  const fond = $("lecteur");
+  const boiteVideo = document.createElement("div");
+  boiteVideo.className = "lecteur-boite";
+
+  let video;
+  if (rush.youtube) {
+    video = document.createElement("iframe");
+    video.src = `https://www.youtube.com/embed/${rush.youtube}`;
+    video.allow = "accelerometer; encrypted-media; picture-in-picture";
+    video.allowFullscreen = true;
+    video.style.cssText = "width:100%;aspect-ratio:16/9;border:0;display:block;border-radius:14px 14px 0 0";
+  } else {
+    video = document.createElement("video");
+    video.src = rush.video;
+    video.controls = true;
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+  }
+
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = nomFichier(rush);
+  const meta = document.createElement("div");
+  meta.className = "lecteur-meta";
+  meta.textContent = [
+    rush.artists.join(", ") || null,
+    rush.ref || null,
+    rush.height ? `${rush.width}×${rush.height}${rush.mb ? ` · ${rush.mb} Mo` : ""}` : null,
+    rush.score === null
+      ? `${PROVENANCE[rush.provider]} · pas de note`
+      : `${PROVENANCE[rush.provider]} · score ${rush.score}${rush.votes ? ` · ${rush.votes} votes` : ""}`,
+  ].filter(Boolean).join("\n");
+  meta.style.whiteSpace = "pre-line";
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+  const ajouter = document.createElement("button");
+  ajouter.type = "button";
+  ajouter.className = "fort";
+  ajouter.textContent = dansProjet(rush.id) ? "Retirer du projet" : "Ajouter à un projet";
+  ajouter.addEventListener("click", () => {
+    ajouterAUnProjet(rush, null, () => {
+      ajouter.textContent = dansProjet(rush.id) ? "Retirer du projet" : "Ajouter à un projet";
+      rendre();
+    });
+  });
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.textContent = "Fermer";
+  fermer.addEventListener("click", () => { fond.hidden = true; fond.replaceChildren(); });
+  actions.append(ajouter, fermer);
+
+  corps.append(titre, meta, actions);
+  boiteVideo.append(video, corps);
+  fond.replaceChildren(boiteVideo);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) { fond.hidden = true; fond.replaceChildren(); } };
+}
+
+document.addEventListener("keydown", (evt) => {
+  if (evt.key === "Escape" && !$("lecteur").hidden) { $("lecteur").hidden = true; $("lecteur").replaceChildren(); }
+});
+
+/* --- projets ---------------------------------------------------------
+   Un projet, c'est un montage en préparation : une suite ordonnée de plans,
+   conservée d'une visite à l'autre, exportable vers un logiciel de montage. */
+
+const CLE = "amvauto-projets";
+const IMAGES_PAR_SECONDE = 24;
+const DUREE_DEFAUT = 2;   // pour un plan dont on n'a pas pu lire la durée
+
+function charger() {
+  try {
+    const brut = JSON.parse(localStorage.getItem(CLE) || "{}");
+    state.projets = Array.isArray(brut.projets) ? brut.projets : [];
+    state.actif = brut.actif || state.projets[0]?.id || null;
+    // Déplacer les plans est un mode qu'on active : par défaut, un doigt qui
+    // traîne sur la piste ne doit pas pouvoir changer l'ordre des scènes.
+    state.reordre = Boolean(brut.reordre);
+  } catch {
+    state.projets = [];
+    state.actif = null;
+    state.reordre = false;
+  }
+  document.body.classList.toggle("reordre", state.reordre);
+  majBadge();
+}
+
+function sauver() {
+  try {
+    localStorage.setItem(CLE, JSON.stringify({ projets: state.projets, actif: state.actif, reordre: state.reordre }));
+  } catch {
+    // Quota plein : le projet reste utilisable dans l'onglet ouvert.
+  }
+  majBadge();
+}
+
+// Historique du montage : une pile d'états successifs du projet courant, dans
+// laquelle « annuler » et « rétablir » se déplacent. Elle est repartie de zéro
+// à chaque changement de projet — un historique commun à deux montages n'aurait
+// aucun sens.
+const HISTOIRE_MAX = 40;
+const histoire = { pile: [], position: -1, projet: null };
+
+const instantane = (projet) => JSON.stringify({ nom: projet.nom, plans: projet.plans });
+
+function initHistoire(projet) {
+  histoire.projet = projet.id;
+  histoire.pile = [instantane(projet)];
+  histoire.position = 0;
+  majBoutonsHistoire();
+}
+
+function enregistrer(projet) {
+  if (histoire.projet !== projet.id) return initHistoire(projet);
+  // Agir après un « annuler » efface les états qu'on aurait pu rétablir.
+  histoire.pile = histoire.pile.slice(0, histoire.position + 1);
+  histoire.pile.push(instantane(projet));
+  if (histoire.pile.length > HISTOIRE_MAX) histoire.pile.shift();
+  histoire.position = histoire.pile.length - 1;
+  majBoutonsHistoire();
+}
+
+function parcourirHistoire(sens) {
+  const projet = projetActif();
+  const cible = histoire.position + sens;
+  if (!projet || histoire.projet !== projet.id || cible < 0 || cible >= histoire.pile.length) return;
+  histoire.position = cible;
+  const etat = JSON.parse(histoire.pile[cible]);
+  projet.nom = etat.nom;
+  projet.plans = etat.plans;
+  sauver();
+  rendreProjet();
+  rendre();
+}
+
+function majBoutonsHistoire() {
+  const annuler = $("btn-annuler");
+  const retablir = $("btn-retablir");
+  if (annuler) annuler.disabled = histoire.position <= 0;
+  if (retablir) retablir.disabled = histoire.position >= histoire.pile.length - 1;
+}
+
+const projetActif = () => state.projets.find((projet) => projet.id === state.actif) || null;
+const dansProjet = (id) => (projetActif()?.plans || []).some((plan) => idRush(plan) === id);
+
+function majBadge() {
+  const total = projetActif()?.plans.length || 0;
+  $("badge").hidden = total === 0;
+  $("badge").textContent = total;
+}
+
+function creerProjet(nom) {
+  const projet = {
+    id: `p${Date.now().toString(36)}`,
+    nom: nom || `Projet ${state.projets.length + 1}`,
+    cree: Date.now(),
+    plans: [],
+  };
+  state.projets.push(projet);
+  state.actif = projet.id;
+  sauver();
+  return projet;
+}
+
+// Le premier plan crée le projet tout seul ; à partir de deux projets, on
+// demande dans lequel ranger.
+function ajouterAUnProjet(rush, bouton, apres) {
+  if (state.projets.length > 1 && !dansProjet(rush.id)) {
+    choisirProjet(rush, bouton, apres);
+    return;
+  }
+  const projet = projetActif() || creerProjet();
+  basculerDans(projet, rush, bouton, apres);
+}
+
+function basculerDans(projet, rush, bouton, apres) {
+  state.actif = projet.id;
+  const index = projet.plans.findIndex((plan) => idRush(plan) === rush.id);
+  if (index >= 0) {
+    // Un rush coupé occupe plusieurs blocs : le retirer les enlève tous.
+    projet.plans = projet.plans.filter((plan) => idRush(plan) !== rush.id);
+  } else {
+    const plan = { ...rush, anime: state.arbre?.anime || rush.ref || "", duree: null };
+    projet.plans.push(plan);
+    preparerLocal(plan);
+    mesurerDuree(plan);
+  }
+  sauver();
+  enregistrer(projet);
+  if (bouton) {
+    const dedans = dansProjet(rush.id);
+    bouton.classList.toggle("on", dedans);
+    bouton.textContent = dedans ? "✓" : "+";
+  }
+  if (apres) apres();
+}
+
+function choisirProjet(rush, bouton, apres) {
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = "Ajouter à quel projet ?";
+  corps.append(titre);
+
+  const liste = document.createElement("div");
+  liste.className = "rows";
+  for (const projet of state.projets) {
+    const ligne = document.createElement("button");
+    ligne.type = "button";
+    ligne.className = "row";
+    ligne.innerHTML = `<span class="grow"><span class="nom"></span><span class="sous"></span></span>`;
+    ligne.querySelector(".nom").textContent = projet.nom;
+    ligne.querySelector(".sous").textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""}`;
+    ligne.addEventListener("click", () => {
+      fermerFeuille();
+      basculerDans(projet, rush, bouton, apres);
+    });
+    liste.append(ligne);
+  }
+  corps.append(liste);
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+  const nouveau = document.createElement("button");
+  nouveau.type = "button";
+  nouveau.className = "fort";
+  nouveau.textContent = "Nouveau projet";
+  nouveau.addEventListener("click", () => {
+    fermerFeuille();
+    basculerDans(creerProjet(), rush, bouton, apres);
+  });
+  const annuler = document.createElement("button");
+  annuler.type = "button";
+  annuler.textContent = "Annuler";
+  annuler.addEventListener("click", fermerFeuille);
+  actions.append(nouveau, annuler);
+  corps.append(actions);
+
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
+}
+
+function fermerFeuille() {
+  $("feuille").hidden = true;
+  $("feuille").replaceChildren();
+}
+
+// La durée d'un plan n'est exposée par aucune des sources : on la lit dans le
+// fichier lui-même, en ne chargeant que ses métadonnées.
+//
+// Une seule sonde à la fois, et elle est relâchée avant la suivante. Un
+// téléphone ne peut charger qu'un petit nombre de médias simultanément : en
+// ouvrant une sonde par plan, on saturait le décodeur et le lecteur principal
+// se retrouvait sans ressources — il refusait alors de se positionner ou de
+// démarrer, sans la moindre erreur.
+const attenteMesure = [];
+const enMesure = new Set();
+let sondeActive = false;
+
+function mesurerDuree(plan) {
+  if (plan.youtube || !plan.video || plan.duree || enMesure.has(plan.id)) return;
+  enMesure.add(plan.id);
+  attenteMesure.push(plan);
+  mesurerSuivant();
+}
+
+function mesurerSuivant() {
+  if (sondeActive) return;
+  const plan = attenteMesure.shift();
+  if (!plan) return;
+  sondeActive = true;
+
+  const sonde = document.createElement("video");
+  sonde.preload = "metadata";
+  sonde.muted = true;
+
+  const finir = () => {
+    enMesure.delete(plan.id);
+    sonde.removeAttribute("src");
+    sonde.load();
+    sondeActive = false;
+    // Un souffle entre deux sondes : le décodeur a le temps de se libérer.
+    setTimeout(mesurerSuivant, 80);
+  };
+
+  const abandon = setTimeout(finir, 12000);
+  sonde.addEventListener("loadedmetadata", () => {
+    clearTimeout(abandon);
+    if (Number.isFinite(sonde.duration) && sonde.duration > 0) {
+      plan.duree = Math.round(sonde.duration * 100) / 100;
+      sauver();
+      if (!$("vue-projet").hidden && !lecture.jouant) {
+        // Les durées changent la longueur du montage : sans réajuster, la piste
+        // garde l'échelle calculée sur des durées encore inconnues et le
+        // curseur ne vise plus au bon endroit. On respecte en revanche un
+        // réglage fait à la main.
+        const projet = projetActif();
+        if (projet && !lecture.echelleManuelle) ajusterEchelle(projet);
+        redessinerPisteDifferee();
+      }
+    }
+    finir();
+  }, { once: true });
+  sonde.addEventListener("error", () => { clearTimeout(abandon); finir(); }, { once: true });
+  sonde.src = sourceDe(plan);
+}
+
+const secondes = (valeur) => `${valeur.toFixed(2).replace(".", ",")} s`;
+
+function timecode(valeur) {
+  const images = Math.max(0, Math.round(valeur * IMAGES_PAR_SECONDE));
+  const parties = [
+    Math.floor(images / (IMAGES_PAR_SECONDE * 3600)),
+    Math.floor(images / (IMAGES_PAR_SECONDE * 60)) % 60,
+    Math.floor(images / IMAGES_PAR_SECONDE) % 60,
+    images % IMAGES_PAR_SECONDE,
+  ];
+  return parties.map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+function totaux(projet) {
+  // Deux morceaux d'un même plan coupé viennent d'un seul fichier : le poids
+  // est compté une fois, sinon le projet paraît deux fois plus lourd.
+  const comptes = new Set();
+  return projet.plans.reduce(
+    (somme, plan) => {
+      const neuf = plan.video && !comptes.has(plan.video);
+      if (plan.video) comptes.add(plan.video);
+      return {
+        duree: somme.duree + (plan.duree ? duree(plan) : 0),
+        mb: somme.mb + (neuf ? plan.mb || 0 : 0),
+        mesures: somme.mesures + (plan.duree ? 1 : 0),
+      };
+    },
+    { duree: 0, mb: 0, mesures: 0 },
+  );
+}
+
+/* --- éditeur de montage ----------------------------------------------
+   Écran, transport, et une piste à deux voies : les plans et une bande son.
+   L'échelle est continue et se règle au pincement. */
+
+const ECHELLE_MIN = 0.3;
+// Zoom maximal : une imagette de 96 px pour une image de la source, soit
+// 96 × 24 pixels par seconde. C'est la limite utile — au-delà on étire la même
+// image.
+const ECHELLE_MAX = 96 * IMAGES_PAR_SECONDE;
+const PAS_REGLE = [1 / IMAGES_PAR_SECONDE, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null, demande: false, horloge: null };
+
+const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
+const xDeSeconde = (valeur) => valeur * lecture.echelle;
+
+/* Couper un plan ne touche pas au fichier : on déplace deux bornes dans la
+   source. C'est le principe du montage non destructif — le même rush peut
+   servir deux fois, coupé différemment, et revenir en arrière ne coûte rien.
+   `duree` est donc la durée à la timeline, `dureeSource` celle du fichier. */
+const IMAGE = 1 / IMAGES_PAR_SECONDE;
+const PLAN_MINI = 4 * IMAGE;   // en deçà, un plan n'est plus lisible à l'écran
+
+const dureeSource = (plan) => plan?.duree || DUREE_DEFAUT;
+const entreeDe = (plan) => Math.max(0, Math.min(plan?.entree || 0, dureeSource(plan) - PLAN_MINI));
+const sortieDe = (plan) => Math.min(dureeSource(plan), Math.max(plan?.sortie ?? dureeSource(plan), entreeDe(plan) + PLAN_MINI));
+const rogne = (plan) => entreeDe(plan) > 0.001 || sortieDe(plan) < dureeSource(plan) - 0.001;
+
+function duree(plan) {
+  return Math.max(PLAN_MINI, sortieDe(plan) - entreeDe(plan));
+}
+
+// Un plan coupé en deux garde le rush dont il vient : c'est lui qui dit à
+// l'explorateur si la série est déjà dans le projet.
+const idRush = (plan) => plan.rush || plan.id;
+
+function offsets(plans) {
+  let curseur = 0;
+  return plans.map((plan) => {
+    const debut = curseur;
+    curseur += duree(plan);
+    return debut;
+  });
+}
+
+// Zoomé à l'image, un dixième de seconde ne suffit plus à distinguer deux
+// graduations : le nombre de décimales suit la finesse demandée.
+function horloge(valeur, decimales = 0) {
+  const chiffres = decimales === true ? 1 : Number(decimales) || 0;
+  const entier = Math.max(0, valeur);
+  const minutes = Math.floor(entier / 60);
+  const reste = entier - minutes * 60;
+  const sec = chiffres
+    ? reste.toFixed(chiffres).padStart(chiffres + 3, "0")
+    : String(Math.round(reste)).padStart(2, "0");
+  return `${String(minutes).padStart(2, "0")}:${sec}`;
+}
+
+const total = (projet) => projet.plans.reduce((somme, plan) => somme + duree(plan), 0);
+
+function ajusterEchelle(projet) {
+  const disponible = ($("vue-projet").clientWidth || 360) - 24;
+  lecture.echelle = Math.min(
+    ECHELLE_MAX,
+    Math.max(ECHELLE_MIN, disponible / Math.max(1, total(projet))),
+  );
+}
+
+// Zoomer garde sous le doigt l'instant qui s'y trouvait : sans cette ancre, la
+// piste part ailleurs à chaque pincement et on perd ce qu'on regardait.
+function appliquerEchelle(valeur, ancreX = null) {
+  const bornee = Math.min(ECHELLE_MAX, Math.max(ECHELLE_MIN, valeur));
+  if (Math.abs(bornee - lecture.echelle) < 0.001) return;
+  const cadre = $("piste");
+  const avant = cadre && ancreX !== null
+    ? (cadre.scrollLeft + ancreX - cadre.getBoundingClientRect().left) / lecture.echelle
+    : null;
+  lecture.echelleManuelle = true;
+  lecture.echelle = bornee;
+  // Les images demandées l'étaient pour l'ancienne grille : elles ne seront
+  // plus affichées, autant ne pas les capturer.
+  viderAttenteImagettes();
+  redessinerPiste();
+  if (avant !== null && cadre) {
+    cadre.scrollLeft = Math.max(0, avant * lecture.echelle - (ancreX - cadre.getBoundingClientRect().left));
+    redessinerBandes();
+  }
+}
+
+function rendreProjet() {
+  const vue = $("vue-projet");
+  const projet = projetActif();
+  const morceaux = [barreProjets()];
+  $("app-actions").hidden = !projet || !projet.plans.length;
+
+  if (!projet) {
+    morceaux.push(note("Aucun projet. Ouvre un dossier, puis « + » sur un plan pour en démarrer un."));
+    vue.replaceChildren(...morceaux);
+    return;
+  }
+  if (!projet.plans.length) {
+    morceaux.push(note(`« ${projet.nom} » est vide. Ajoute des plans depuis l'explorateur.`));
+    vue.replaceChildren(...morceaux);
+    return;
+  }
+
+  arreter();
+  if (histoire.projet !== projet.id) initHistoire(projet);
+  importerProjet(projet);
+  projet.plans.forEach(mesurerDuree);
+  ajusterEchelle(projet);
+  lecture.echelleManuelle = false;
+  lecture.index = 0;
+  lecture.position = 0;
+  morceaux.push(editeur(projet));
+  vue.replaceChildren(...morceaux);
+  remplirBarreOutils(projet);
+  poserPlan(0, 0);
+}
+
+/* --- sélecteur de projets, chacun avec sa vignette -------------------- */
+function barreProjets() {
+  const barre = document.createElement("div");
+  barre.className = "projets";
+
+  for (const projet of state.projets) {
+    const carte = document.createElement("button");
+    carte.type = "button";
+    carte.className = "projet-carte" + (projet.id === state.actif ? " actif" : "");
+
+    const vignette = document.createElement("span");
+    vignette.className = "projet-vignette";
+    // La première image disponible du montage sert de repère ; à défaut, une
+    // amorce de pellicule.
+    const image = projet.plans.find((plan) => plan.preview)?.preview;
+    if (image) vignette.style.backgroundImage = `url("${image}")`;
+    else vignette.innerHTML = icone("pellicule");
+
+    const texte = document.createElement("span");
+    texte.className = "projet-texte";
+    const nom = document.createElement("span");
+    nom.className = "projet-nom";
+    nom.textContent = projet.nom;
+    const sous = document.createElement("span");
+    sous.className = "projet-sous";
+    sous.textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""} · ${horloge(total(projet))}`;
+    texte.append(nom, sous);
+
+    carte.append(vignette, texte);
+    carte.addEventListener("click", () => {
+      state.actif = projet.id;
+      sauver();
+      rendreProjet();
+      rendre();
+    });
+    barre.append(carte);
+  }
+
+  const nouveau = document.createElement("button");
+  nouveau.type = "button";
+  nouveau.className = "projet-carte neuf";
+  nouveau.innerHTML = `<span class="projet-vignette">${icone("plus")}</span>` +
+    `<span class="projet-texte"><span class="projet-nom">Nouveau</span></span>`;
+  nouveau.addEventListener("click", () => { creerProjet(); rendreProjet(); rendre(); });
+  barre.append(nouveau);
+  return barre;
+}
+
+/* --- l'éditeur -------------------------------------------------------- */
+function editeur(projet) {
+  const bloc = document.createElement("div");
+  bloc.className = "editeur";
+
+  const ecran = document.createElement("div");
+  ecran.className = "ecran";
+  ecran.id = "ecran";
+
+  // Moniteur programme : c'est lui qu'on regarde, et il montre l'état de la
+  // séquence à l'instant de la tête de lecture. Les fichiers, eux, tournent
+  // derrière — un logiciel de montage ne montre pas un lecteur, il compose une
+  // image.
+  const moniteur = document.createElement("canvas");
+  moniteur.className = "moniteur";
+  moniteur.id = "moniteur";
+  moniteur.width = 1280;
+  moniteur.height = 720;
+
+  // Deux lecteurs qui alternent : pendant qu'un plan passe, le suivant est
+  // déjà chargé et placé au début. C'est ce qui supprime le trou noir au
+  // changement de plan.
+  const lecteurs = [creerLecteur("a"), creerLecteur("b")];
+
+  const vide = document.createElement("div");
+  vide.className = "ecran-vide";
+  vide.id = "ecran-vide";
+
+  ecran.append(moniteur, lecteurs[0], lecteurs[1], vide);
+  bloc.append(ecran, transport(), pisteComplete(projet));
+  lecture.actif = 0;
+  demarrerMoniteur();
+  return bloc;
+}
+
+function creerLecteur(nom) {
+  const video = document.createElement("video");
+  video.id = `lecteur-${nom}`;
+  video.className = "lecteur-cache";
+  video.playsInline = true;
+  video.preload = "auto";
+  // Surtout pas de crossOrigin : les sources n'envoient pas d'en-tête CORS, et
+  // le lecteur refuserait alors de charger le fichier. Dessiner une vidéo sans
+  // CORS dans une toile la « teinte » — on ne peut plus en relire les pixels —
+  // mais l'afficher reste permis, et c'est tout ce dont on a besoin.
+
+  video.addEventListener("ended", () => { if (video === elementActif()) planSuivant(); });
+  video.addEventListener("error", () => {
+    if (video !== elementActif()) return;
+    const plan = projetActif()?.plans[lecture.index];
+    const vide = $("ecran-vide");
+    if (!plan || !vide) return;
+    vide.textContent = `${plan.name} — fichier injoignable`;
+    vide.hidden = false;
+    if (lecture.jouant) planSuivant();
+  });
+
+  // Chaque étape du chargement est une occasion de reposer la position visée.
+  for (const signal of ["loadedmetadata", "loadeddata", "canplay", "canplaythrough", "playing", "timeupdate", "seeked"]) {
+    video.addEventListener(signal, () => appliquerCible(video));
+  }
+  video.addEventListener("seeked", () => {
+    rattraperPosition(video);
+    if (video === elementActif() && !lecture.jouant && video.readyState < 2) secouer(video);
+  });
+  video.addEventListener("play", () => {
+    // Une lecture demandée n'est jamais une secousse, même si l'une chevauche
+    // l'autre : sans cette exception, l'état restait à « arrêté » et la tête de
+    // lecture ne bougeait pas alors que la vidéo tournait.
+    if ((lecture.secousse && !lecture.demande) || video !== elementActif()) return;
+    lecture.jouant = true;
+    majTransport();
+    suivreTete();
+    demarrerSon();
+  });
+  video.addEventListener("pause", () => {
+    if ((lecture.secousse && !lecture.demande) || video !== elementActif()) return;
+    lecture.jouant = false;
+    majTransport();
+    arreterSon();
+  });
+  return video;
+}
+
+const elementActif = () => document.getElementById(`lecteur-${lecture.actif ? "b" : "a"}`);
+const elementAttente = () => document.getElementById(`lecteur-${lecture.actif ? "a" : "b"}`);
+
+// Le moniteur dessine, image par image, ce que la séquence doit montrer : la
+// vidéo du plan courant si elle a quelque chose à donner, sa vignette sinon.
+// Ainsi l'aperçu suit toujours la piste, même quand un fichier traîne.
+const vignettes = new Map();
+function vignetteDe(plan) {
+  if (!plan?.preview) return null;
+  let image = vignettes.get(plan.id);
+  if (!image) {
+    image = new Image();
+    image.src = plan.preview;
+    vignettes.set(plan.id, image);
+  }
+  return image.complete && image.naturalWidth ? image : null;
+}
+
+function demarrerMoniteur() {
+  if (lecture.moniteur) cancelAnimationFrame(lecture.moniteur);
+  const pas = () => {
+    dessinerMoniteur();
+    lecture.moniteur = requestAnimationFrame(pas);
+  };
+  lecture.moniteur = requestAnimationFrame(pas);
+}
+
+/* Chien de garde de l'aperçu.
+
+   Tout ce qui précède vise à ce que l'image corresponde à la tête de lecture,
+   mais un lecteur média peut échouer de façons qu'on ne prévoit pas : une
+   source qui ne se charge pas, un déplacement refusé, un enchaînement qui ne
+   bascule pas. Plutôt que d'afficher durablement une image qui ment, on
+   constate l'écart et on repose le plan.
+
+   Le contrôle ne vaut qu'à l'arrêt : pendant la lecture, la tête avance d'elle-
+   même et un léger décalage est normal. */
+const veille = { depuis: 0, dernier: 0 };
+
+function veillerCoherence(video, plan) {
+  const projet = projetActif();
+  if (!projet?.plans.length || lecture.demande || lecture.scrub || lecture.secousse) {
+    veille.depuis = 0;
+    return;
+  }
+  const cible = positionCible();
+  if (!cible || cible.plan.youtube) { veille.depuis = 0; return; }
+
+  const bonPlan = video?.dataset.plan === cible.plan.id;
+  const attendu = entreeDe(cible.plan) + cible.dans;
+  const bonneImage = video && video.readyState >= 1 && Math.abs(video.currentTime - attendu) <= 0.35;
+  // Un déplacement en cours ou une cible encore en route ne sont pas un écart.
+  const enRoute = video?.seeking || video?.dataset.vise !== undefined || lecture.cible;
+  if ((bonPlan && bonneImage) || enRoute) { veille.depuis = 0; return; }
+
+  const maintenant = performance.now();
+  if (!veille.depuis) { veille.depuis = maintenant; return; }
+  // Un écart qui dure est un défaut ; on le corrige, sans s'acharner.
+  if (maintenant - veille.depuis < 800 || maintenant - veille.dernier < 1500) return;
+  veille.depuis = 0;
+  veille.dernier = maintenant;
+  noter(`désaccord corrigé (plan ${bonPlan ? "bon" : "faux"})`, video);
+  poserPlan(cible.index, cible.dans);
+}
+
+function dessinerMoniteur() {
+  const toile = $("moniteur");
+  if (!toile) { if (lecture.moniteur) cancelAnimationFrame(lecture.moniteur); lecture.moniteur = null; return; }
+  const ctx = toile.getContext("2d");
+  const plan = projetActif()?.plans[lecture.index];
+  const video = elementActif();
+  // La position demandée est reprise ici, à chaque image : c'est ce qui garantit
+  // que l'image finit par correspondre au curseur, quoi qu'il arrive aux
+  // événements du lecteur.
+  rattraperPosition(video);
+  veillerCoherence(video, plan);
+
+  // Resynchronisation : si le fichier tourne réellement alors que
+  // l'application se croit à l'arrêt, la tête de lecture resterait figée. On
+  // rattrape l'écart au lieu d'attendre un événement qui ne viendra pas.
+  if (video) {
+    if (lecture.demande && !video.paused && !lecture.jouant) {
+      lecture.jouant = true;
+      suivreTete();
+    } else if (!lecture.demande && lecture.jouant) {
+      // Une secousse ou un enchaînement ne valent pas lecture : sans cette
+      // distinction, le bouton croyait qu'on jouait déjà et mettait en pause.
+      lecture.jouant = false;
+      majTransport();
+    }
+  }
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, toile.width, toile.height);
+
+  // Pendant un déplacement, l'état du lecteur retombe le temps de retrouver
+  // l'image. Retomber alors sur la vignette du plan donnerait une image fixe
+  // qui ne bouge plus : on garde la dernière image décodée à la place.
+  let source = null;
+  if (video && video.readyState >= 2 && video.videoWidth) {
+    source = video;
+    derniereImage.plan = plan?.id || null;
+  } else if (derniereImage.plan && derniereImage.plan === plan?.id && derniereImage.toile.width) {
+    source = derniereImage.toile;
+  } else {
+    source = vignetteDe(plan);
+  }
+  if (!source) return;
+
+  // Une toile n'a ni videoWidth ni naturalWidth : sans ce troisième recours, la
+  // dernière image décodée n'était jamais dessinée et le moniteur passait au
+  // noir à chaque déplacement, le temps que le lecteur retrouve sa position.
+  const largeur = source.videoWidth || source.naturalWidth || source.width;
+  const hauteur = source.videoHeight || source.naturalHeight || source.height;
+  if (!largeur || !hauteur) return;
+
+  // On respecte le format de la source, comme le ferait un moniteur.
+  const facteur = Math.min(toile.width / largeur, toile.height / hauteur);
+  const l = largeur * facteur;
+  const h = hauteur * facteur;
+  ctx.drawImage(source, (toile.width - l) / 2, (toile.height - h) / 2, l, h);
+
+  // On garde une copie de la dernière image réellement décodée, pour ne jamais
+  // avoir à remontrer la vignette pendant un déplacement.
+  // Recopiée au plus dix fois par seconde et en réduction : de quoi tenir
+  // l'affichage pendant un déplacement sans peser sur la lecture.
+  const maintenant = performance.now();
+  if (source === video && maintenant - derniereImage.quand > 100) {
+    derniereImage.quand = maintenant;
+    const largeurCopie = 640;
+    const hauteurCopie = Math.max(1, Math.round((largeurCopie * hauteur) / largeur));
+    if (derniereImage.toile.width !== largeurCopie || derniereImage.toile.height !== hauteurCopie) {
+      derniereImage.toile.width = largeurCopie;
+      derniereImage.toile.height = hauteurCopie;
+    }
+    derniereImage.toile.getContext("2d").drawImage(video, 0, 0, largeurCopie, hauteurCopie);
+  }
+}
+
+const derniereImage = { plan: null, quand: 0, toile: document.createElement("canvas") };
+
+/* --- pellicule ---------------------------------------------------------
+   La bande d'images d'un banc de montage montre ce qu'il y a sous le curseur,
+   à la densité du zoom : dézoomé, une vignette par plan suffit ; zoomé à fond,
+   on veut l'image par image.
+
+   Elle n'est donc pas dessinée « une fois pour tout le plan » — un plan d'une
+   minute zoomé mesure des dizaines de milliers de pixels, largeur qu'aucune
+   toile n'accepte, et l'ancienne version rendait un bloc noir. Seule la partie
+   visible est peinte, dans une toile de la taille de l'écran, et les images
+   sont demandées pour les instants réellement affichés.
+
+   Les images sont gardées sur une grille temporelle en puissances de deux :
+   en changeant de zoom on retombe sur les instants déjà capturés, ce qui évite
+   de tout recapturer à chaque pincement. */
+
+const bandes = new Map();
+const LARGEUR_IMAGETTE = 64;
+const MARGE_BANDE = 260;        // on peint un peu au-delà de l'écran
+const IMAGETTES_MAX = 600;      // au-delà, on oublie les plus anciennes
+
+function bandeDe(plan) {
+  let bande = bandes.get(plan.id);
+  if (!bande) {
+    // « couverture » : la dernière image d'entrée obtenue pour ce plan. Elle sert
+    // de secours pendant qu'on tire une poignée, le temps que l'image du nouveau
+    // point d'entrée soit capturée.
+    bande = { images: new Map(), demandes: new Map(), epuise: false, ordre: [], couverture: null };
+    bandes.set(plan.id, bande);
+  }
+  return bande;
+}
+
+// Pas de la grille : une image tous les 96 px environ, arrondi à la puissance
+// de deux la plus proche, et jamais plus fin qu'une image de la source.
+function pasGrille() {
+  const brut = LARGEUR_IMAGETTE / Math.max(0.001, lecture.echelle);
+  const puissance = Math.pow(2, Math.round(Math.log2(Math.max(IMAGE, brut))));
+  return Math.max(IMAGE, puissance);
+}
+
+const cle = (pas, index) => `${pas.toFixed(4)}:${index}`;
+// La première image d'un bloc n'est pas prise sur la grille : elle doit tomber
+// pile sur le point d'entrée, sinon la couverture d'un plan rogné montre encore
+// une image d'avant la coupe.
+const cleExacte = (temps) => `exact:${temps.toFixed(3)}`;
+
+// Image la plus proche disponible : la grille demandée d'abord, puis les
+// grilles plus grossières — mieux vaut une image approchante que du noir.
+function imagetteProche(bande, temps, pas) {
+  for (let echelon = pas, tours = 0; tours < 9; echelon *= 2, tours += 1) {
+    const trouve = bande.images.get(cle(echelon, Math.round(temps / echelon)));
+    if (trouve) return trouve;
+  }
+  return null;
+}
+
+// Comme imagetteProche, mais elle refuse une image trop éloignée de l'instant
+// demandé : mieux vaut ne rien montrer qu'une image qui ment.
+function imagetteAssezProche(bande, temps, pas, tolerance) {
+  for (let echelon = pas, tours = 0; tours < 9; echelon *= 2, tours += 1) {
+    const index = Math.round(temps / echelon);
+    if (Math.abs(index * echelon - temps) > tolerance) continue;
+    const trouve = bande.images.get(cle(echelon, index));
+    if (trouve) return trouve;
+  }
+  return null;
+}
+
+function demanderImagette(plan, temps, pas, exact = false) {
+  const bande = bandeDe(plan);
+  const identifiant = exact ? cleExacte(temps) : cle(pas, Math.round(temps / pas));
+  const instant = exact ? temps : Math.round(temps / pas) * pas;
+  if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) return;
+  if (plan.youtube || !plan.video || !plan.duree) return;
+  // Une copie locale est en route : on l'attend plutôt que de retélécharger le
+  // même fichier pour en tirer des imagettes. Sur un téléphone en 4G, ce serait
+  // payer deux fois la même vidéo — et l'attente est courte.
+  if (!estLocal(plan) && importPrevu(plan)) return;
+  bande.demandes.set(identifiant, instant);
+  attenteImagettes.push({ plan, temps: instant, identifiant });
+  servirImagettes();
+}
+
+/* Une seule sonde, gardée en vie entre deux demandes : sur un fichier importé
+   sur l'appareil, se déplacer dedans est immédiat, alors que recharger la
+   source à chaque image coûterait tout. */
+const attenteImagettes = [];
+let sondeBande = null;
+let sondeOccupee = false;
+
+function creerSondeBande() {
+  const sonde = document.createElement("video");
+  sonde.muted = true;
+  sonde.playsInline = true;
+  sonde.preload = "auto";
+  sonde.setAttribute("muted", "");
+  sonde.setAttribute("playsinline", "");
+  // Attachée au document, et pas en display:none : Safari sur iPhone ne décode
+  // pas une vidéo détachée ou masquée, et une toile ne peut alors rien en tirer.
+  // Un pixel transparent dans un coin suffit à la rendre légitime.
+  sonde.style.cssText =
+    "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1";
+  document.body.append(sonde);
+  return sonde;
+}
+
+// Sur iPhone, un lecteur qui n'a jamais joué ne charge rien — « preload » est
+// ignoré en réseau mobile. Une lecture muette et en ligne est autorisée sans
+// geste : on la lance puis on la coupe aussitôt, uniquement pour décider le
+// lecteur à décoder une image. C'est ce qui manquait pour que la pellicule
+// produise quoi que ce soit sur un téléphone.
+function reveillerSonde(sonde) {
+  if (sonde.dataset.reveille === "1" || sonde.readyState >= 2) return;
+  const essai = sonde.play();
+  if (!essai) return;
+  sonde.dataset.reveille = "1";
+  essai.then(() => sonde.pause()).catch(() => { delete sonde.dataset.reveille; });
+}
+
+const pellicule = { prises: 0, ratees: 0, dernier: "" };
+
+function servirImagettes() {
+  if (sondeOccupee) return;
+  const demande = attenteImagettes.pop();   // le plus récemment demandé d'abord
+  if (!demande) return;
+  const { plan, temps, identifiant } = demande;
+  const bande = bandeDe(plan);
+  if (bande.images.has(identifiant)) { bande.demandes.delete(identifiant); return servirImagettes(); }
+  sondeOccupee = true;
+
+  if (!sondeBande) sondeBande = creerSondeBande();
+  const sonde = sondeBande;
+  const source = sourceDe(plan);
+  const exact = identifiant.startsWith("exact:");
+
+  let fini = false;
+  // Déclarée avant « finir » : une capture qui réussit du premier coup termine
+  // avant la fin de cette fonction, et voudrait déjà arrêter la relance.
+  let relance = null;
+  const finir = (image, pourquoi) => {
+    if (fini) return;
+    fini = true;
+    clearTimeout(abandon);
+    if (relance) clearInterval(relance);
+    sonde.removeEventListener("seeked", capter);
+    sonde.removeEventListener("loadeddata", capter);
+    sonde.removeEventListener("canplay", capter);
+    sonde.removeEventListener("error", rater);
+    bande.demandes.delete(identifiant);
+    if (image) {
+      pellicule.prises += 1;
+      bande.images.set(identifiant, image);
+      if (exact) bande.couverture = { temps, image };
+      bande.ordre.push(identifiant);
+      // Mémoire bornée : au-delà du plafond, les plus anciennes images sortent.
+      while (bande.ordre.length > IMAGETTES_MAX) bande.images.delete(bande.ordre.shift());
+      redessinerBandes();
+    } else {
+      pellicule.ratees += 1;
+      pellicule.dernier = `${pourquoi || "échec"} à ${temps.toFixed(2)} s` +
+        ` (état ${sonde.readyState}/4${sonde.error ? `, erreur ${sonde.error.code}` : ""})`;
+    }
+    sondeOccupee = false;
+    setTimeout(servirImagettes, 0);
+  };
+
+  const capter = () => {
+    if (sonde.readyState < 2 || !sonde.videoWidth) { reveillerSonde(sonde); return; }
+    // Une image d'entrée doit tomber juste ; ailleurs, quelques centièmes
+    // d'écart ne se voient pas.
+    if (Math.abs(sonde.currentTime - temps) > (exact ? 0.12 : 0.35)) return;
+    const toile = document.createElement("canvas");
+    toile.width = 160;
+    toile.height = Math.round((160 * sonde.videoHeight) / sonde.videoWidth) || 90;
+    try {
+      toile.getContext("2d").drawImage(sonde, 0, 0, toile.width, toile.height);
+    } catch {
+      return finir(null, "toile refusée");
+    }
+    finir(toile);
+  };
+  const rater = () => finir(null, "lecteur en erreur");
+  const abandon = setTimeout(() => finir(null, "délai dépassé"), 8000);
+
+  sonde.addEventListener("seeked", capter);
+  sonde.addEventListener("loadeddata", capter);
+  sonde.addEventListener("canplay", capter);
+  sonde.addEventListener("error", rater);
+
+  const viser = () => {
+    if (sonde.readyState < 1) { reveillerSonde(sonde); return; }
+    if (Math.abs(sonde.currentTime - temps) < 0.001) capter();
+    else sonde.currentTime = Math.min(temps, sonde.duration || temps);
+  };
+
+  if (sonde.dataset.source !== source) {
+    sonde.dataset.source = source;
+    delete sonde.dataset.reveille;
+    sonde.src = source;
+    sonde.load();
+    sonde.addEventListener("loadedmetadata", viser, { once: true });
+  }
+  reveillerSonde(sonde);
+  viser();
+  // Une consigne posée trop tôt est ignorée en silence : on la repose tant que
+  // le lecteur n'a pas suivi. Sans cela, une sonde restée à zéro bloquait toute
+  // la file jusqu'au délai, puis la suivante repartait dans le même mur.
+  if (!fini) relance = setInterval(viser, 400);
+}
+
+// Les demandes en attente ne valent que pour ce qui est à l'écran : au
+// pincement suivant, elles ne servent plus à rien.
+function viderAttenteImagettes() {
+  for (const { plan, identifiant } of attenteImagettes) bandeDe(plan).demandes.delete(identifiant);
+  attenteImagettes.length = 0;
+}
+
+function ordonnancerBandes() {
+  redessinerBandes();
+}
+
+/* Peint la partie visible de chaque bloc. Chaque colonne de 96 px porte
+   l'image de l'instant qu'elle occupe : plus on zoome, plus les colonnes
+   couvrent un temps court, donc plus on voit d'images. */
+function redessinerBandes() {
+  const projet = projetActif();
+  const rail = $("rail");
+  const cadre = $("piste");
+  if (!projet || !rail || !cadre || $("vue-projet")?.hidden) return;
+
+  const gaucheVue = cadre.scrollLeft - MARGE_BANDE;
+  const droiteVue = cadre.scrollLeft + cadre.clientWidth + MARGE_BANDE;
+  const pas = pasGrille();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  let x = 0;
+
+  [...rail.children].forEach((bloc, index) => {
+    const plan = projet.plans[index];
+    const toile = bloc.querySelector("canvas.bande");
+    const large = largeurClip(plan);
+    if (!plan || !toile) { x += large; return; }
+
+    const gauche = Math.max(x, gaucheVue);
+    const droite = Math.min(x + large, droiteVue);
+    if (droite - gauche < 1) {
+      toile.hidden = true;
+      x += large;
+      return;
+    }
+    toile.hidden = false;
+    toile.style.left = `${gauche - x}px`;
+    toile.style.width = `${droite - gauche}px`;
+
+    const largeurPx = Math.max(1, Math.round((droite - gauche) * dpr));
+    const hauteurPx = Math.max(1, Math.round(bloc.clientHeight * dpr));
+    if (toile.width !== largeurPx || toile.height !== hauteurPx) {
+      toile.width = largeurPx;
+      toile.height = hauteurPx;
+    }
+    const ctx = toile.getContext("2d");
+    ctx.clearRect(0, 0, largeurPx, hauteurPx);
+
+    const colonnes = Math.max(1, Math.round((droite - gauche) / LARGEUR_IMAGETTE));
+    const largeurColonne = largeurPx / colonnes;
+    const bande = bandeDe(plan);
+    const entree = entreeDe(plan);
+
+    for (let colonne = 0; colonne < colonnes; colonne += 1) {
+      // Chaque colonne montre l'image de son bord gauche, pas de son milieu :
+      // la pellicule se lit alors comme une règle, et la première colonne porte
+      // exactement l'image sur laquelle le plan commence.
+      const bord = gauche + (colonne / colonnes) * (droite - gauche);
+      const temps = Math.min(
+        sortieDe(plan) - IMAGE,
+        Math.max(entree, entree + (bord - x) / lecture.echelle),
+      );
+      // Vrai seulement quand le début du bloc est à l'écran : ailleurs, la
+      // première colonne visible n'est pas le début du plan.
+      const couverture = colonne === 0 && Math.abs(gauche - x) < 0.5;
+      let image;
+      if (couverture) {
+        // L'image d'entrée ne se contente pas d'une approximation : dézoomé, le
+        // pas de la grille vaut plusieurs secondes, et l'image la plus proche
+        // était celle du début du fichier — la couverture ne bougeait donc pas
+        // d'un poil quand on rognait. On prend l'image exacte, à défaut la
+        // dernière image d'entrée connue de ce plan, et en dernier recours une
+        // image de la grille seulement si elle tombe assez près.
+        const tolerance = Math.max(IMAGE, (largeurColonne / dpr) / lecture.echelle / 2);
+        image = bande.images.get(cleExacte(temps))
+          || bande.couverture?.image
+          || imagetteAssezProche(bande, temps, pas, tolerance);
+        const instant = bande.images.has(cleExacte(temps)) ? temps : bande.couverture?.temps;
+        if (instant !== undefined) {
+          // La vignette de fond montre le début du fichier, avant coupe : dès
+          // qu'on a une vraie image d'entrée, elle s'efface, sinon les deux se
+          // contredisent.
+          if (bloc.style.backgroundImage !== "none") bloc.style.backgroundImage = "none";
+          bloc.dataset.couverture = instant.toFixed(2);
+        }
+      } else {
+        image = imagetteProche(bande, temps, pas);
+      }
+      if (image) {
+        const facteur = Math.max(largeurColonne / image.width, hauteurPx / image.height);
+        const l = image.width * facteur;
+        const h = image.height * facteur;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(colonne * largeurColonne, 0, largeurColonne, hauteurPx);
+        ctx.clip();
+        ctx.drawImage(image, colonne * largeurColonne + (largeurColonne - l) / 2, (hauteurPx - h) / 2, l, h);
+        ctx.restore();
+      }
+      demanderImagette(plan, temps, pas, couverture);
+    }
+    x += large;
+  });
+}
+
+// Prépare un plan sur le lecteur en attente : chargé, placé au début, prêt à
+// prendre la main sans temps mort.
+function preparerSuivant(index) {
+  const plan = projetActif()?.plans[index];
+  const attente = elementAttente();
+  if (!plan || !attente || plan.youtube || !plan.video) return;
+  const source = sourceDe(plan);
+  if (attente.dataset.plan === plan.id && attente.dataset.source === source) return;
+  attente.dataset.plan = plan.id;
+  attente.dataset.source = source;
+  attente.muted = true;
+  attente.src = source;
+  attente.load();
+}
+
+// Plein écran à gauche, lecture au centre, annuler et rétablir à droite.
+function transport() {
+  const barre = document.createElement("div");
+  barre.className = "transport";
+
+  const rond = (nom, titre, action, id) => {
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.className = "rond";
+    bouton.innerHTML = icone(nom);
+    bouton.title = titre;
+    bouton.setAttribute("aria-label", titre);
+    if (id) bouton.id = id;
+    bouton.addEventListener("click", action);
+    return bouton;
+  };
+
+  const gauche = document.createElement("span");
+  gauche.className = "transport-cote";
+  gauche.append(rond("plein", "Plein écran", pleinEcran));
+
+  const jouer = document.createElement("button");
+  jouer.type = "button";
+  jouer.id = "lecture";
+  jouer.className = "lecture";
+  jouer.innerHTML = icone("play");
+  jouer.title = "Lecture / pause";
+  jouer.setAttribute("aria-label", "Lecture ou pause");
+  jouer.addEventListener("click", basculerLecture);
+
+  const droite = document.createElement("span");
+  droite.className = "transport-cote fin";
+  droite.append(
+    rond("annuler", "Annuler la dernière modification", () => parcourirHistoire(-1), "btn-annuler"),
+    rond("retablir", "Rétablir la modification annulée", () => parcourirHistoire(1), "btn-retablir"),
+  );
+
+  barre.append(gauche, jouer, droite);
+  return barre;
+}
+
+// Safari sur iPhone n'expose pas requestFullscreen sur un élément quelconque.
+// On tente le standard, puis la variante webkit, et à défaut on agrandit
+// l'écran en CSS — un repli qui marche partout.
+function pleinEcran() {
+  const ecran = $("ecran");
+  if (!ecran) return;
+
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    return;
+  }
+  if (document.body.classList.contains("ecran-plein")) return quitterPleinEcranCss();
+
+  const demande = ecran.requestFullscreen?.bind(ecran) || ecran.webkitRequestFullscreen?.bind(ecran);
+  if (demande) {
+    Promise.resolve(demande()).catch(entrerPleinEcranCss);
+    return;
+  }
+  entrerPleinEcranCss();
+}
+
+function entrerPleinEcranCss() {
+  document.body.classList.add("ecran-plein");
+  if (!$("sortie-plein")) {
+    const sortie = document.createElement("button");
+    sortie.id = "sortie-plein";
+    sortie.type = "button";
+    sortie.className = "sortie-plein";
+    sortie.innerHTML = icone("retirer");
+    sortie.title = "Quitter le plein écran";
+    sortie.setAttribute("aria-label", "Quitter le plein écran");
+    sortie.addEventListener("click", quitterPleinEcranCss);
+    $("ecran").append(sortie);
+  }
+  poserTransportPlein();
+}
+
+function quitterPleinEcranCss() {
+  document.body.classList.remove("ecran-plein");
+  $("sortie-plein")?.remove();
+  retirerTransportPlein();
+}
+
+// Le plein écran natif (ordinateur) mérite les mêmes contrôles que le repli CSS.
+for (const nom of ["fullscreenchange", "webkitfullscreenchange"]) {
+  document.addEventListener(nom, () => {
+    if (document.fullscreenElement || document.webkitFullscreenElement) poserTransportPlein();
+    else retirerTransportPlein();
+  });
+}
+
+/* Transport du plein écran : lecture, retour au début, et le timecode. Sans
+   lui, il fallait sortir du plein écran pour mettre en pause. */
+let effacementPlein = null;
+
+function poserTransportPlein() {
+  const ecran = $("ecran");
+  if (!ecran || $("plein-transport")) return;
+
+  const barre = document.createElement("div");
+  barre.className = "plein-transport";
+  barre.id = "plein-transport";
+
+  const bouton = (nom, titre, action, classe = "") => {
+    const element = document.createElement("button");
+    element.type = "button";
+    if (classe) element.className = classe;
+    element.innerHTML = icone(nom);
+    element.title = titre;
+    element.setAttribute("aria-label", titre);
+    element.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      action();
+      reveillerTransportPlein();
+    });
+    return element;
+  };
+
+  const jouer = bouton("play", "Lecture ou pause", basculerLecture, "lecture");
+  jouer.id = "plein-lecture";
+
+  const code = document.createElement("span");
+  code.className = "plein-timecode";
+  code.id = "plein-timecode";
+
+  barre.append(
+    bouton("stop", "Revenir au début et arrêter", () => { arreter(); allerA(0); }),
+    jouer,
+    code,
+  );
+  ecran.append(barre);
+
+  // Un contact sur l'image rappelle les contrôles ; ils s'effacent ensuite.
+  ecran.addEventListener("pointerdown", reveillerTransportPlein);
+  reveillerTransportPlein();
+  majTransport();
+}
+
+function retirerTransportPlein() {
+  clearTimeout(effacementPlein);
+  effacementPlein = null;
+  $("ecran")?.removeEventListener("pointerdown", reveillerTransportPlein);
+  $("plein-transport")?.remove();
+}
+
+function reveillerTransportPlein() {
+  const barre = $("plein-transport");
+  if (!barre) return;
+  barre.classList.remove("efface");
+  clearTimeout(effacementPlein);
+  // Jamais pendant une pause : on laisse les contrôles sous la main.
+  effacementPlein = setTimeout(() => {
+    if (lecture.demande) barre.classList.add("efface");
+  }, 3000);
+}
+
+document.addEventListener("keydown", (evt) => {
+  if (evt.key === "Escape") quitterPleinEcranCss();
+});
+
+/* --- la piste --------------------------------------------------------- */
+function pisteComplete(projet) {
+  const enveloppe = document.createElement("div");
+  enveloppe.className = "piste-enveloppe";
+
+  const cadre = document.createElement("div");
+  cadre.className = "piste";
+  cadre.id = "piste";
+
+  const duree_totale = total(projet);
+  const ligne = document.createElement("div");
+  ligne.className = "ligne";
+  ligne.id = "ligne";
+  ligne.style.width = `${Math.max(60, xDeSeconde(duree_totale))}px`;
+
+  const regle = document.createElement("div");
+  regle.className = "regle";
+  regle.id = "regle";
+  const pas = PAS_REGLE.find((valeur) => xDeSeconde(valeur) >= 62) || PAS_REGLE[PAS_REGLE.length - 1];
+  for (let seconde = 0; seconde <= duree_totale + 0.001; seconde += pas) {
+    const repere = document.createElement("span");
+    repere.className = "repere";
+    repere.style.left = `${xDeSeconde(seconde)}px`;
+    repere.textContent = horloge(seconde, pas < 0.1 ? 2 : pas < 1 ? 1 : 0);
+    regle.append(repere);
+  }
+
+  const rail = document.createElement("div");
+  rail.className = "rail";
+  rail.id = "rail";
+  projet.plans.forEach((plan, index) => rail.append(blocPlan(projet, plan, index)));
+
+  const bande = document.createElement("div");
+  bande.className = "bande-son";
+  bande.id = "bande-son";
+  if (projet.audio) {
+    const bloc = document.createElement("div");
+    bloc.className = "son-bloc" + (lecture.audio ? "" : " absent");
+    bloc.style.width = `${Math.max(40, xDeSeconde(projet.audio.duree || duree_totale))}px`;
+    bloc.innerHTML = `${icone("son")}<span></span>`;
+    bloc.querySelector("span").textContent = lecture.audio
+      ? projet.audio.nom
+      : `${projet.audio.nom} — à rouvrir`;
+    bande.append(bloc);
+  }
+
+  const tete = document.createElement("div");
+  tete.className = "tete";
+  tete.id = "tete";
+  tete.innerHTML = '<span class="tete-poignee"></span>';
+
+  ligne.append(regle, rail, bande, tete);
+  cadre.append(ligne);
+
+  brancherScrub(regle);
+  brancherScrub(tete.querySelector(".tete-poignee"));
+  brancherPincement(cadre);
+
+  const ajouter = document.createElement("button");
+  ajouter.type = "button";
+  ajouter.className = "ajout-flottant";
+  ajouter.innerHTML = icone("plus");
+  ajouter.title = "Ajouter un plan depuis l'explorateur";
+  ajouter.setAttribute("aria-label", "Ajouter un plan");
+  ajouter.addEventListener("click", () => document.querySelector('[data-tab="explorer"]').click());
+
+  enveloppe.append(entetePiste(projet), cadre, boutonSon(projet), ajouter);
+  return enveloppe;
+}
+
+// Timecode à gauche, sur la ligne des graduations, comme sur un banc de montage.
+function entetePiste(projet) {
+  const entete = document.createElement("div");
+  entete.className = "piste-entete";
+  const code = document.createElement("span");
+  code.className = "timecode";
+  code.id = "timecode";
+  code.textContent = `${horloge(0, true)} / ${horloge(total(projet))}`;
+  const bilan = document.createElement("span");
+  bilan.className = "piste-bilan";
+  bilan.id = "zoom-total";
+  bilan.textContent = bilanProjet(projet);
+  entete.append(code, bilan);
+  return entete;
+}
+
+function bilanProjet(projet) {
+  const bilan = totaux(projet);
+  const manquantes = projet.plans.length - bilan.mesures;
+  // La version est affichée ici en clair : trop de doutes sur « est-ce bien la
+  // dernière ? » se sont réglés en la cherchant dans un onglet.
+  const importes = projet.plans.filter((plan) => estLocal(plan) || plan.youtube).length;
+  const reste = projet.plans.length - importes;
+  return (
+    `${projet.plans.length} plans · ${bilan.mb.toFixed(0)} Mo` +
+    (reste ? ` · ${reste} à importer` : " · tous importés") +
+    (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "") +
+    ` · v${VERSION_PAGE.slice(-5)}`
+  );
+}
+
+function blocPlan(projet, plan, index) {
+  const clip = document.createElement("div");
+  clip.className = "clip";
+  clip.dataset.index = String(index);
+  clip.style.width = `${largeurClip(plan)}px`;
+  // La vignette de la source ne sert que tant qu'on n'a pas l'image d'entrée du
+  // plan : la reposer à chaque reconstruction la ferait réapparaître par-dessus.
+  if (plan.preview && !bandeDe(plan).couverture) clip.style.backgroundImage = `url("${plan.preview}")`;
+  if (plan.youtube) clip.classList.add("hors-lecture");
+  if (estLocal(plan)) clip.classList.add("local");
+
+  const pellicule = document.createElement("canvas");
+  pellicule.className = "bande";
+
+  const etiquette = document.createElement("span");
+  etiquette.className = "clip-nom";
+  etiquette.textContent = plan.name;
+  const chiffre = document.createElement("span");
+  chiffre.className = "clip-duree";
+  chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${duree(plan).toFixed(1)}s` : "…";
+  clip.append(pellicule, etiquette, chiffre);
+
+  brancherGlisse(clip, projet, index);
+
+  // Les poignées ne s'affichent que sur le plan sélectionné : sur une piste
+  // dense, deux poignées par bloc rendraient la piste illisible.
+  if (!plan.youtube) {
+    for (const cote of ["gauche", "droite"]) {
+      const poignee = document.createElement("span");
+      poignee.className = `poignee ${cote}`;
+      clip.append(poignee);
+      brancherRognage(poignee, projet, index, cote);
+    }
+  }
+  if (rogne(plan)) clip.classList.add("rogne");
+  return clip;
+}
+
+/* --- rogner un plan par ses bords -------------------------------------
+   Le geste de base d'un banc de montage : on tire le bord du bloc, la tête se
+   pose sur la nouvelle borne, et le moniteur montre l'image exacte où le plan
+   commencera ou finira. */
+function brancherRognage(poignee, projet, index, cote) {
+  poignee.addEventListener("pointerdown", (evt) => {
+    if (evt.button || !state.reordre) return;
+    // Sans cela, le bloc partirait en réordonnancement au lieu de se rogner.
+    evt.stopPropagation();
+    evt.preventDefault();
+    deverrouiller();
+    arreter();
+
+    const plan = projet.plans[index];
+    const depart = evt.clientX;
+    debutGeste();
+    const entree0 = entreeDe(plan);
+    const sortie0 = sortieDe(plan);
+    let demande = null;
+
+    const appliquer = () => {
+      demande = null;
+      // La pellicule n'est pas vidée : ses images sont rangées par instant dans
+      // le fichier source, donc rogner n'en périme aucune. Les jeter ferait
+      // clignoter le bloc en noir à chaque mouvement de la poignée.
+      redessinerPiste();
+      const debut = offsets(projet.plans)[index] || 0;
+      // La tête colle à la borne qu'on déplace : c'est elle qu'on veut voir.
+      allerA(cote === "gauche" ? debut : debut + duree(plan) - IMAGE);
+      selectionner(index);
+    };
+
+    const bouger = (autre) => {
+      const delta = (autre.clientX - depart) / lecture.echelle;
+      if (cote === "gauche") {
+        plan.entree = Math.max(0, Math.min(entree0 + delta, sortie0 - PLAN_MINI));
+      } else {
+        plan.sortie = Math.min(dureeSource(plan), Math.max(sortie0 + delta, entree0 + PLAN_MINI));
+      }
+      // Une seule refonte de la piste par image : le geste doit rester fluide
+      // même sur un projet chargé.
+      if (!demande) demande = requestAnimationFrame(appliquer);
+    };
+
+    const finir = () => {
+      finGeste();
+      window.removeEventListener("pointermove", bouger);
+      window.removeEventListener("pointerup", finir);
+      window.removeEventListener("pointercancel", finir);
+      if (demande) cancelAnimationFrame(demande);
+      appliquer();
+      sauver();
+      enregistrer(projet);
+    };
+
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", finir);
+    window.addEventListener("pointercancel", finir);
+  });
+}
+
+// Coupe le plan sous la tête de lecture en deux, comme un coup de ciseaux : la
+// partie gauche s'arrête là, la partie droite reprend exactement au même point.
+function couperAuCurseur() {
+  const projet = projetActif();
+  if (!projet?.plans.length) return;
+  const debuts = offsets(projet.plans);
+  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
+  if (index < 0) index = projet.plans.length - 1;
+
+  const plan = projet.plans[index];
+  const dans = lecture.position - debuts[index];
+  // Couper au ras d'un bord ne produirait qu'une miette : on le dit plutôt que
+  // de laisser croire que le bouton ne répond pas.
+  if (plan.youtube || dans < PLAN_MINI || dans > duree(plan) - PLAN_MINI) {
+    const etiquette = $("plan-courant");
+    if (etiquette) {
+      etiquette.textContent = "Pose la tête dans le plan pour le couper";
+      setTimeout(() => selectionner(lecture.index), 1800);
+    }
+    return;
+  }
+
+  const point = entreeDe(plan) + dans;
+  const suite = {
+    ...plan,
+    id: `${idRush(plan)}#${Date.now().toString(36)}`,
+    rush: idRush(plan),
+    entree: point,
+    sortie: sortieDe(plan),
+  };
+  plan.sortie = point;
+  projet.plans.splice(index + 1, 0, suite);
+
+  sauver();
+  enregistrer(projet);
+  redessinerPiste();
+  selectionner(index);
+  majTransport();
+}
+
+/* --- déplacer la tête de lecture au doigt ----------------------------- */
+/* Poser le doigt n'importe où dans la piste amène la tête de lecture à cet
+   endroit, et elle suit le doigt ensuite : c'est le geste attendu, et il évite
+   de devoir viser la règle. Quand le doigt atteint un bord de la fenêtre, la
+   piste défile toute seule — sans ça, à fort zoom, on ne pourrait pas dépasser
+   ce qui est visible. */
+function brancherScrub(element) {
+  element.addEventListener("pointerdown", demarrerScrub);
+}
+
+function demarrerScrub(evt) {
+    evt.preventDefault();
+    deverrouiller();
+    const ligne = $("ligne");
+    const cadre = $("piste");
+    if (!ligne) return;
+    const viser = (x) => allerA(Math.max(0, x - ligne.getBoundingClientRect().left) / lecture.echelle);
+    lecture.scrub = true;
+    debutGeste();
+    viser(evt.clientX);
+
+    // Défilement au bord, entretenu tant que le doigt y reste.
+    let dernierX = evt.clientX;
+    let glissade = null;
+    const entretenir = () => {
+      glissade = null;
+      if (!cadre) return;
+      const boite = cadre.getBoundingClientRect();
+      const marge = 44;
+      const sortie = dernierX > boite.right - marge
+        ? dernierX - (boite.right - marge)
+        : dernierX < boite.left + marge ? dernierX - (boite.left + marge) : 0;
+      if (!sortie) return;
+      const avant = cadre.scrollLeft;
+      cadre.scrollLeft = Math.max(0, avant + Math.max(-24, Math.min(24, sortie / 3)));
+      if (cadre.scrollLeft !== avant) viser(dernierX);
+      glissade = requestAnimationFrame(entretenir);
+    };
+
+    const bouger = (autre) => {
+      dernierX = autre.clientX;
+      viser(dernierX);
+      if (!glissade) glissade = requestAnimationFrame(entretenir);
+    };
+    const finir = () => {
+      lecture.scrub = false;
+      if (glissade) cancelAnimationFrame(glissade);
+      finGeste();
+      window.removeEventListener("pointermove", bouger);
+      window.removeEventListener("pointerup", finir);
+      window.removeEventListener("pointercancel", finir);
+    };
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", finir);
+    window.addEventListener("pointercancel", finir);
+}
+
+/* --- déplacer un plan, réordonné en direct ---------------------------- */
+function brancherGlisse(clip, projet, index) {
+  clip.draggable = false;
+  clip.addEventListener("dragstart", (evt) => evt.preventDefault());
+  clip.addEventListener("pointerdown", (evt) => {
+    if (evt.button) return;
+    // Hors mode déplacement, un bloc est une portion de la piste comme une
+    // autre : le doigt y amène la tête de lecture et elle le suit.
+    if (!state.reordre) {
+      selectionner(index);
+      demarrerScrub(evt);
+      return;
+    }
+    // En mode déplacement, le geste est à nous : on empêche le navigateur de
+    // lancer le sien, faute de quoi il annule le nôtre en cours de route.
+    evt.preventDefault();
+    const depart = evt.clientX;
+    let position = index;
+    let actif = false;
+    debutGeste();
+
+    const bouger = (autre) => {
+      if (!actif && Math.abs(autre.clientX - depart) < 6) return;
+      if (!actif) {
+        actif = true;
+        clip.classList.add("saisi");
+      }
+      // Le plan se pose là où est le doigt, pas selon le milieu d'un voisin :
+      // viser un milieu au pixel près ne marchait qu'un sens sur deux, parce
+      // qu'un geste qui s'arrête pile sur la limite ne la franchit pas.
+      const rail = $("rail");
+      if (!rail) return;
+      const blocs = [...rail.children];
+      const dedans = blocs.findIndex((bloc) => {
+        const rect = bloc.getBoundingClientRect();
+        return autre.clientX >= rect.left && autre.clientX <= rect.right;
+      });
+      const premier = blocs[0].getBoundingClientRect();
+      const vise = dedans !== -1
+        ? dedans
+        : autre.clientX < premier.left ? 0 : blocs.length - 1;
+      if (vise !== position && vise >= 0) {
+        const [plan] = projet.plans.splice(position, 1);
+        projet.plans.splice(vise, 0, plan);
+        position = vise;
+        lecture.index = vise;
+        redessinerPiste();
+        $("rail")?.children[vise]?.classList.add("saisi");
+      }
+    };
+
+    const finir = () => {
+      finGeste();
+      window.removeEventListener("pointermove", bouger);
+      window.removeEventListener("pointerup", finir);
+      window.removeEventListener("pointercancel", finir);
+      $("rail")?.querySelector(".saisi")?.classList.remove("saisi");
+      if (actif) {
+        sauver();
+        enregistrer(projet);
+      } else {
+        selectionner(position);
+        allerA(offsets(projet.plans)[position]);
+      }
+    };
+
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", finir);
+    window.addEventListener("pointercancel", finir);
+  });
+}
+
+/* --- pincement à deux doigts ------------------------------------------ */
+function brancherPincement(cadre) {
+  let base = null;
+  const ecart = (touches) =>
+    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+
+  cadre.addEventListener("touchstart", (evt) => {
+    if (evt.touches.length === 2) base = { ecart: ecart(evt.touches), echelle: lecture.echelle };
+  }, { passive: true });
+
+  cadre.addEventListener("touchmove", (evt) => {
+    if (evt.touches.length !== 2 || !base) return;
+    evt.preventDefault();
+    const milieu = (evt.touches[0].clientX + evt.touches[1].clientX) / 2;
+    appliquerEchelle(base.echelle * (ecart(evt.touches) / base.ecart), milieu);
+  }, { passive: false });
+
+  cadre.addEventListener("touchend", () => { base = null; });
+
+  // À la souris, l'équivalent habituel : Ctrl + molette.
+  cadre.addEventListener("wheel", (evt) => {
+    if (!evt.ctrlKey) return;
+    evt.preventDefault();
+    appliquerEchelle(lecture.echelle * (evt.deltaY < 0 ? 1.12 : 0.89), evt.clientX);
+  }, { passive: false });
+
+  // La pellicule ne peint que le visible : elle se refait au défilement.
+  let prevu = false;
+  cadre.addEventListener("scroll", () => {
+    if (prevu) return;
+    prevu = true;
+    requestAnimationFrame(() => { prevu = false; redessinerBandes(); });
+  }, { passive: true });
+}
+
+/* --- bande son -------------------------------------------------------- */
+function boutonSon(projet) {
+  const barre = document.createElement("div");
+  barre.className = "son-barre";
+
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.className = "son-ajout";
+  bouton.innerHTML = `${icone("son")}<span></span>`;
+  bouton.querySelector("span").textContent = projet.audio
+    ? (lecture.audio ? "Remplacer la musique" : "Rouvrir le fichier")
+    : "Ajouter une musique ou un SFX";
+
+  const champ = document.createElement("input");
+  champ.type = "file";
+  champ.accept = "audio/*";
+  champ.hidden = true;
+  champ.addEventListener("change", () => {
+    const fichier = champ.files?.[0];
+    if (fichier) chargerSon(projet, fichier);
+  });
+  bouton.addEventListener("click", () => champ.click());
+  barre.append(bouton, champ);
+
+  if (projet.audio) {
+    const retirer = document.createElement("button");
+    retirer.type = "button";
+    retirer.className = "son-retirer";
+    retirer.innerHTML = icone("retirer");
+    retirer.title = "Retirer la bande son";
+    retirer.setAttribute("aria-label", "Retirer la bande son");
+    retirer.addEventListener("click", () => {
+      arreterSon();
+      lecture.audio = null;
+      projet.audio = null;
+      sauver();
+      enregistrer(projet);
+      rendreProjet();
+    });
+    barre.append(retirer);
+  }
+  return barre;
+}
+
+// Le fichier vient de l'appareil : un navigateur ne peut pas le rouvrir seul au
+// rechargement, on ne garde donc que son nom et sa durée.
+function chargerSon(projet, fichier) {
+  arreterSon();
+  const url = URL.createObjectURL(fichier);
+  const son = new Audio(url);
+  son.preload = "metadata";
+  son.addEventListener("loadedmetadata", () => {
+    projet.audio = { nom: fichier.name, duree: Math.round(son.duration * 100) / 100 };
+    lecture.audio = son;
+    sauver();
+    enregistrer(projet);
+    rendreProjet();
+  }, { once: true });
+  son.addEventListener("error", () => {
+    URL.revokeObjectURL(url);
+    alert("Ce fichier audio n'a pas pu être lu.");
+  }, { once: true });
+}
+
+function demarrerSon() {
+  if (!lecture.audio) return;
+  lecture.audio.currentTime = Math.min(positionCourante(), lecture.audio.duration || 0);
+  lecture.audio.play().catch(() => {});
+}
+
+function arreterSon() {
+  lecture.audio?.pause();
+}
+
+/* --- lecture ---------------------------------------------------------- */
+/* Un geste en cours interdit de refaire la piste sous le doigt : reconstruire
+   l'arborescence détache l'élément saisi et le navigateur annule le geste. Les
+   reconstructions venues du fond — une durée mesurée, un import terminé —
+   attendent donc la fin du geste. Sans ça, un rognage ou un déplacement
+   s'interrompt tout seul en pleine manipulation, ce qui donne l'impression que
+   la poignée ne répond pas. */
+let gestes = 0;
+let pisteSale = false;
+
+const debutGeste = () => { gestes += 1; };
+function finGeste() {
+  gestes = Math.max(0, gestes - 1);
+  if (!gestes && pisteSale) {
+    pisteSale = false;
+    redessinerPiste();
+  }
+}
+
+function redessinerPisteDifferee() {
+  if (gestes) { pisteSale = true; return; }
+  redessinerPiste();
+}
+
+function redessinerPiste() {
+  const projet = projetActif();
+  const ancienne = $("piste");
+  if (!projet || !ancienne) return;
+  ancienne.closest(".piste-enveloppe").replaceWith(pisteComplete(projet));
+  // La carte du projet porte la durée totale : elle vieillit dès qu'une durée
+  // est mesurée.
+  const carte = document.querySelector(".projet-carte.actif .projet-sous");
+  if (carte) {
+    carte.textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""} · ${horloge(total(projet))}`;
+  }
+  selectionner(lecture.index);
+  majTransport();
+  // La pellicule est repeinte tout de suite : reconstruire la piste crée des
+  // toiles vides, et attendre l'image suivante laissait le bloc noir un instant
+  // — visible à chaque mouvement de poignée.
+  redessinerBandes();
+  // Les imagettes manquantes se capturent une par une, sans bloquer le reste.
+  requestAnimationFrame(ordonnancerBandes);
+}
+
+function poserPlan(index, decalage = 0, enchainer = false) {
+  const projet = projetActif();
+  if (!projet || !projet.plans[index]) return;
+  lecture.index = index;
+  if (!lecture.demande) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
+  const plan = projet.plans[index];
+  // « let » : la bascule A/B peut changer de lecteur en cours de route.
+  let video = elementActif();
+  const vide = $("ecran-vide");
+  if (!video) return;
+
+  selectionner(index);
+
+  if (plan.youtube) {
+    video.removeAttribute("src");
+    video.load();
+    vide.textContent = `${plan.name} — bande-annonce YouTube, non lisible dans le montage`;
+    vide.hidden = false;
+    if (enchainer) planSuivant();
+    return;
+  }
+
+  vide.hidden = true;
+  // Si le lecteur en attente porte déjà ce plan, on bascule sur lui : c'est
+  // tout l'intérêt d'en avoir deux, le fichier est déjà chargé.
+  const attente = elementAttente();
+  if (video.dataset.plan !== plan.id && attente?.dataset.plan === plan.id
+      && attente.dataset.source === sourceDe(plan)) {
+    // Le sortant est arrêté et mis en sourdine : sans ça deux lecteurs
+    // pourraient se faire entendre en même temps.
+    video.pause();
+    video.muted = true;
+    lecture.actif = lecture.actif ? 0 : 1;
+    video = elementActif();
+  }
+  const source = sourceDe(plan);
+  const change = video.dataset.plan !== plan.id || video.dataset.source !== source;
+  if (change) {
+    video.dataset.plan = plan.id;
+    video.dataset.source = source;
+    video.src = source;
+  }
+  video.muted = false;
+  // La position visée est dans le fichier : le décalage est compté depuis le
+  // point d'entrée, pas depuis le début du média.
+  viser(video, entreeDe(plan) + decalage, plan);
+  const demarrer = () => {
+    if (enchainer || lecture.jouant) {
+      video.play().catch(() => {
+        // Sans cette garde, une lecture interrompue par nos soins — parce qu'on
+        // vient d'atteindre la fin — était aussitôt relancée, et le lecteur
+        // repartait sur la partie coupée.
+        if (!lecture.demande) return;
+        video.muted = true;
+        video.play().catch(() => { lecture.jouant = false; majTransport(); });
+      });
+    }
+  };
+  // Juste après un changement de source, readyState décrit encore l'ancien
+  // fichier : s'y fier faisait poser la position sur un média déjà remplacé,
+  // et le nouveau démarrait donc à zéro.
+  if (!change && video.readyState >= 1) demarrer();
+  video.addEventListener("loadedmetadata", demarrer, { once: true });
+  video.addEventListener("canplay", demarrer, { once: true });
+
+  preparerSuivant(index + 1);
+  majTransport();
+}
+
+function planSuivant() {
+  const projet = projetActif();
+  if (!projet) return;
+  if (lecture.index + 1 < projet.plans.length) {
+    // Le plan suivant est déjà chargé sur le lecteur en attente : la bascule
+    // se fait dans poserPlan, sans temps mort.
+    poserPlan(lecture.index + 1, 0, lecture.demande || true);
+  } else {
+    arreter();
+    poserPlan(0, 0);
+  }
+}
+
+function basculerLecture() {
+  const video = elementActif();
+  const projet = projetActif();
+  if (!video || !projet) return;
+  if (lecture.demande) {
+    lecture.demande = false;
+    lecture.jouant = false;
+    lecture.horloge = null;
+    video.pause();
+    majTransport();
+    return;
+  }
+  lecture.demande = true;
+  // Arrivé au bout, « lecture » reprend depuis le début : sinon le bouton ne
+  // ferait rien, ou pire, le lecteur repartirait sur ce qui a été coupé.
+  if (lecture.position >= total(projet) - IMAGE) {
+    lecture.position = 0;
+    lecture.index = 0;
+  }
+  demarrerHorloge();
+  suivreTete();
+
+  if (projet.plans[lecture.index]?.youtube) {
+    lecture.jouant = true;
+    planSuivant();
+    suivreTete();
+    return;
+  }
+  // La lecture est demandée dans le geste lui-même — iOS refuse une lecture
+  // lancée depuis un rappel asynchrone — et le recalage se fait ensuite, dès
+  // que le fichier annonce ses métadonnées.
+  const cible = positionCible();
+  if (!cible) return;
+  lecture.index = cible.index;
+  const source = sourceDe(cible.plan);
+  if (video.dataset.plan !== cible.plan.id || video.dataset.source !== source) {
+    video.dataset.plan = cible.plan.id;
+    video.dataset.source = source;
+    video.poster = cible.plan.preview || "";
+    video.src = source;
+  }
+  viser(video, entreeDe(cible.plan) + cible.dans, cible.plan);
+  preparerSuivant(cible.index + 1);
+
+  deverrouille = true;
+  const essai = video.play();
+  if (essai) {
+    essai.catch(() => {
+      if (!lecture.demande) return;
+      video.muted = true;
+      video.play().catch(() => { lecture.jouant = false; majTransport(); });
+    });
+  }
+  selectionner(cible.index);
+  suivreTete();
+}
+
+function arreter() {
+  lecture.demande = false;
+  lecture.jouant = false;
+  lecture.horloge = null;
+  if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
+  lecture.boucle = null;
+  elementActif()?.pause();
+  arreterSon();
+}
+
+// La tête suit le doigt à la milliseconde : la position du montage est tenue
+// ici, pas lue dans la vidéo. Charger un fichier prend du temps, et tant qu'il
+// n'est pas prêt sa position vaut zéro — c'est ce qui faisait sauter le curseur
+// d'un bloc à l'autre au lieu de glisser.
+function allerA(secondesCible) {
+  const projet = projetActif();
+  if (!projet) return;
+  lecture.position = Math.max(0, Math.min(secondesCible, total(projet)));
+  if (lecture.demande) demarrerHorloge();
+  majTransport();
+  if (!lecture.seek) {
+    lecture.seek = requestAnimationFrame(() => { lecture.seek = null; appliquerSeek(); });
+  }
+}
+
+// Journal de bord : les dernières demandes de position et ce que le lecteur en
+// a fait. Consultable dans Setting, pour diagnostiquer un comportement qu'on ne
+// peut pas reproduire ailleurs.
+const journal = [];
+function noter(quoi, video) {
+  journal.unshift({
+    quand: new Date().toLocaleTimeString("fr-FR"),
+    quoi,
+    vise: lecture.cible ? Math.round(lecture.cible.temps * 100) / 100 : null,
+    reel: video ? Math.round(video.currentTime * 100) / 100 : null,
+    pret: video ? video.readyState : null,
+    erreur: video?.error ? video.error.code : null,
+    essais: lecture.cible?.essais ?? null,
+  });
+  journal.length = Math.min(journal.length, 12);
+}
+
+// Poser currentTime ne suffit pas : tant que le fichier n'a pas assez de
+// données, la consigne est ignorée en silence. On garde donc la cible et on la
+// repose à chaque signal du lecteur, jusqu'à ce qu'elle prenne.
+function viser(video, temps, plan) {
+  const planId = typeof plan === "string" ? plan : plan.id;
+  const url = typeof plan === "string" ? null : sourceDe(plan);
+  lecture.cible = { planId, url, temps, essais: 0, fragment: false, limite: performance.now() + 5000 };
+  // Les deux mécanismes visent le même instant : sans cela, celui qui aboutit en
+  // dernier ramènerait le lecteur sur une position périmée.
+  demanderPosition(video, temps);
+  noter("cible posée", video);
+  appliquerCible(video);
+}
+
+// Un lecteur en pause qui n'a jamais joué n'affiche aucune image : sur mobile,
+// il ne charge même pas. Le seul moyen fiable de lui faire produire l'image
+// sous le curseur est de le lancer une fraction de seconde en sourdine, puis de
+// le remettre en pause.
+function secouer(video) {
+  // Jamais pendant une lecture demandée : la secousse la mettrait en pause.
+  if (lecture.demande || lecture.secousse || !video || !video.paused || lecture.jouant) return;
+  // La secousse déclenche les événements « lecture » et « pause ». Sans ce
+  // drapeau, ils passeraient pour une vraie lecture et la position du montage
+  // repartirait du fichier.
+  lecture.secousse = true;
+  const etaitMuet = video.muted;
+  video.muted = true;
+
+  let rendu = false;
+  const remettre = () => {
+    if (rendu) return;
+    rendu = true;
+    clearTimeout(filet);
+    if (!lecture.jouant && !lecture.demande) video.pause();
+    video.muted = etaitMuet;
+    lecture.secousse = false;
+  };
+  // Filet de sécurité : si la promesse de lecture ne se dénoue jamais — ce qui
+  // arrive sur mobile — le drapeau resterait levé, l'application se croirait en
+  // pleine secousse et la tête de lecture ne bougerait plus alors que la vidéo
+  // tourne. Le drapeau retombe donc dans tous les cas.
+  const filet = setTimeout(remettre, 800);
+
+  const essai = video.play();
+  if (essai) essai.then(() => setTimeout(remettre, 60)).catch(remettre);
+  else remettre();
+}
+
+function appliquerCible(video) {
+  const cible = lecture.cible;
+  if (!cible || !video || video.dataset.plan !== cible.planId) return;
+  // Rien n'est chargé : on secoue le lecteur, sinon la consigne de position n'a
+  // aucun support sur lequel s'appliquer.
+  if (video.readyState < 1) { secouer(video); return; }
+  if (Math.abs(video.currentTime - cible.temps) <= 0.4) {
+    noter("atteinte", video);
+    lecture.cible = null;
+    if (video.readyState < 2) secouer(video);
+    return;
+  }
+  if (cible.essais >= 12 || performance.now() > cible.limite) { noter("abandon", video); lecture.cible = null; return; }
+  cible.essais += 1;
+  try {
+    video.currentTime = Math.min(cible.temps, video.duration || cible.temps);
+  } catch {
+    // Certains lecteurs refusent la consigne avant d'être prêts : on retentera.
+  }
+
+  // Dernier recours : recharger en demandant l'instant voulu dans l'adresse.
+  if (cible.essais >= 4 && !cible.fragment && cible.url) {
+    cible.fragment = true;
+    noter("repli fragment", video);
+    video.src = `${cible.url}#t=${cible.temps.toFixed(2)}`;
+    video.load();
+  }
+}
+
+function positionCible() {
+  const projet = projetActif();
+  if (!projet) return null;
+  const debuts = offsets(projet.plans);
+  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
+  if (index < 0) index = projet.plans.length - 1;
+  return { index, dans: Math.max(0, lecture.position - debuts[index]), plan: projet.plans[index] };
+}
+
+// Safari sur iPhone ne charge rien tant que l'utilisateur n'a pas lancé la
+// lecture lui-même : tant que l'élément n'a pas joué une fois, se déplacer
+// dedans ne montre aucune image. On le déverrouille au premier geste sur la
+// piste, en lançant puis coupant aussitôt.
+let deverrouille = false;
+function deverrouiller() {
+  if (deverrouille) return;
+  const video = elementActif();
+  if (!video || !video.src) return;
+  deverrouille = true;
+  // L'intention est relevée avant de lancer : l'événement « play » met
+  // lecture.jouant à vrai, si bien qu'un test après coup croyait toujours à une
+  // lecture voulue et ne coupait jamais. La vidéo tournait alors en fond et
+  // réécrivait la position du curseur à chaque image.
+  const voulait = lecture.jouant;
+  const essai = video.play();
+  if (essai) essai.then(() => { if (!voulait) video.pause(); }).catch(() => {});
+}
+
+// Le fichier rattrape la tête au rythme où il peut — une fois par image au
+// plus, sans se recharger tant qu'on reste dans le même plan. C'est lui qui
+// affiche l'image sous le curseur, et c'est de là que part la lecture.
+/* Un lecteur ne traite qu'un déplacement à la fois. En lui en demandant un par
+   image pendant qu'on fait glisser le doigt, les demandes se chevauchent : le
+   lecteur abandonne celle en cours, ne signale jamais son arrivée, et l'image
+   reste figée alors que la tête avance — c'est exactement ce qu'on voyait.
+
+   On ne demande donc qu'un déplacement à la fois, et on garde la dernière
+   position voulue pour la poser dès que le précédent est arrivé. Le doigt peut
+   aller aussi vite qu'il veut, l'image le rattrape toujours. */
+function demanderPosition(video, temps) {
+  if (!video || !Number.isFinite(temps)) return;
+  video.dataset.vise = String(temps);
+  // Une cible a une fin de validité : sans elle, une position jamais atteinte
+  // ramènerait le lecteur en arrière indéfiniment.
+  video.dataset.viseFin = String(performance.now() + 4000);
+  rattraperPosition(video);
+}
+
+const oublierPosition = (video) => {
+  delete video.dataset.vise;
+  delete video.dataset.viseFin;
+};
+
+/* Le lecteur est ramené vers sa cible tant qu'il ne l'a pas atteinte, et cette
+   reprise ne dépend d'aucun événement : « seeked » se perd sur mobile, et une
+   consigne posée pendant qu'un déplacement est en cours est ignorée en silence.
+   La version précédente confiait justement la reprise à un « seeked » qu'elle
+   n'avait pas toujours posé — sur un fichier distant, où un déplacement dure
+   des centaines de millisecondes, la dernière position demandée n'arrivait
+   jamais et l'image restait celle d'avant. Ici la convergence est vérifiée à
+   chaque image du moniteur, donc elle finit toujours par aboutir. */
+function rattraperPosition(video) {
+  if (!video) return;
+  const vise = Number(video.dataset.vise);
+  if (!Number.isFinite(vise)) return;
+  if (performance.now() > Number(video.dataset.viseFin)) return oublierPosition(video);
+  // Un déplacement est déjà en route : on le laisse finir, la cible reste notée.
+  if (video.seeking || video.readyState < 1) return;
+  if (Math.abs(video.currentTime - vise) <= 0.06) return oublierPosition(video);
+  try {
+    video.currentTime = Math.min(vise, video.duration || vise);
+  } catch {
+    // Lecteur pas encore prêt : on retentera à l'image suivante.
+  }
+}
+
+function appliquerSeek(jouer = false) {
+  const projet = projetActif();
+  if (!projet) return;
+  const debuts = offsets(projet.plans);
+  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
+  if (index < 0) index = projet.plans.length - 1;
+  const dans = Math.max(0, lecture.position - debuts[index]);
+
+  const video = elementActif();
+  const plan = projet.plans[index];
+  if (!video) return;
+
+  if (index === lecture.index && video.dataset.plan === plan.id) {
+    const vise = entreeDe(plan) + dans;
+    const poser = () => {
+      demanderPosition(video, Math.min(vise, video.duration || vise));
+      if (jouer) video.play().catch(() => {
+        if (!lecture.demande) return;
+        video.muted = true;
+        video.play().catch(() => {});
+      });
+    };
+    // Un fichier pas encore prêt ignorait la consigne, et l'image restait celle
+    // d'avant : on la repose dès que ses métadonnées arrivent.
+    if (video.readyState >= 1) poser();
+    else video.addEventListener("loadedmetadata", poser, { once: true });
+  } else {
+    poserPlan(index, dans, jouer);
+  }
+
+  if (lecture.audio) {
+    lecture.audio.currentTime = Math.min(lecture.position, lecture.audio.duration || 0);
+  }
+}
+
+function selectionner(index) {
+  const projet = projetActif();
+  document.querySelectorAll("#rail .clip").forEach((clip) => {
+    clip.classList.toggle("actif", Number(clip.dataset.index) === index);
+  });
+  const courant = $("plan-courant");
+  if (courant && projet?.plans[index]) {
+    courant.textContent = `Plan ${String(index + 1).padStart(2, "0")} — ${projet.plans[index].name}`;
+  }
+}
+
+/* --- importation des médias -------------------------------------------
+   Un logiciel de montage ne monte pas des fichiers distants : il importe les
+   médias, puis travaille en local. C'est de là que vient tout le reste — un
+   fichier local se parcourt instantanément, rend ses images sans négocier, et
+   n'est soumis à aucune règle de chargement mobile.
+
+   Les octets passent par notre relais (les sources n'autorisent pas leur
+   lecture directe), sont gardés dans la base du navigateur, et servis ensuite
+   depuis l'appareil. Bonus : une vidéo locale ne « teinte » pas une toile, on
+   peut donc en relire les images — c'est ce qui rend la bande d'imagettes
+   fiable. */
+
+const BASE_MEDIAS = "amvauto-medias";
+const MAGASIN = "fichiers";
+const locales = new Map();          // adresse d'origine -> adresse locale
+const enImport = new Map();         // adresse d'origine -> avancement 0..1
+const fileImport = [];
+let importEnCours = false;
+let basePromise = null;
+
+function ouvrirBase() {
+  if (basePromise) return basePromise;
+  basePromise = new Promise((ok, non) => {
+    const requete = indexedDB.open(BASE_MEDIAS, 1);
+    requete.onupgradeneeded = () => {
+      const base = requete.result;
+      if (!base.objectStoreNames.contains(MAGASIN)) base.createObjectStore(MAGASIN);
+    };
+    requete.onsuccess = () => ok(requete.result);
+    requete.onerror = () => non(requete.error);
+  }).catch(() => null);
+  return basePromise;
+}
+
+async function lireBase(adresse) {
+  const base = await ouvrirBase();
+  if (!base) return null;
+  return new Promise((ok) => {
+    const requete = base.transaction(MAGASIN, "readonly").objectStore(MAGASIN).get(adresse);
+    requete.onsuccess = () => ok(requete.result || null);
+    requete.onerror = () => ok(null);
+  });
+}
+
+async function ecrireBase(adresse, blob) {
+  const base = await ouvrirBase();
+  if (!base) return;
+  await new Promise((ok) => {
+    const transaction = base.transaction(MAGASIN, "readwrite");
+    transaction.objectStore(MAGASIN).put(blob, adresse);
+    transaction.oncomplete = ok;
+    transaction.onerror = ok;   // quota plein : on continue en distant
+    transaction.onabort = ok;
+  });
+}
+
+// L'adresse à donner au lecteur : le fichier local dès qu'on l'a.
+function sourceDe(plan) {
+  return (plan?.video && locales.get(plan.video)) || plan?.video || "";
+}
+
+const estLocal = (plan) => Boolean(plan?.video && locales.get(plan.video));
+const avancement = (plan) => enImport.get(plan?.video);
+
+async function preparerLocal(plan) {
+  if (!plan?.video || plan.youtube || locales.has(plan.video)) return;
+  const garde = await lireBase(plan.video);
+  if (garde instanceof Blob) {
+    locales.set(plan.video, URL.createObjectURL(garde));
+    return;
+  }
+  planifierImport(plan);
+}
+
+// Vrai tant que le fichier est en file d'attente ou en cours de téléchargement.
+const importPrevu = (plan) =>
+  Boolean(plan?.video) && (enImport.has(plan.video) || fileImport.some((autre) => autre.video === plan.video));
+
+function planifierImport(plan) {
+  if (!plan?.video || plan.youtube || locales.has(plan.video) || enImport.has(plan.video)) return;
+  if (fileImport.some((autre) => autre.video === plan.video)) return;
+  fileImport.push(plan);
+  lancerImport();
+}
+
+async function lancerImport() {
+  if (importEnCours) return;
+  const plan = fileImport.shift();
+  if (!plan) return;
+  importEnCours = true;
+  enImport.set(plan.video, 0);
+  majImports();
+
+  try {
+    const reponse = await fetch(`/api/media?u=${encodeURIComponent(plan.video)}`);
+    if (!reponse.ok) throw new Error(String(reponse.status));
+
+    // Lecture en flux pour afficher un avancement : sur un rush de 40 Mo en
+    // 4G, une barre qui bouge vaut mieux qu'une attente muette.
+    const attendu = Number(reponse.headers.get("content-length")) || plan.mb * 1e6 || 0;
+    const morceaux = [];
+    let recu = 0;
+    if (reponse.body?.getReader) {
+      const lecteur = reponse.body.getReader();
+      for (;;) {
+        const { done, value } = await lecteur.read();
+        if (done) break;
+        morceaux.push(value);
+        recu += value.byteLength;
+        if (attendu) {
+          enImport.set(plan.video, Math.min(0.99, recu / attendu));
+          majImports();
+        }
+      }
+    } else {
+      morceaux.push(new Uint8Array(await reponse.arrayBuffer()));
+    }
+
+    const blob = new Blob(morceaux, { type: reponse.headers.get("content-type") || "video/mp4" });
+    await ecrireBase(plan.video, blob);
+    locales.set(plan.video, URL.createObjectURL(blob));
+  } catch {
+    // Import raté : le plan reste jouable en distant, avec ses limites.
+  } finally {
+    enImport.delete(plan.video);
+    importEnCours = false;
+    majImports();
+    apresImport(plan);
+    setTimeout(lancerImport, 60);
+  }
+}
+
+// L'interface reflète l'avancement, et le plan courant bascule sur sa copie
+// locale dès qu'elle est prête.
+function majImports() {
+  if ($("vue-projet")?.hidden) return;
+  const projet = projetActif();
+  const rail = $("rail");
+  if (!projet || !rail) return;
+  [...rail.children].forEach((bloc, index) => {
+    const plan = projet.plans[index];
+    if (!plan) return;
+    const barre = bloc.querySelector(".clip-import");
+    const part = avancement(plan);
+    if (part === undefined) {
+      barre?.remove();
+      bloc.classList.toggle("local", estLocal(plan));
+      return;
+    }
+    const jauge = barre || (() => {
+      const neuve = document.createElement("span");
+      neuve.className = "clip-import";
+      neuve.innerHTML = '<span class="clip-import-jauge"></span>';
+      bloc.append(neuve);
+      return neuve;
+    })();
+    jauge.querySelector(".clip-import-jauge").style.width = `${Math.round(part * 100)}%`;
+  });
+  const bilan = $("zoom-total");
+  if (bilan) bilan.textContent = bilanProjet(projet);
+}
+
+function apresImport(plan) {
+  const projet = projetActif();
+  if (!projet || !estLocal(plan)) return;
+  // La copie locale est plus exacte que l'estimation : on remesure.
+  if (plan.id === projet.plans[lecture.index]?.id) {
+    const video = elementActif();
+    if (video) {
+      video.dataset.plan = "";
+      poserPlan(lecture.index, Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)));
+    }
+  }
+  const attente = elementAttente();
+  if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
+  redessinerPisteDifferee();
+  // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
+  redessinerBandes();
+}
+
+// Tous les plans du projet sont importés, le plan courant d'abord.
+function importerProjet(projet) {
+  const ordre = [projet.plans[lecture.index], ...projet.plans].filter(Boolean);
+  for (const plan of ordre) preparerLocal(plan);
+}
+
+// Un banc de montage n'attend pas son lecteur : une horloge avance, et l'image
+// la suit comme elle peut. C'est ce qui garantit que la tête de lecture bouge
+// dès qu'on appuie sur lecture, même si un fichier traîne ou refuse de décoder.
+function demarrerHorloge() {
+  lecture.horloge = { debut: performance.now(), depart: lecture.position };
+}
+
+function positionCourante() {
+  const projet = projetActif();
+  if (!projet) return 0;
+  const duree_totale = total(projet);
+
+  // Le doigt prime sur tout le reste.
+  if (lecture.scrub || !lecture.demande || !lecture.horloge) return lecture.position;
+
+  const ecoule = (performance.now() - lecture.horloge.debut) / 1000;
+  let position = lecture.horloge.depart + ecoule;
+
+  // Quand le lecteur avance vraiment, on se recale doucement sur lui : c'est
+  // lui qui donne l'heure juste. S'il patine, l'horloge continue seule.
+  const video = elementActif();
+  if (video && !video.paused && video.readyState >= 2 && !lecture.cible && !lecture.secousse) {
+    const plan = projet.plans[lecture.index];
+    const reelle = (offsets(projet.plans)[lecture.index] || 0) + video.currentTime - entreeDe(plan);
+    if (Math.abs(reelle - position) > 0.35) {
+      position = reelle;
+      lecture.horloge = { debut: performance.now(), depart: reelle };
+    }
+  }
+
+  if (position >= duree_totale) {
+    position = duree_totale;
+    lecture.position = position;
+    terminerLecture();
+  }
+  lecture.position = Math.max(0, position);
+  return lecture.position;
+}
+
+function majTransport() {
+  const projet = projetActif();
+  if (!projet || !$("timecode")) return;
+  const position = positionCourante();
+  // Zoomé au-delà du dixième, la tête bouge sans que le timecode change : il
+  // gagne alors une décimale.
+  $("timecode").textContent = `${horloge(position, lecture.echelle > 300 ? 2 : 1)} / ${horloge(total(projet))}`;
+  const enLecture = lecture.demande || lecture.jouant;
+  const jouer = $("lecture");
+  if (jouer) jouer.innerHTML = icone(enLecture ? "pause" : "play");
+  const pleinJouer = $("plein-lecture");
+  if (pleinJouer) pleinJouer.innerHTML = icone(enLecture ? "pause" : "play");
+  const pleinCode = $("plein-timecode");
+  if (pleinCode) pleinCode.textContent = `${horloge(position, 1)} / ${horloge(total(projet))}`;
+
+  const tete = $("tete");
+  if (tete) {
+    const x = xDeSeconde(position);
+    tete.style.left = `${x}px`;
+    const cadre = $("piste");
+    if (lecture.jouant && cadre) {
+      const marge = cadre.clientWidth * 0.4;
+      if (x - cadre.scrollLeft > cadre.clientWidth - marge || x < cadre.scrollLeft) {
+        cadre.scrollLeft = Math.max(0, x - marge);
+      }
+    }
+  }
+  majBoutonsHistoire();
+}
+
+// Fin du montage : on s'arrête sur la dernière image, sans déborder.
+function terminerLecture() {
+  const projet = projetActif();
+  lecture.demande = false;
+  lecture.jouant = false;
+  lecture.horloge = null;
+  if (projet) lecture.position = total(projet);
+  elementActif()?.pause();
+  arreterSon();
+  majTransport();
+}
+
+function suivreTete() {
+  if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
+  const pas = () => {
+    majTransport();
+    // Le changement de plan est décidé par l'horloge, pas par la fin d'un
+    // fichier : un plan dont la lecture patine n'immobilise plus le montage.
+    const projet = projetActif();
+    if (lecture.demande && projet) {
+      const plan = projet.plans[lecture.index];
+      const debuts = offsets(projet.plans);
+      const fin = (debuts[lecture.index] || 0) + duree(plan);
+      const video = elementActif();
+      // Le point de sortie est une limite dure. Le fichier continue au-delà,
+      // mais ce qui suit a été coupé : il ne fait plus partie du montage. On
+      // surveille donc aussi la position du fichier, pas seulement l'horloge —
+      // sur le dernier plan, rien n'arrêtait le lecteur et il enchaînait sur la
+      // partie retirée.
+      const auBout = lecture.position >= fin - 0.02
+        || (video && !video.paused && video.dataset.plan === plan?.id
+            && video.currentTime >= sortieDe(plan) - 0.02);
+      if (auBout) {
+        if (lecture.index + 1 < projet.plans.length) planSuivant();
+        else terminerLecture();
+      }
+    }
+    if (lecture.demande) lecture.boucle = requestAnimationFrame(pas);
+  };
+  lecture.boucle = requestAnimationFrame(pas);
+}
+
+/* --- barre du bas ----------------------------------------------------- */
+function remplirBarreOutils(projet) {
+  const actions = $("barre-outils");
+  if (!actions) return;
+
+  const nom = document.createElement("span");
+  nom.className = "plan-courant";
+  nom.id = "plan-courant";
+
+  // Rogner à la tête : à fort zoom, tirer une poignée sur plusieurs secondes
+  // demanderait des milliers de pixels de glissé. On pose la tête où l'on veut
+  // et on coupe là — c'est aussi ainsi qu'on travaille sur un banc de montage.
+  const entree = document.createElement("button");
+  entree.type = "button";
+  entree.innerHTML = icone("entree");
+  entree.title = "Faire commencer le plan à la tête de lecture";
+  entree.setAttribute("aria-label", "Début du plan à la tête");
+  entree.addEventListener("click", () => rognerAuCurseur("entree"));
+
+  const sortie = document.createElement("button");
+  sortie.type = "button";
+  sortie.innerHTML = icone("sortie");
+  sortie.title = "Faire finir le plan à la tête de lecture";
+  sortie.setAttribute("aria-label", "Fin du plan à la tête");
+  sortie.addEventListener("click", () => rognerAuCurseur("sortie"));
+
+  const couper = document.createElement("button");
+  couper.type = "button";
+  couper.innerHTML = icone("couper");
+  couper.title = "Couper le plan à la tête de lecture";
+  couper.setAttribute("aria-label", "Couper à la tête de lecture");
+  couper.addEventListener("click", couperAuCurseur);
+
+  // Mode déplacement : tant qu'il est éteint, l'ordre des plans ne peut pas
+  // changer par mégarde.
+  // Un seul interrupteur pour les deux gestes qui touchent aux plans : les
+  // déplacer et les rogner. Hors de ce mode, la piste ne sert qu'à naviguer.
+  const deplacer = document.createElement("button");
+  deplacer.type = "button";
+  deplacer.id = "btn-reordre";
+  deplacer.innerHTML = icone("deplacer");
+  deplacer.addEventListener("click", () => {
+    state.reordre = !state.reordre;
+    document.body.classList.toggle("reordre", state.reordre);
+    sauver();
+    majReordre();
+  });
+
+  const retirer = document.createElement("button");
+  retirer.type = "button";
+  retirer.innerHTML = icone("supprimer");
+  retirer.title = "Retirer le plan sélectionné du montage";
+  retirer.setAttribute("aria-label", "Retirer le plan");
+  retirer.addEventListener("click", () => {
+    projet.plans.splice(lecture.index, 1);
+    sauver();
+    enregistrer(projet);
+    rendre();
+    if (!projet.plans.length) { rendreProjet(); return; }
+    lecture.index = Math.min(lecture.index, projet.plans.length - 1);
+    redessinerPiste();
+    poserPlan(lecture.index, 0);
+  });
+
+  actions.replaceChildren(nom, entree, sortie, couper, deplacer, retirer);
+  majReordre();
+  majBoutonsHistoire();
+}
+
+function majReordre() {
+  const bouton = $("btn-reordre");
+  if (!bouton) return;
+  bouton.classList.toggle("on", state.reordre);
+  bouton.title = state.reordre
+    ? "Modification des plans active : déplacer et rogner — appuyer pour verrouiller"
+    : "Plans verrouillés : la piste ne fait que déplacer la tête — appuyer pour modifier";
+  bouton.setAttribute("aria-pressed", String(state.reordre));
+  bouton.setAttribute("aria-label", bouton.title);
+}
+
+// Ramène le début ou la fin du plan sélectionné sur la tête de lecture.
+function rognerAuCurseur(cote) {
+  const projet = projetActif();
+  if (!projet?.plans.length) return;
+  const debuts = offsets(projet.plans);
+  const index = Math.min(lecture.index, projet.plans.length - 1);
+  const plan = projet.plans[index];
+  const dans = lecture.position - debuts[index];
+
+  const dire = (texte) => {
+    const etiquette = $("plan-courant");
+    if (!etiquette) return;
+    etiquette.textContent = texte;
+    setTimeout(() => selectionner(lecture.index), 1800);
+  };
+  if (plan.youtube) return dire("Une bande-annonce ne se rogne pas");
+  // Hors du plan, ou si près du bord qu'il n'en resterait rien : on refuse
+  // plutôt que de produire une miette.
+  if (dans < 0 || dans > duree(plan)) return dire("La tête n'est pas sur le plan sélectionné");
+  if (cote === "entree" && dans > duree(plan) - PLAN_MINI) return dire("Trop près de la fin du plan");
+  if (cote === "sortie" && dans < PLAN_MINI) return dire("Trop près du début du plan");
+
+  const point = entreeDe(plan) + dans;
+  if (cote === "entree") plan.entree = point;
+  else plan.sortie = point;
+
+  sauver();
+  enregistrer(projet);
+  redessinerPiste();
+  // Le début a bougé : la tête reste sur la borne, qui est maintenant ici.
+  allerA(cote === "entree" ? offsets(projet.plans)[index] : lecture.position);
+  selectionner(index);
+}
+
+/* --- export et réglages ----------------------------------------------- */
+$("btn-export").addEventListener("click", () => {
+  const projet = projetActif();
+  if (!projet?.plans.length) return;
+  telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet));
+});
+
+$("btn-setting").addEventListener("click", () => {
+  const projet = projetActif();
+  if (!projet) return;
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = projet.nom;
+  const meta = document.createElement("div");
+  meta.className = "lecteur-meta";
+  const video = elementActif();
+  meta.textContent = [
+    `${projet.plans.length} plans · ${secondes(total(projet))}`,
+    `export sur une base de ${IMAGES_PAR_SECONDE} images par seconde`,
+    `version ${VERSION_PAGE}`,
+    "",
+    "Lecteur :",
+    `  état ${video?.readyState ?? "?"}/4 · position ${video ? Math.round(video.currentTime * 100) / 100 : "?"} s` +
+      `${video?.error ? ` · erreur ${video.error.code}` : ""}`,
+    `  tête à ${Math.round(lecture.position * 100) / 100} s · plan ${lecture.index + 1}`,
+    ...(() => {
+      // Ce que la tête désigne, et ce que le moniteur montre : la seule ligne
+      // qui tranche quand l'aperçu semble ne pas suivre le curseur.
+      const cible = positionCible();
+      if (!cible) return [];
+      const affiche = projet.plans.findIndex((p) => p.id === video?.dataset.plan);
+      return [
+        `  la tête désigne le plan ${cible.index + 1} à ${Math.round(cible.dans * 100) / 100} s ` +
+          `(${Math.round((entreeDe(cible.plan) + cible.dans) * 100) / 100} s dans le fichier)`,
+        `  le moniteur montre le plan ${affiche >= 0 ? affiche + 1 : "?"} ` +
+          `à ${video ? Math.round(video.currentTime * 100) / 100 : "?"} s` +
+          `${video?.dataset.vise ? ` · vise ${Math.round(Number(video.dataset.vise) * 100) / 100} s` : ""}` +
+          `${video?.seeking ? " · déplacement en cours" : ""}`,
+        `  média ${estLocal(cible.plan) ? "importé sur l'appareil" : "distant"}`,
+        `  pellicule : ${pellicule.prises} image(s) prise(s), ${pellicule.ratees} échec(s)` +
+          `${pellicule.dernier ? ` — dernier : ${pellicule.dernier}` : ""}`,
+      ];
+    })(),
+    "",
+    "Dernières demandes de position :",
+    ...(journal.length
+      ? journal.map((l) => `  ${l.quand} ${l.quoi} — visé ${l.vise ?? "—"} s, réel ${l.reel ?? "—"} s, état ${l.pret}/4, ${l.essais ?? 0} essai(s)`)
+      : ["  (aucune pour l'instant)"]),
+  ].join("\n");
+  meta.style.whiteSpace = "pre-line";
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+
+  const renommer = document.createElement("button");
+  renommer.type = "button";
+  renommer.textContent = "Renommer le projet";
+  renommer.addEventListener("click", () => {
+    const nom = prompt("Nom du projet", projet.nom);
+    if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); enregistrer(projet); }
+    fermerFeuille();
+    rendreProjet();
+  });
+
+  const supprimer = document.createElement("button");
+  supprimer.type = "button";
+  supprimer.textContent = "Supprimer le projet";
+  supprimer.addEventListener("click", () => {
+    if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
+    state.projets = state.projets.filter((autre) => autre.id !== projet.id);
+    state.actif = state.projets[0]?.id || null;
+    histoire.projet = null;
+    sauver();
+    fermerFeuille();
+    rendreProjet();
+    rendre();
+  });
+
+  const copier = document.createElement("button");
+  copier.type = "button";
+  copier.textContent = "Copier le diagnostic";
+  copier.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(meta.textContent);
+    copier.textContent = "Copié";
+    setTimeout(() => { copier.textContent = "Copier le diagnostic"; }, 1600);
+  });
+
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.className = "fort";
+  fermer.textContent = "Fermer";
+  fermer.addEventListener("click", fermerFeuille);
+
+  actions.append(copier, renommer, supprimer, fermer);
+  corps.append(titre, meta, actions);
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
+});
+
+/* --- exports --------------------------------------------------------- */
+const nomDeFichier = (projet) => `amvauto-${projet.nom.toLowerCase().replace(/\W+/g, "-")}`;
+
+// Conduite de montage CMX 3600 : chaque plan bout à bout sur la timeline, avec
+// son nom et le chemin de son fichier. Les logiciels de montage la lisent et
+// reconstruisent l'ordre, il ne reste qu'à relier les médias téléchargés.
+function versEdl(projet) {
+  const lignes = [
+    `TITLE: ${projet.nom.toUpperCase()}`,
+    "FCM: NON-DROP FRAME",
+    `* MONTÉ PAR AMVAUTO — BASE ${IMAGES_PAR_SECONDE} IMAGES/SECONDE`,
+    "",
+  ];
+  let curseur = 0;
+  projet.plans.forEach((plan, index) => {
+    // Les deux premiers timecodes sont les points d'entrée et de sortie dans le
+    // fichier source : c'est là que les coupes faites ici sont transmises au
+    // logiciel de montage, qui retrouve exactement le même découpage.
+    const entree = entreeDe(plan);
+    const sortie = sortieDe(plan);
+    const fin = curseur + duree(plan);
+    lignes.push(
+      `${String(index + 1).padStart(3, "0")}  AX       V     C        ` +
+        `${timecode(entree)} ${timecode(sortie)} ${timecode(curseur)} ${timecode(fin)}`,
+      `* FROM CLIP NAME: ${nomFichier(plan)}`,
+      `* SOURCE FILE: ${plan.video}`,
+      plan.duree ? "" : "* DURÉE NON LUE — VALEUR PAR DÉFAUT",
+      "",
+    );
+    curseur = fin;
+  });
+  return lignes.filter((ligne, index, tout) => ligne !== "" || tout[index - 1] !== "").join("\n");
+}
+
+function versTexte(projet) {
+  const bilan = totaux(projet);
+  const entete = [
+    `# ${projet.nom}`,
+    `# ${projet.plans.length} plans · ${secondes(bilan.duree)} · ${bilan.mb.toFixed(1)} Mo`,
+    "",
+  ];
+  const corps = projet.plans.map((plan, index) => [
+    `# ${String(index + 1).padStart(2, "0")} — ${plan.name}`,
+    `# ${plan.anime || plan.ref || ""} · ${plan.artists.join(", ") || "animateur non identifié"}` +
+      `${plan.duree ? ` · ${secondes(duree(plan))}` : ""}` +
+      `${rogne(plan) ? ` · coupe ${secondes(entreeDe(plan))} → ${secondes(sortieDe(plan))}` : ""}`,
+    plan.video,
+    "",
+  ].join("\n"));
+  return entete.concat(corps).join("\n");
+}
+
+function telecharger(nom, contenu) {
+  const blob = new Blob([contenu], { type: "text/plain;charset=utf-8" });
+  const lien = document.createElement("a");
+  lien.href = URL.createObjectURL(blob);
+  lien.download = nom;
+  lien.click();
+  URL.revokeObjectURL(lien.href);
+}
+
+charger();
+
+// L'écran de démarrage s'efface dès que l'interface est prête. Un court minimum
+// de présence évite le clignotement quand tout est déjà en cache. Il n'est pas
+// retiré du document : le rallumer avant un rechargement garde l'écran noir d'un
+// chargement à l'autre, au lieu de montrer deux démarrages de suite.
+const depart = performance.now();
+requestAnimationFrame(() => {
+  const attendre = Math.max(0, 420 - (performance.now() - depart));
+  setTimeout(masquerDemarrage, attendre);
+});
+</script>
+</body>
+</html>
