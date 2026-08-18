@@ -255,6 +255,20 @@ image figée :
   lieu de se remplir par plaques. L'image d'entrée d'un plan, elle, ne patiente pas derrière
   l'import — elle ne coûte qu'une lecture par plage, quand l'import en télécharge vingt
   mégaoctets.
+- **La pellicule ne dispute jamais le réseau aux vidéos.** La sonde à imagettes ouvrait des
+  connexions vers le même relais que les téléchargements, et un élément vidéo continue de
+  remplir son tampon tout seul une fois sa source posée : mesuré, plus de vingt secondes de
+  réseau pour quelques images dont on n'a pas besoin tout de suite. Elle ne travaille donc que
+  sur des copies déjà présentes sur l'appareil, sa source distante est relâchée dès qu'un
+  téléchargement démarre, et les blocs montrent en attendant la vignette de la source. Deux
+  exceptions : un plan sans vignette, qui n'aurait rien à montrer, et un import qui a échoué,
+  dont le fichier ne viendra jamais. Résultat sur quatre plans de douze mégaoctets, réseau bridé
+  à six mégabits : premier plan disponible à 8,9 s au lieu de 11,9 s, tout importé en 26,5 s au
+  lieu de 29,6 s.
+- **Un seul téléchargement à la fois, le plan courant d'abord.** Les requêtes partagent la même
+  connexion vers le même domaine : les paralléliser ne gagne rien en débit et retarde le premier
+  fichier — celui sur lequel on travaille. Mesuré : premier plan à 8,9 s en séquentiel, 11,9 s à
+  deux de front, 14,8 s à trois, pour un total identique.
 - **La sonde à imagettes passe par le relais tant que la copie locale n'est pas là.** Une image
   prise en direct sur la source « teinte » définitivement toute toile où on la dessine — la
   pellicule, puis le moniteur — et interdit d'en relire les pixels. Le relais, lui, renvoie les

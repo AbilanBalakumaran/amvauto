@@ -822,7 +822,15 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .clip canvas.bande { position: absolute; top: 0; bottom: 0; height: 100%; display: block; }
 .clip canvas.bande[hidden] { display: none; }
 .clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,.68)); }
-.clip.actif { box-shadow: inset 0 0 0 2px var(--vert); }
+/* Chaque bloc porte son propre liseré, dessiné à l'intérieur de sa largeur :
+   deux blocs voisins se distinguent alors nettement, sans décaler d'un pixel la
+   correspondance entre la piste et le temps. */
+.clip {
+  border-radius: 4px;
+  outline: 1px solid rgba(255, 255, 255, .34);
+  outline-offset: -1px;
+}
+.clip.actif { box-shadow: inset 0 0 0 2px var(--vert); outline-color: var(--vert); }
 /* Un bloc porte une image de fond et du texte : sans ces trois lignes, le
    navigateur y voit de quoi lancer son propre glisser-déposer ou une sélection,
    prend la main sur le geste et annule le nôtre au deuxième déplacement. */
@@ -1137,7 +1145,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 04:42";
+const VERSION_PAGE = "2026-08-18 06:39";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2526,12 +2534,19 @@ function demanderImagette(plan, temps, pas, exact = false) {
   const instant = exact ? temps : Math.round(temps / pas) * pas;
   if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) return;
   if (plan.youtube || !plan.video || !plan.duree) return;
-  // Une copie locale est en route : on l'attend plutôt que de retélécharger le
-  // même fichier pour en tirer des imagettes. Sur un téléphone en 4G, ce serait
-  // payer deux fois la même vidéo. L'image d'entrée fait exception : c'est la
-  // couverture du bloc, elle doit être là tout de suite, et elle ne coûte qu'une
-  // seule lecture.
-  if (!exact && !estLocal(plan) && importPrevu(plan)) return;
+  /* Tant qu'un fichier se télécharge, la sonde se tait complètement.
+     Elle passe par le même relais et tient une connexion ouverte pendant qu'elle
+     décode : mesuré, ses lectures occupaient jusqu'à neuf secondes de réseau
+     chacune et retardaient d'autant les vidéos. Or ce qu'on attend, c'est la
+     vidéo. Les blocs montrent en attendant la vignette de la source — qui est
+     bien la première image du fichier tant qu'on n'a rien rogné — et les vraies
+     images arrivent dès l'import terminé, gratuitement, depuis l'appareil.
+     Seule exception : un import qui a échoué. Le fichier ne viendra jamais sur
+     l'appareil, autant tirer les images de la source. */
+  // Exception à l'exception : un plan sans vignette de source n'a rien à montrer
+  // pendant son import. Une seule image, celle de son entrée, lui donne un
+  // visage — le reste attend la copie locale.
+  if (!estLocal(plan) && !importsRates.has(plan.video) && !(exact && !plan.preview)) return;
   bande.demandes.set(identifiant, instant);
   pellicule.demandees += 1;
   attenteImagettes.push({ plan, temps: instant, identifiant });
@@ -2701,6 +2716,9 @@ const RESERVE_MAX = 48;
 function prechaufferPellicule(plan) {
   const bande = bandeDe(plan);
   if (bande.prechauffe || plan.youtube || !plan.duree || !estLocal(plan)) return;
+  // Tant qu'un fichier se télécharge, on ne lui dispute ni le réseau ni le
+  // décodeur : la réserve est un confort, l'import est ce qu'on attend.
+  if (importsEnCours || fileImport.length) return;
   bande.prechauffe = true;
   const duree = dureeSource(plan);
   const pas = Math.max(PAS_RESERVE, duree / RESERVE_MAX);
@@ -2715,6 +2733,19 @@ function prechaufferPellicule(plan) {
   // après toutes celles qu'on demande pour l'affichage.
   attenteImagettes.unshift(...demandes);
   servirImagettes();
+}
+
+// Coupe la source distante de la sonde. Une source locale ne coûte rien, on la
+// garde : la relâcher obligerait à tout recharger à la prochaine imagette.
+function libererSondeBande() {
+  // Jamais pendant une capture : couper la source sous ses pieds ne déclenche
+  // aucun événement, la demande reste en cours et bloque toute la file.
+  if (sondeOccupee) return;
+  if (!sondeBande?.dataset.source || sondeBande.dataset.source.startsWith("blob:")) return;
+  sondeBande.removeAttribute("src");
+  sondeBande.load();
+  delete sondeBande.dataset.source;
+  delete sondeBande.dataset.reveille;
 }
 
 function viderAttenteImagettes() {
@@ -3954,7 +3985,19 @@ const MAGASIN = "fichiers";
 const locales = new Map();          // adresse d'origine -> adresse locale
 const enImport = new Map();         // adresse d'origine -> avancement 0..1
 const fileImport = [];
-let importEnCours = false;
+// Fichiers dont l'import a échoué : eux seuls autorisent la sonde à aller
+// chercher des images sur la source distante.
+const importsRates = new Set();
+/* Un seul téléchargement à la fois, et le plan courant en premier.
+
+   Mesuré sur quatre plans de douze mégaoctets, réseau bridé à six mégabits :
+   le premier plan est disponible à 8,9 s en séquentiel, contre 11,9 s à deux de
+   front et 14,8 s à trois, pour un total identique (26,3 à 26,7 s). Les requêtes
+   partagent la même connexion vers le même domaine : les paralléliser ne gagne
+   rien en débit, cela ne fait que retarder le premier fichier — celui sur lequel
+   on travaille. Le réglage reste ici pour être révisé si le transport change. */
+const IMPORTS_PARALLELES = 1;
+let importsEnCours = 0;
 let basePromise = null;
 
 function ouvrirBase() {
@@ -4023,10 +4066,17 @@ function planifierImport(plan) {
 }
 
 async function lancerImport() {
-  if (importEnCours) return;
+  if (importsEnCours >= IMPORTS_PARALLELES) return;
   const plan = fileImport.shift();
   if (!plan) return;
-  importEnCours = true;
+  importsEnCours += 1;
+  // La sonde à imagettes lâche sa source distante : une fois chargée, elle
+  // continue de remplir son tampon toute seule, connexion ouverte, et vole la
+  // bande passante au téléchargement — mesuré, plus de vingt secondes de réseau
+  // pour une poignée d'images dont on n'a pas besoin tout de suite.
+  libererSondeBande();
+  // On enchaîne aussitôt sur le suivant, sans attendre celui-ci.
+  if (fileImport.length) setTimeout(lancerImport, 0);
   enImport.set(plan.video, 0);
   majImports();
 
@@ -4059,10 +4109,12 @@ async function lancerImport() {
     await ecrireBase(plan.video, blob);
     locales.set(plan.video, URL.createObjectURL(blob));
   } catch {
-    // Import raté : le plan reste jouable en distant, avec ses limites.
+    // Import raté : le plan reste jouable en distant, avec ses limites, et sa
+    // pellicule pourra se remplir depuis la source.
+    importsRates.add(plan.video);
   } finally {
     enImport.delete(plan.video);
-    importEnCours = false;
+    importsEnCours -= 1;
     majImports();
     apresImport(plan);
     setTimeout(lancerImport, 60);
@@ -4115,7 +4167,10 @@ function apresImport(plan) {
   redessinerPisteDifferee();
   // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
   redessinerBandes();
-  prechaufferPellicule(plan);
+  // Le dernier import terminé, toutes les réserves peuvent enfin se constituer.
+  if (!importsEnCours && !fileImport.length) {
+    for (const autre of projetActif()?.plans || []) prechaufferPellicule(autre);
+  }
 }
 
 // Tous les plans du projet sont importés, le plan courant d'abord.
