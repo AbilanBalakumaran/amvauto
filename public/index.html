@@ -1389,7 +1389,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 14:17";
+const VERSION_PAGE = "2026-08-18 15:23";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3063,6 +3063,12 @@ function pasGrille() {
   return Math.max(IMAGE, puissance);
 }
 
+/* Tout instant demandé à la pellicule est ramené sur la trame de la source : une
+   vidéo n'a pas d'image entre deux images, et deux instants d'une même image
+   doivent donner la même capture — sinon on capture deux fois la même chose et
+   on croit voir deux images différentes. */
+const surImage = (t) => Math.round(t * IMAGES_PAR_SECONDE) / IMAGES_PAR_SECONDE;
+
 const cle = (pas, index) => `${pas.toFixed(4)}:${index}`;
 // La première image d'un bloc n'est pas prise sur la grille : elle doit tomber
 // pile sur le point d'entrée, sinon la couverture d'un plan rogné montre encore
@@ -3187,15 +3193,27 @@ const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" 
 
 function servirImagettes() {
   if (sondeOccupee) return;
-  /* L'image d'entrée d'un bloc passe devant. La file se servait par la fin, et
-     les colonnes sont demandées de gauche à droite : la couverture du premier
-     bloc arrivait donc bonne dernière, après toutes les colonnes de tous les
-     blocs. Sur un montage de deux plans, on voyait le second se remplir pendant
-     que le premier restait nu. C'est pourtant l'image qui identifie le bloc. */
-  const prioritaire = attenteImagettes.findLastIndex((d) => d.identifiant.startsWith("exact:"));
-  const demande = prioritaire >= 0
-    ? attenteImagettes.splice(prioritaire, 1)[0]
-    : attenteImagettes.pop();
+  /* L'ordre de service compte autant que la capture elle-même.
+
+     La file se servait par la fin, et les colonnes sont demandées de gauche à
+     droite : la dernière colonne du dernier bloc arrivait la première, et la
+     couverture du premier bloc bonne dernière. On sert désormais **ce qu'on
+     regarde** : d'abord les images exactes, et parmi elles la plus proche de la
+     tête de lecture. Zoomé à l'image, la pellicule se remplit ainsi autour du
+     curseur au lieu de commencer par un bord de l'écran. */
+  const cible = positionCible();
+  const vise = cible ? entreeDe(cible.plan) + cible.dans : 0;
+  const note = (d) => {
+    const exact = d.identifiant.startsWith("exact:") ? 0 : 1e6;
+    const loin = cible && d.plan.id === cible.plan.id ? Math.abs(d.temps - vise) : 1e3;
+    return exact + loin;
+  };
+  let choix = 0;
+  for (let i = 1; i < attenteImagettes.length; i += 1) {
+    if (note(attenteImagettes[i]) < note(attenteImagettes[choix])) choix = i;
+  }
+  const demande = attenteImagettes.splice(choix, 1)[0];
+  if (!demande) return;
   if (!demande) return;
   const { plan, temps, identifiant } = demande;
   const bande = bandeDe(plan);
@@ -3442,7 +3460,28 @@ function redessinerBandes() {
     const ctx = toile.getContext("2d");
     ctx.clearRect(0, 0, largeurPx, hauteurPx);
 
-    const colonnes = Math.max(1, Math.round((droite - gauche) / LARGEUR_IMAGETTE));
+    /* Deux régimes.
+
+       Dézoomé, une colonne couvre plusieurs secondes : elle en montre une image,
+       prise sur une grille assez fine pour lui appartenir.
+
+       Zoomé, une image de la source occupe assez de place pour être vue : la
+       pellicule montre alors les images une par une, calées sur la trame du
+       fichier. C'est ce qui relie enfin la piste et l'aperçu — le curseur tombe
+       dans la colonne de l'image que le moniteur affiche, et non quelque part
+       dans une colonne qui en couvre quatre. Sur une suite d'impact frames, où
+       deux images voisines n'ont rien à voir, c'est toute la différence entre
+       couper au bon endroit et couper à côté. */
+    /* Le seuil se juge en points, pas en pixels d'écran : sinon il se
+       déclencherait deux fois plus tôt sur un téléphone que sur un ordinateur,
+       pour des images larges de cinq points — invisibles — et deux fois plus de
+       captures. Onze points, c'est la largeur en dessous de laquelle une image
+       ne se distingue plus de sa voisine. */
+    const pxParImage = lecture.echelle * IMAGE;
+    const parImage = pxParImage >= 11;
+    const colonnes = parImage
+      ? Math.max(1, Math.round((droite - gauche) / pxParImage))
+      : Math.max(1, Math.round((droite - gauche) / LARGEUR_IMAGETTE));
     const largeurColonne = largeurPx / colonnes;
     const bande = bandeDe(plan);
     const entree = entreeDe(plan);
@@ -3452,10 +3491,13 @@ function redessinerBandes() {
       // la pellicule se lit alors comme une règle, et la première colonne porte
       // exactement l'image sur laquelle le plan commence.
       const bord = gauche + (colonne / colonnes) * (droite - gauche);
-      const temps = Math.min(
+      const brut = Math.min(
         sortieDe(plan) - IMAGE,
         Math.max(entree, entree + (bord - x) / lecture.echelle),
       );
+      // Au régime image par image, la colonne porte l'image de la source qui
+      // occupe cette place — pas un instant quelconque à l'intérieur.
+      const temps = parImage ? Math.max(entree, surImage(brut)) : brut;
       // Vrai seulement quand le début du bloc est à l'écran : ailleurs, la
       // première colonne visible n'est pas le début du plan.
       const couverture = colonne === 0 && Math.abs(gauche - x) < 0.5;
@@ -3477,12 +3519,16 @@ function redessinerBandes() {
           || imagetteAssezProche(bande, temps, pas, demiColonne);
         const instant = bande.images.has(cleExacte(temps)) ? temps : bande.couverture?.temps;
         if (instant !== undefined) bloc.dataset.couverture = instant.toFixed(2);
+      } else if (parImage) {
+        /* Une image, et rien d'autre. Aucun remplacement : à ce niveau de zoom,
+           l'image voisine est une autre image du film, et la montrer à la place
+           serait exactement l'erreur qu'on cherche à supprimer. Une colonne
+           sombre le temps de la capture dit la vérité. */
+        image = bande.images.get(cleExacte(temps));
       } else {
         /* L'image exacte de cette colonne d'abord. À défaut, la grille de
            secours ou l'image connue la plus proche — mais l'une comme l'autre
-           seulement si elles tombent dans la colonne. La bande se remplit ainsi
-           en quelques dixièmes de seconde sur un fichier local, et ce qu'elle
-           montre est toujours ce qui se trouve à cet endroit de la piste. */
+           seulement si elles tombent dans la colonne. */
         image = bande.images.get(cleExacte(temps))
           || imagetteAssezProche(bande, temps, pas, demiColonne)
           || imagetteLaPlusProche(bande, temps, demiColonne);
@@ -3506,7 +3552,8 @@ function redessinerBandes() {
          chaque déplacement, et une bande vide renseigne moins bien qu'une bande
          juste à la demi-colonne près. Seule l'image d'entrée du bloc reste prise
          exactement : elle doit tomber pile sur la coupe. */
-      demanderImagette(plan, temps, pas, couverture);
+      // Au régime image par image, chaque colonne réclame son image exacte.
+      demanderImagette(plan, temps, pas, couverture || (parImage && estLocal(plan)));
     }
     x += large;
   });

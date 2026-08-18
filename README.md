@@ -563,6 +563,35 @@ Ce qui a changé :
 - Un rose du thème rouge d'avant traînait encore sur les étiquettes, posé sur un
   fond vert.
 
+### Zoomé, la pellicule montre les images une par une
+
+Même juste à la demi-colonne près, la pellicule ne pouvait pas répondre à la
+question que se pose un monteur : *quelle image y a-t-il sous mon curseur ?* À
+360 points par seconde, une colonne de 64 points couvre **quatre images de la
+source** — le moniteur change donc quatre fois pendant que le curseur traverse
+une seule colonne. Sur une suite d'impact frames, où deux images voisines n'ont
+rien à voir, l'aperçu montrait un éclair magenta et la colonne un plan calme.
+
+Dès qu'une image de la source occupe **onze points ou plus**, la pellicule change
+de régime : une colonne vaut une image, calée sur la trame du fichier. Le curseur
+tombe alors dans la colonne de l'image que le moniteur affiche. Vérifié : à 448
+points par seconde, 34 colonnes pour 1,01 image chacune ; à 1331, 12 colonnes
+pour 0,96. Et sur six positions successives, la colonne sous le curseur montre
+bien l'image de l'aperçu.
+
+Le seuil se juge **en points, pas en pixels d'écran** : sinon il se déclencherait
+deux fois plus tôt sur un téléphone que sur un ordinateur, pour des images larges
+de cinq points — invisibles — et deux fois plus de captures.
+
+À ce régime, aucune image de remplacement n'est tolérée : l'image voisine est une
+autre image du film, et la montrer serait exactement l'erreur qu'on cherche à
+supprimer. Une colonne reste sombre le temps de sa capture.
+
+Enfin, **l'ordre de service suit le curseur**. La file se servait par la fin, et
+les colonnes sont demandées de gauche à droite : la dernière colonne du dernier
+bloc arrivait la première. On sert désormais l'image exacte la plus proche de la
+tête de lecture — la pellicule se remplit autour de ce qu'on regarde.
+
 ### La pellicule doit dire où l'on est
 
 Une colonne de pellicule ne montrait pas l'image de sa position, mais celle du
