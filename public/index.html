@@ -41,6 +41,18 @@
 ::-webkit-scrollbar-thumb:hover { background: #4ee06a; }
 
 :root {
+  /* Une échelle, et rien en dehors d'elle. Les espacements étaient posés au cas
+     par cas — 5, 7, 9, 10, 12, 14 px — et deux éléments voisins ne respiraient
+     jamais pareil. Quatre pas suffisent à tout tenir. */
+  --e1: 4px;
+  --e2: 8px;
+  --e3: 12px;
+  --e4: 16px;
+  --e5: 24px;
+  --e6: 32px;
+  --rail: 236px;        /* la navigation latérale, sur grand écran */
+  --colonne: 1180px;    /* la largeur de lecture confortable */
+
   --header-h: 50px;
   --nav-h: 54px;
   --vert: #35C24D;
@@ -165,8 +177,8 @@ main {
   order: 1;
   flex: none;
   display: flex;
-  gap: 5px;
-  padding: 7px 10px;
+  gap: var(--e2);
+  padding: var(--e2) var(--e3);
   overflow-x: auto;
   background: var(--fond);
   border-top: 1px solid var(--trait);
@@ -517,7 +529,7 @@ main {
 .lecteur-actions .fort { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
 
 /* --- éditeur de montage --------------------------------------------- */
-.editeur { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.editeur { display: flex; flex-direction: column; gap: var(--e3); margin-bottom: var(--e4); }
 
 .ecran {
   position: relative;
@@ -685,7 +697,7 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   background: #000;
 }
 
-.transport { display: flex; align-items: center; gap: 12px; }
+.transport { display: flex; align-items: center; gap: var(--e3); }
 .lecture {
   flex: none;
   width: 44px;
@@ -713,7 +725,7 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 }
 
 /* --- sélecteur de projets ------------------------------------------- */
-.projets { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.projets { display: flex; gap: var(--e2); overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
 .projets::-webkit-scrollbar { display: none; }
 .projet-carte {
   flex: none;
@@ -780,7 +792,7 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 
 /* --- piste ----------------------------------------------------------- */
 .piste-enveloppe { position: relative; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
-.piste-entete { display: flex; align-items: baseline; gap: 10px; padding: 0 2px; }
+.piste-entete { display: flex; align-items: baseline; gap: var(--e3); padding: 0 2px; }
 .timecode {
   font: 700 0.86rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--texte);
@@ -1032,7 +1044,146 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 }
 .panier-actions button.fort { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
 
-.apropos h2 { font-family: "Obelix Pro", "Arial Black", system-ui, sans-serif; font-size: 1rem; letter-spacing: .05em; margin: 20px 0 8px; }
+/* ======================================================================
+   Grand écran : un poste de travail, plus un téléphone étiré.
+
+   Jusqu'ici la page d'ordinateur était la page de téléphone agrandie : une
+   colonne de 900 points au milieu de 1440, deux larges bandes noires de chaque
+   côté, et une barre d'onglets en bas — un geste de pouce, sur une machine qui
+   n'en a pas. Les commandes s'écartaient jusqu'aux bords opposés de l'écran :
+   le bouton plein écran à gauche, la lecture au centre, l'historique à droite,
+   sans rien pour les relier. La barre d'outils, elle, traversait toute la
+   fenêtre alors que le contenu n'en occupait que les deux tiers.
+
+   On reprend donc la disposition d'un logiciel de gestion : la navigation passe
+   à gauche, en clair, toujours visible ; le contenu occupe la place restante
+   avec une gouttière constante ; et tout ce qui se commande se regroupe au lieu
+   de se disperser. Rien de tout cela ne touche au téléphone — ce bloc ne
+   s'applique qu'à partir de 1024 points de large.
+   ====================================================================== */
+@media (min-width: 1024px) {
+  body {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "nav vue" "nav outils";
+  }
+
+  /* --- la navigation, à gauche et nommée --- */
+  .bottom-nav {
+    grid-area: nav;
+    order: 0;
+    padding-bottom: 0;
+    border-top: none;
+    border-right: 1px solid var(--trait);
+  }
+  .bottom-nav-inner {
+    max-width: none;
+    height: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: var(--e1);
+    padding: var(--e4) var(--e3);
+  }
+  .tab-btn {
+    flex: none;
+    max-width: none;
+    height: 44px;
+    justify-content: flex-start;
+    gap: var(--e3);
+    padding: 0 var(--e3);
+    border-radius: 10px;
+  }
+  /* Le nom de l'onglet est déjà écrit dans l'étiquette d'accessibilité : sur un
+     écran large, il n'y a aucune raison de le cacher. */
+  /* L'étiquette vient après l'icône, la pastille se range tout à droite : dans
+     l'ordre du document la pastille précède l'étiquette, il faut donc les
+     replacer. */
+  .tab-btn::after {
+    content: attr(aria-label);
+    order: 1;
+    font: 600 0.88rem/1 system-ui, sans-serif;
+  }
+  .tab-btn svg { width: 22px; height: 22px; }
+  .tab-btn:hover { background: rgba(255, 255, 255, .05); color: var(--texte); }
+  .tab-btn.active { background: rgba(53, 194, 77, .14); color: var(--vert); }
+  .tab-badge { order: 2; margin-left: auto; }
+
+  /* --- le contenu prend la place, avec une gouttière constante --- */
+  .app-shell { grid-area: vue; min-width: 0; }
+  .app-header-inner { max-width: none; padding: 0 var(--e5); gap: var(--e3); }
+  main { max-width: var(--colonne); padding: var(--e5) var(--e5) var(--e6); }
+  main.montage { max-width: none; padding: var(--e4) var(--e5) var(--e2); }
+
+  .barre-outils {
+    grid-area: outils;
+    order: 0;
+    padding: var(--e2) var(--e5);
+    gap: var(--e2);
+  }
+
+  /* --- l'aperçu prend la hauteur, et le cadre épouse l'image --- */
+  main.montage #vue-projet { gap: var(--e4); }
+  main.montage .ecran {
+    max-height: 46vh;
+    width: auto;
+    align-self: center;
+  }
+
+  /* --- les commandes se regroupent au lieu de s'écarter --- */
+  /* Les commandes tiennent exactement la largeur de l'image, calculée comme
+     elle : rien ne dépasse du cadre qu'elles pilotent. */
+  .transport {
+    width: 100%;
+    max-width: min(100%, calc(46vh * 16 / 9));
+    margin: 0 auto;
+    gap: var(--e4);
+  }
+  .piste-entete { max-width: none; }
+
+  /* Sur un poste, on vise à la souris : les cibles peuvent être plus fines que
+     sous un doigt, mais elles doivent rester régulières. */
+  .barre-outils button { width: 38px; height: 38px; }
+  .tete-btn { padding: 8px 14px; }
+
+  /* --- l'explorateur : des lignes de tableau, pas des lignes étirées ---
+     Le nom et sa description tenaient à gauche, la note et le bouton d'ajout à
+     l'autre bout, et cinq cents points de vide entre les deux. La largeur d'un
+     écran doit porter de l'information, pas de l'écart : les étiquettes
+     remontent à droite de la colonne de texte, juste avant la note. */
+  .row .grow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "nom puces" "sous puces";
+    align-items: center;
+    column-gap: var(--e4);
+    row-gap: 2px;
+  }
+  .row .grow > .nom { grid-area: nom; }
+  .row .grow > .sous { grid-area: sous; }
+  .row .grow > .puces { grid-area: puces; justify-content: flex-end; }
+  .row { padding: var(--e3) var(--e4); gap: var(--e4); }
+  .rows { gap: var(--e2); }
+
+  /* Le champ de recherche n'a pas besoin de mille points de large : au-delà, la
+     phrase saisie flotte au milieu du vide et le bouton part à l'autre bout. */
+  .search-row { max-width: 640px; }
+
+  /* Un texte se lit sur soixante à quatre-vingts signes. Étalé sur onze cents
+     points, l'œil perd sa ligne en revenant à la marge. */
+  .apropos { max-width: 760px; }
+}
+
+/* Entre le téléphone et l'ordinateur, la barre reste en bas mais la lecture
+   respire déjà. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  main { max-width: 720px; padding: var(--e5) var(--e5) var(--e6); }
+  main.montage .ecran { max-height: 40vh; width: auto; align-self: center; }
+  .transport { max-width: 560px; margin: 0 auto; }
+}
+
+.apropos h2 { font-family: "Obelix Pro", "Arial Black", system-ui, sans-serif; font-size: 1rem; letter-spacing: .05em; margin: var(--e5) 0 var(--e2); }
 .apropos p, .apropos li { font-size: 0.88rem; color: #bbb; line-height: 1.6; }
 .apropos a { color: var(--vert); }
 </style>
@@ -1170,7 +1321,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 11:56";
+const VERSION_PAGE = "2026-08-18 12:18";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et

@@ -484,6 +484,47 @@ médias chargeables en parallèle est faible. D'où, respectivement : le déverr
 premier geste, la lecture lancée dans le geste, la position reposée jusqu'à ce qu'elle prenne
 (avec repli sur un fragment `#t=`), et une seule sonde à la fois.
 
+## Sur ordinateur : un poste de travail, pas un téléphone étiré
+
+La page d'ordinateur était la page de téléphone agrandie : une colonne de 900
+points au milieu de 1440, deux larges bandes noires de chaque côté, et une barre
+d'onglets en bas — un geste de pouce, sur une machine qui n'en a pas. Les
+commandes s'écartaient jusqu'aux bords opposés : plein écran à gauche, lecture au
+centre, historique à droite, sans rien pour les relier. La barre d'outils
+traversait toute la fenêtre alors que le contenu n'en occupait que les deux
+tiers. L'aperçu, enfin, était enfermé dans un cadre de 868 × 304 — bien plus
+large que le 16/9 de l'image, d'où deux bandes noires de plus.
+
+À partir de 1024 points de large, la disposition change, sur le modèle d'un
+logiciel de gestion :
+
+- **La navigation passe à gauche**, en clair et toujours visible. Le nom de
+  chaque destination est déjà écrit dans son étiquette d'accessibilité : sur un
+  écran large, rien ne justifie de le cacher.
+- **Le contenu occupe la place restante** avec une gouttière constante. La page
+  est une grille : navigation, vue, barre d'outils — celle-ci s'arrête donc au
+  bord de la navigation au lieu de traverser l'écran.
+- **L'aperçu prend la hauteur** (46 % de la fenêtre, mesuré 734 × 412 sur un
+  écran de 1440 et 881 × 495 sur un 1920) et **le cadre épouse l'image** : plus
+  de bandes noires sur les côtés.
+- **Les commandes tiennent exactement la largeur de l'image**, calculée comme
+  elle. Rien ne dépasse du cadre qu'elles pilotent.
+- **Les lignes de l'explorateur deviennent des lignes de tableau** : vignette,
+  nom et description, puis les étiquettes remontées à droite juste avant la note
+  et le bouton d'ajout. La largeur d'un écran doit porter de l'information, pas
+  de l'écart.
+- **Le champ de recherche et les textes sont bornés** — 640 et 760 points. Un
+  texte se lit sur soixante à quatre-vingts signes ; étalé sur onze cents points,
+  l'œil perd sa ligne en revenant à la marge.
+
+Les espacements suivent désormais **une échelle de quatre pas** (4, 8, 12, 16, 24,
+32) au lieu de valeurs posées au cas par cas — 5, 7, 9, 10, 12, 14 px se
+côtoyaient, et deux éléments voisins ne respiraient jamais pareil.
+
+Entre les deux, de 768 à 1023 points, la barre reste en bas mais la lecture
+respire déjà. **Rien de tout cela ne touche au téléphone** : vérifié à 320, 414,
+820, 1440 et 1920 points, sans débordement horizontal nulle part.
+
 ## Audit : quatorze défauts trouvés et corrigés
 
 Une revue complète du code et un passage en force sur l'interface, geste par
