@@ -240,6 +240,14 @@ image figée :
   — dézoomé, le pas de la grille vaut plusieurs secondes, et l'image « la plus proche » était
   celle du début du fichier. Rogner ne vide pas le cache d'imagettes : il est rangé par instant
   dans le fichier source, donc aucune image n'y périme.
+- **La sonde à imagettes doit avoir joué une fois.** Sur iPhone, un lecteur qui n'a jamais reçu
+  l'ordre de jouer ne charge rien — `preload` est ignoré en réseau mobile — et une vidéo détachée
+  du document ou masquée n'est pas décodée du tout. La sonde qui fabrique la pellicule était dans
+  ces deux cas : elle n'a donc jamais produit une seule image sur un téléphone, et les blocs
+  n'affichaient que la vignette de la source, étirée. Elle est désormais attachée au document
+  (un pixel transparent dans un coin) et réveillée par une lecture muette aussitôt coupée, que
+  Safari autorise sans geste. Vérifié en simulant la contrainte : 0 colonne sur 8 remplie avant,
+  8 sur 8 après.
 - **Les imagettes attendent la copie locale.** Tant qu'un import est en cours pour un plan, la
   pellicule ne va pas chercher ses images sur la source distante : ce serait payer deux fois le
   même fichier en 4G. Elles partent dès que la copie est sur l'appareil.

@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 02:58";
+const VERSION_PAGE = "2026-08-18 03:09";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2457,6 +2457,37 @@ const attenteImagettes = [];
 let sondeBande = null;
 let sondeOccupee = false;
 
+function creerSondeBande() {
+  const sonde = document.createElement("video");
+  sonde.muted = true;
+  sonde.playsInline = true;
+  sonde.preload = "auto";
+  sonde.setAttribute("muted", "");
+  sonde.setAttribute("playsinline", "");
+  // Attachée au document, et pas en display:none : Safari sur iPhone ne décode
+  // pas une vidéo détachée ou masquée, et une toile ne peut alors rien en tirer.
+  // Un pixel transparent dans un coin suffit à la rendre légitime.
+  sonde.style.cssText =
+    "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1";
+  document.body.append(sonde);
+  return sonde;
+}
+
+// Sur iPhone, un lecteur qui n'a jamais joué ne charge rien — « preload » est
+// ignoré en réseau mobile. Une lecture muette et en ligne est autorisée sans
+// geste : on la lance puis on la coupe aussitôt, uniquement pour décider le
+// lecteur à décoder une image. C'est ce qui manquait pour que la pellicule
+// produise quoi que ce soit sur un téléphone.
+function reveillerSonde(sonde) {
+  if (sonde.dataset.reveille === "1" || sonde.readyState >= 2) return;
+  const essai = sonde.play();
+  if (!essai) return;
+  sonde.dataset.reveille = "1";
+  essai.then(() => sonde.pause()).catch(() => { delete sonde.dataset.reveille; });
+}
+
+const pellicule = { prises: 0, ratees: 0, dernier: "" };
+
 function servirImagettes() {
   if (sondeOccupee) return;
   const demande = attenteImagettes.pop();   // le plus récemment demandé d'abord
@@ -2466,66 +2497,84 @@ function servirImagettes() {
   if (bande.images.has(identifiant)) { bande.demandes.delete(identifiant); return servirImagettes(); }
   sondeOccupee = true;
 
-  if (!sondeBande) {
-    sondeBande = document.createElement("video");
-    sondeBande.muted = true;
-    sondeBande.playsInline = true;
-    sondeBande.preload = "auto";
-  }
+  if (!sondeBande) sondeBande = creerSondeBande();
   const sonde = sondeBande;
   const source = sourceDe(plan);
+  const exact = identifiant.startsWith("exact:");
 
   let fini = false;
-  const finir = (image) => {
+  // Déclarée avant « finir » : une capture qui réussit du premier coup termine
+  // avant la fin de cette fonction, et voudrait déjà arrêter la relance.
+  let relance = null;
+  const finir = (image, pourquoi) => {
     if (fini) return;
     fini = true;
     clearTimeout(abandon);
+    if (relance) clearInterval(relance);
     sonde.removeEventListener("seeked", capter);
     sonde.removeEventListener("loadeddata", capter);
+    sonde.removeEventListener("canplay", capter);
     sonde.removeEventListener("error", rater);
     bande.demandes.delete(identifiant);
     if (image) {
+      pellicule.prises += 1;
       bande.images.set(identifiant, image);
-      if (identifiant.startsWith("exact:")) bande.couverture = { temps, image };
+      if (exact) bande.couverture = { temps, image };
       bande.ordre.push(identifiant);
       // Mémoire bornée : au-delà du plafond, les plus anciennes images sortent.
       while (bande.ordre.length > IMAGETTES_MAX) bande.images.delete(bande.ordre.shift());
       redessinerBandes();
+    } else {
+      pellicule.ratees += 1;
+      pellicule.dernier = `${pourquoi || "échec"} à ${temps.toFixed(2)} s` +
+        ` (état ${sonde.readyState}/4${sonde.error ? `, erreur ${sonde.error.code}` : ""})`;
     }
     sondeOccupee = false;
     setTimeout(servirImagettes, 0);
   };
 
   const capter = () => {
-    if (sonde.readyState < 2 || !sonde.videoWidth) return;
-    if (Math.abs(sonde.currentTime - temps) > Math.max(0.2, IMAGE)) return;
+    if (sonde.readyState < 2 || !sonde.videoWidth) { reveillerSonde(sonde); return; }
+    // Une image d'entrée doit tomber juste ; ailleurs, quelques centièmes
+    // d'écart ne se voient pas.
+    if (Math.abs(sonde.currentTime - temps) > (exact ? 0.12 : 0.35)) return;
     const toile = document.createElement("canvas");
     toile.width = 160;
     toile.height = Math.round((160 * sonde.videoHeight) / sonde.videoWidth) || 90;
     try {
       toile.getContext("2d").drawImage(sonde, 0, 0, toile.width, toile.height);
     } catch {
-      return finir(null);
+      return finir(null, "toile refusée");
     }
     finir(toile);
   };
-  const rater = () => finir(null);
-  // Un fichier distant peut ne jamais répondre : la sonde ne doit pas rester
-  // bloquée dessus, sinon plus aucune image n'arrive.
-  const abandon = setTimeout(() => finir(null), 6000);
+  const rater = () => finir(null, "lecteur en erreur");
+  const abandon = setTimeout(() => finir(null, "délai dépassé"), 8000);
 
   sonde.addEventListener("seeked", capter);
   sonde.addEventListener("loadeddata", capter);
+  sonde.addEventListener("canplay", capter);
   sonde.addEventListener("error", rater);
+
+  const viser = () => {
+    if (sonde.readyState < 1) { reveillerSonde(sonde); return; }
+    if (Math.abs(sonde.currentTime - temps) < 0.001) capter();
+    else sonde.currentTime = Math.min(temps, sonde.duration || temps);
+  };
 
   if (sonde.dataset.source !== source) {
     sonde.dataset.source = source;
+    delete sonde.dataset.reveille;
     sonde.src = source;
-    sonde.addEventListener("loadedmetadata", () => { sonde.currentTime = temps; }, { once: true });
-  } else if (sonde.readyState >= 1) {
-    if (Math.abs(sonde.currentTime - temps) < 0.001) capter();
-    else sonde.currentTime = temps;
+    sonde.load();
+    sonde.addEventListener("loadedmetadata", viser, { once: true });
   }
+  reveillerSonde(sonde);
+  viser();
+  // Une consigne posée trop tôt est ignorée en silence : on la repose tant que
+  // le lecteur n'a pas suivi. Sans cela, une sonde restée à zéro bloquait toute
+  // la file jusqu'au délai, puis la suivante repartait dans le même mur.
+  if (!fini) relance = setInterval(viser, 400);
 }
 
 // Les demandes en attente ne valent que pour ce qui est à l'écran : au
@@ -4133,6 +4182,8 @@ $("btn-setting").addEventListener("click", () => {
           `${video?.dataset.vise ? ` · vise ${Math.round(Number(video.dataset.vise) * 100) / 100} s` : ""}` +
           `${video?.seeking ? " · déplacement en cours" : ""}`,
         `  média ${estLocal(cible.plan) ? "importé sur l'appareil" : "distant"}`,
+        `  pellicule : ${pellicule.prises} image(s) prise(s), ${pellicule.ratees} échec(s)` +
+          `${pellicule.dernier ? ` — dernier : ${pellicule.dernier}` : ""}`,
       ];
     })(),
     "",
