@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 03:19";
+const VERSION_PAGE = "2026-08-18 03:38";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2325,7 +2325,31 @@ function dessinerMoniteur() {
   // l'image. Retomber alors sur la vignette du plan donnerait une image fixe
   // qui ne bouge plus : on garde la dernière image décodée à la place.
   let source = null;
-  if (video && video.readyState >= 2 && video.videoWidth) {
+
+  /* Doigt en mouvement : le lecteur ne peut pas suivre. Un fichier ne traite
+     qu'un déplacement à la fois, et il en faudrait des dizaines par seconde.
+     On montre donc l'imagette déjà capturée la plus proche — la même que celle
+     de la pellicule, en basse définition mais immédiate — et l'image pleine
+     reprend la main dès que le doigt s'arrête. C'est ainsi qu'un banc de
+     montage donne l'impression de faire défiler les images. */
+  if (lecture.scrub) {
+    const cible = positionCible();
+    if (cible && !cible.plan.youtube) {
+      const temps = entreeDe(cible.plan) + cible.dans;
+      const pas = pasGrille();
+      const juste = video && video.readyState >= 2 && video.videoWidth
+        && video.dataset.plan === cible.plan.id
+        && Math.abs(video.currentTime - temps) <= 0.08;
+      if (!juste) source = imagetteLaPlusProche(bandeDe(cible.plan), temps, 0.6);
+      // On demande au passage l'imagette de l'endroit survolé : le défilement
+      // se densifie là où le doigt passe.
+      demanderImagette(cible.plan, temps, pas);
+    }
+  }
+
+  if (source) {
+    // une imagette de défilement a déjà été retenue
+  } else if (video && video.readyState >= 2 && video.videoWidth) {
     source = video;
     derniereImage.plan = plan?.id || null;
   } else if (derniereImage.plan && derniereImage.plan === plan?.id && derniereImage.toile.width) {
@@ -2393,7 +2417,18 @@ function bandeDe(plan) {
     // « couverture » : la dernière image d'entrée obtenue pour ce plan. Elle sert
     // de secours pendant qu'on tire une poignée, le temps que l'image du nouveau
     // point d'entrée soit capturée.
-    bande = { images: new Map(), demandes: new Map(), epuise: false, ordre: [], couverture: null };
+    bande = {
+      images: new Map(),
+      demandes: new Map(),
+      epuise: false,
+      ordre: [],
+      couverture: null,
+      // Toutes les images de ce plan, triées par instant : c'est ce qui permet
+      // de trouver la plus proche d'une position quelconque sans dépendre de la
+      // grille sur laquelle elle a été prise.
+      parTemps: [],
+      prechauffe: false,
+    };
     bandes.set(plan.id, bande);
   }
   return bande;
@@ -2421,6 +2456,36 @@ function imagetteProche(bande, temps, pas) {
     if (trouve) return trouve;
   }
   return null;
+}
+
+// Insertion à sa place dans la liste triée, et recherche de la plus proche par
+// dichotomie : appelées à chaque image du moniteur pendant un défilement.
+function rangerParTemps(bande, temps, image) {
+  let bas = 0, haut = bande.parTemps.length;
+  while (bas < haut) {
+    const milieu = (bas + haut) >> 1;
+    if (bande.parTemps[milieu].temps < temps) bas = milieu + 1;
+    else haut = milieu;
+  }
+  bande.parTemps.splice(bas, 0, { temps, image });
+}
+
+function imagetteLaPlusProche(bande, temps, tolerance) {
+  const liste = bande.parTemps;
+  if (!liste.length) return null;
+  let bas = 0, haut = liste.length - 1;
+  while (bas < haut) {
+    const milieu = (bas + haut) >> 1;
+    if (liste[milieu].temps < temps) bas = milieu + 1;
+    else haut = milieu;
+  }
+  const candidats = [liste[bas], liste[bas - 1]].filter(Boolean);
+  let meilleur = null, ecart = Infinity;
+  for (const c of candidats) {
+    const d = Math.abs(c.temps - temps);
+    if (d < ecart) { ecart = d; meilleur = c; }
+  }
+  return ecart <= tolerance ? meilleur.image : null;
 }
 
 // Comme imagetteProche, mais elle refuse une image trop éloignée de l'instant
@@ -2521,8 +2586,14 @@ function servirImagettes() {
       bande.images.set(identifiant, image);
       if (exact) bande.couverture = { temps, image };
       bande.ordre.push(identifiant);
+      rangerParTemps(bande, temps, image);
       // Mémoire bornée : au-delà du plafond, les plus anciennes images sortent.
-      while (bande.ordre.length > IMAGETTES_MAX) bande.images.delete(bande.ordre.shift());
+      while (bande.ordre.length > IMAGETTES_MAX) {
+        const vieille = bande.images.get(bande.ordre[0]);
+        bande.images.delete(bande.ordre.shift());
+        const rang = bande.parTemps.findIndex((e) => e.image === vieille);
+        if (rang >= 0) bande.parTemps.splice(rang, 1);
+      }
       redessinerBandes();
     } else {
       pellicule.ratees += 1;
@@ -2579,13 +2650,55 @@ function servirImagettes() {
 
 // Les demandes en attente ne valent que pour ce qui est à l'écran : au
 // pincement suivant, elles ne servent plus à rien.
+/* Réserve d'images d'un plan.
+
+   Un banc de montage construit ses vignettes une fois pour toutes après
+   l'import, et ne dépend plus d'elles ensuite. C'est ce qui permet de faire
+   défiler le curseur vite en voyant les images : un fichier ne se déplace que
+   d'une position à la fois, il ne peut pas suivre un doigt, mais des images
+   déjà prises s'affichent instantanément.
+
+   On en prend une toutes les 0,4 s environ, plafonnées à quarante-huit par
+   plan, en tâche de fond et seulement sur la copie locale. Ces demandes sont
+   déposées au fond de la file : tout ce que l'utilisateur regarde passe avant. */
+const PAS_RESERVE = 0.4;
+const RESERVE_MAX = 48;
+
+function prechaufferPellicule(plan) {
+  const bande = bandeDe(plan);
+  if (bande.prechauffe || plan.youtube || !plan.duree || !estLocal(plan)) return;
+  bande.prechauffe = true;
+  const duree = dureeSource(plan);
+  const pas = Math.max(PAS_RESERVE, duree / RESERVE_MAX);
+  const demandes = [];
+  for (let temps = 0; temps < duree - IMAGE; temps += pas) {
+    const identifiant = cle(pas, Math.round(temps / pas));
+    if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) continue;
+    bande.demandes.set(identifiant, temps);
+    demandes.push({ plan, temps, identifiant, reserve: true });
+  }
+  // En tête de tableau : la file se sert par la fin, donc ces images passent
+  // après toutes celles qu'on demande pour l'affichage.
+  attenteImagettes.unshift(...demandes);
+  servirImagettes();
+}
+
 function viderAttenteImagettes() {
-  for (const { plan, identifiant } of attenteImagettes) bandeDe(plan).demandes.delete(identifiant);
+  // Seules les demandes d'affichage sont abandonnées : la réserve du plan, elle,
+  // sert à tous les zooms et n'a pas à être refaite.
+  const gardees = [];
+  for (const demande of attenteImagettes) {
+    if (demande.reserve) gardees.push(demande);
+    else bandeDe(demande.plan).demandes.delete(demande.identifiant);
+  }
   attenteImagettes.length = 0;
+  attenteImagettes.push(...gardees);
 }
 
 function ordonnancerBandes() {
   redessinerBandes();
+  // Chaque plan déjà sur l'appareil se constitue sa réserve d'images.
+  for (const plan of projetActif()?.plans || []) prechaufferPellicule(plan);
 }
 
 /* Peint la partie visible de chaque bloc. Chaque colonne de 96 px porte
@@ -3943,6 +4056,7 @@ function apresImport(plan) {
   redessinerPisteDifferee();
   // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
   redessinerBandes();
+  prechaufferPellicule(plan);
 }
 
 // Tous les plans du projet sont importés, le plan courant d'abord.

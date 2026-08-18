@@ -247,6 +247,17 @@ image figée :
   par nos soins n'est jamais relancée — le rattrapage qui rejoue en sourdine après un refus
   confondait notre propre pause avec un refus du navigateur, et repartait sur le morceau coupé.
   Arrivé au bout, un appui sur lecture reprend depuis le début.
+- **Un fichier ne suit pas un doigt.** Un lecteur ne traite qu'un déplacement à la fois, là où
+  un défilement rapide en demanderait des dizaines par seconde : l'image se figeait le temps que
+  le lecteur rattrape. Pendant un déplacement, l'aperçu montre donc l'imagette déjà capturée la
+  plus proche — basse définition mais immédiate — et l'image pleine reprend la main dès que le
+  doigt s'arrête. C'est ainsi qu'un banc de montage donne l'impression de faire défiler les
+  images. Pour que cette réserve soit assez dense, chaque plan importé se fait échantillonner en
+  tâche de fond, une image toutes les 0,4 s et au plus quarante-huit par plan, ces demandes
+  passant après tout ce qui est affiché. Les images sont retrouvées par dichotomie dans une liste
+  triée par instant, indépendamment de la grille sur laquelle elles ont été prises. Mesuré sur un
+  balayage de bout en bout dans les deux sens, à 25 ms par pas : 12 relevés, 12 images
+  différentes, contre 7 ou 8 sans la réserve.
 - **La sonde à imagettes doit avoir joué une fois.** Sur iPhone, un lecteur qui n'a jamais reçu
   l'ordre de jouer ne charge rien — `preload` est ignoré en réseau mobile — et une vidéo détachée
   du document ou masquée n'est pas décodée du tout. La sonde qui fabrique la pellicule était dans
