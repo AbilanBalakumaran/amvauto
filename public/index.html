@@ -1389,7 +1389,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 13:32";
+const VERSION_PAGE = "2026-08-18 14:17";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3031,6 +3031,12 @@ function bandeDe(plan) {
       epuise: false,
       ordre: [],
       couverture: null,
+      // Les instants qu'on n'a pas pu capturer : au-delà de la fin réelle du
+      // fichier, ou sur une zone illisible. Sans cette mémoire, la même capture
+      // était redemandée à chaque redessin, échouait au bout de huit secondes,
+      // et bloquait pendant ce temps toutes les autres — une seule position
+      // impossible suffisait à laisser la pellicule presque vide.
+      echecs: new Set(),
       // Toutes les images de ce plan, triées par instant : c'est ce qui permet
       // de trouver la plus proche d'une position quelconque sans dépendre de la
       // grille sur laquelle elle a été prise.
@@ -3044,9 +3050,16 @@ function bandeDe(plan) {
 
 // Pas de la grille : une image tous les 96 px environ, arrondi à la puissance
 // de deux la plus proche, et jamais plus fin qu'une image de la source.
+/* Le pas de la grille de secours. Il était arrondi à la puissance de deux la
+   plus proche, ce qui le rendait jusqu'à une fois et demie plus grossier qu'une
+   colonne : deux colonnes voisines retombaient alors sur la même image, et une
+   colonne pouvait montrer une image prise une seconde plus loin — vingt-quatre
+   images d'écart. Sur un banc de montage, c'est une erreur de coupe. On arrondit
+   donc vers le bas : le pas est toujours au plus égal à la durée d'une colonne,
+   donc l'écart au plus égal à une demi-colonne. */
 function pasGrille() {
   const brut = LARGEUR_IMAGETTE / Math.max(0.001, lecture.echelle);
-  const puissance = Math.pow(2, Math.round(Math.log2(Math.max(IMAGE, brut))));
+  const puissance = Math.pow(2, Math.floor(Math.log2(Math.max(IMAGE, brut))));
   return Math.max(IMAGE, puissance);
 }
 
@@ -3112,7 +3125,7 @@ function demanderImagette(plan, temps, pas, exact = false) {
   const bande = bandeDe(plan);
   const identifiant = exact ? cleExacte(temps) : cle(pas, Math.round(temps / pas));
   const instant = exact ? temps : Math.round(temps / pas) * pas;
-  if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) return;
+  if (bande.images.has(identifiant) || bande.demandes.has(identifiant) || bande.echecs.has(identifiant)) return;
   if (plan.youtube || !mediaDe(plan) || !plan.duree) return;
   /* Tant qu'un fichier se télécharge, la sonde se tait complètement.
      Elle passe par le même relais et tient une connexion ouverte pendant qu'elle
@@ -3236,6 +3249,7 @@ function servirImagettes() {
          le temps que la réserve se constitue, pour repeindre la même image. */
       if (apercu.source && apercu.source !== elementActif()) reveillerMoniteur(200);
     } else {
+      bande.echecs.add(identifiant);
       pellicule.ratees += 1;
       pellicule.dernier = `${pourquoi || "échec"} à ${temps.toFixed(2)} s` +
         ` (état ${sonde.readyState}/4${sonde.error ? `, erreur ${sonde.error.code}` : ""})`;
@@ -3445,6 +3459,11 @@ function redessinerBandes() {
       // Vrai seulement quand le début du bloc est à l'écran : ailleurs, la
       // première colonne visible n'est pas le début du plan.
       const couverture = colonne === 0 && Math.abs(gauche - x) < 0.5;
+      /* Une colonne ne peut montrer qu'une image qui lui appartient : au-delà
+         d'une demi-colonne, l'image est celle d'une autre position de la piste,
+         et c'est précisément ce qui fait couper au mauvais endroit. Mieux vaut
+         une colonne vide, le temps de la capture, qu'une colonne qui ment. */
+      const demiColonne = Math.max(IMAGE / 2, (largeurColonne / dpr) / lecture.echelle / 2);
       let image;
       if (couverture) {
         // L'image d'entrée ne se contente pas d'une approximation : dézoomé, le
@@ -3453,19 +3472,20 @@ function redessinerBandes() {
         // d'un poil quand on rognait. On prend l'image exacte, à défaut la
         // dernière image d'entrée connue de ce plan, et en dernier recours une
         // image de la grille seulement si elle tombe assez près.
-        const tolerance = Math.max(IMAGE, (largeurColonne / dpr) / lecture.echelle / 2);
         image = bande.images.get(cleExacte(temps))
           || bande.couverture?.image
-          || imagetteAssezProche(bande, temps, pas, tolerance);
+          || imagetteAssezProche(bande, temps, pas, demiColonne);
         const instant = bande.images.has(cleExacte(temps)) ? temps : bande.couverture?.temps;
         if (instant !== undefined) bloc.dataset.couverture = instant.toFixed(2);
       } else {
-        // Une colonne sans image laissait un trou noir au milieu de la
-        // pellicule, le temps qu'elle soit capturée. On y met l'image connue la
-        // plus proche : la bande reste continue et se précise à mesure que les
-        // images arrivent, au lieu de se remplir par plaques.
-        image = imagetteProche(bande, temps, pas)
-          || imagetteLaPlusProche(bande, temps, Math.max(1, (largeurColonne / dpr) / lecture.echelle * 4));
+        /* L'image exacte de cette colonne d'abord. À défaut, la grille de
+           secours ou l'image connue la plus proche — mais l'une comme l'autre
+           seulement si elles tombent dans la colonne. La bande se remplit ainsi
+           en quelques dixièmes de seconde sur un fichier local, et ce qu'elle
+           montre est toujours ce qui se trouve à cet endroit de la piste. */
+        image = bande.images.get(cleExacte(temps))
+          || imagetteAssezProche(bande, temps, pas, demiColonne)
+          || imagetteLaPlusProche(bande, temps, demiColonne);
       }
       if (image) {
         const facteur = Math.max(largeurColonne / image.width, hauteurPx / image.height);
@@ -3478,6 +3498,14 @@ function redessinerBandes() {
         ctx.drawImage(image, colonne * largeurColonne + (largeurColonne - l) / 2, (hauteurPx - h) / 2, l, h);
         ctx.restore();
       }
+      /* Une seule image par colonne, prise sur la grille — dont le pas est
+         désormais au plus égal à la durée d'une colonne, si bien que l'image
+         tombe toujours dans la colonne qui la montre. Demander en plus l'image
+         exacte de chaque colonne aurait été plus juste encore, mais la file s'en
+         trouvait saturée : la pellicule restait vide plusieurs secondes après
+         chaque déplacement, et une bande vide renseigne moins bien qu'une bande
+         juste à la demi-colonne près. Seule l'image d'entrée du bloc reste prise
+         exactement : elle doit tomber pile sur la coupe. */
       demanderImagette(plan, temps, pas, couverture);
     }
     x += large;

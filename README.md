@@ -563,6 +563,39 @@ Ce qui a changé :
 - Un rose du thème rouge d'avant traînait encore sur les étiquettes, posé sur un
   fond vert.
 
+### La pellicule doit dire où l'on est
+
+Une colonne de pellicule ne montrait pas l'image de sa position, mais celle du
+point le plus proche d'une **grille en puissances de deux** — un pas arrondi à la
+puissance la plus proche, donc jusqu'à une fois et demie plus grossier qu'une
+colonne. Deux colonnes voisines retombaient alors sur la même image, et une
+colonne pouvait montrer une image prise une seconde plus loin : vingt-quatre
+images d'écart. Pour choisir un point de coupe, c'est une erreur de coupe.
+
+Trois réglages, tous dans le même sens :
+
+- **Le pas de la grille est arrondi vers le bas**, donc toujours au plus égal à
+  la durée d'une colonne. L'écart entre l'image montrée et la position de la
+  colonne ne peut plus dépasser une demi-colonne — l'image appartient toujours à
+  la colonne qui la porte.
+- **Les images de secours respectent la même limite.** À défaut d'image, on
+  descendait jusqu'à une grille deux cent cinquante-six fois plus grossière, ou
+  on acceptait une image prise quatre colonnes plus loin. Les deux sont ramenés à
+  la demi-colonne.
+- **Une capture impossible n'est plus retentée sans fin.** Un instant illisible —
+  au-delà de la fin réelle du fichier, par exemple — était redemandé à chaque
+  redessin, échouait au bout de huit secondes, et bloquait pendant tout ce temps
+  toutes les autres captures. Une seule position impossible suffisait à laisser
+  la pellicule presque vide. Les échecs sont désormais retenus.
+
+Une tentative intermédiaire a été écartée : demander en plus l'image exacte de
+chaque colonne. C'était plus juste encore, mais la file s'en trouvait saturée et
+la pellicule restait vide plusieurs secondes après chaque déplacement — une bande
+vide renseigne moins bien qu'une bande juste à la demi-colonne près.
+
+Vérifié en posant la tête de lecture au bord de quatre colonnes successives et en
+comparant l'image de la colonne à celle du moniteur : les quatre concordent.
+
 ### Un bloc ne montre que son propre plan
 
 Le bloc portait en fond **la vignette fournie par la source** — c'est-à-dire la
