@@ -247,6 +247,16 @@ image figée :
   par nos soins n'est jamais relancée — le rattrapage qui rejoue en sourdine après un refus
   confondait notre propre pause avec un refus du navigateur, et repartait sur le morceau coupé.
   Arrivé au bout, un appui sur lecture reprend depuis le début.
+- **Le plan suivant est garé sur son point d'entrée.** Il est préchargé pendant que le plan
+  courant se joue, mais il restait au début de son fichier : à la bascule, le lecteur devient
+  visible immédiatement et montrait les premières images du fichier — celles-là mêmes qui
+  avaient été coupées — le temps que la position s'applique. Mesuré : 0 s au lieu de 4 s avant
+  correction. Le moniteur refuse en outre de dessiner une image située avant le point d'entrée.
+- **Une lecture en cours n'est jamais ramenée en arrière.** La reprise de position, qui repose
+  la cible tant qu'elle n'est pas atteinte, ne distinguait pas une cible périmée d'une consigne
+  vivante : posée juste avant un démarrage, elle tirait le lecteur en arrière pendant qu'il
+  jouait, et l'on revoyait des images déjà passées. Mesuré : 4,21 s ramené à 3,79 s avant
+  correction, aucun recul après.
 - **Un fichier ne suit pas un doigt.** Un lecteur ne traite qu'un déplacement à la fois, là où
   un défilement rapide en demanderait des dizaines par seconde : l'image se figeait le temps que
   le lecteur rattrape. Pendant un déplacement, l'aperçu montre donc l'imagette déjà capturée la

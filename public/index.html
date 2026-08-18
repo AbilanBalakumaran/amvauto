@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 03:38";
+const VERSION_PAGE = "2026-08-18 03:52";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2349,7 +2349,11 @@ function dessinerMoniteur() {
 
   if (source) {
     // une imagette de défilement a déjà été retenue
-  } else if (video && video.readyState >= 2 && video.videoWidth) {
+  } else if (video && video.readyState >= 2 && video.videoWidth
+             && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - IMAGE)) {
+    // La dernière condition écarte une image située avant le point d'entrée :
+    // elle a été retirée du montage, elle n'a rien à faire à l'écran, même une
+    // fraction de seconde pendant qu'un plan se met en place.
     source = video;
     derniereImage.plan = plan?.id || null;
   } else if (derniereImage.plan && derniereImage.plan === plan?.id && derniereImage.toile.width) {
@@ -2812,6 +2816,13 @@ function preparerSuivant(index) {
   attente.muted = true;
   attente.src = source;
   attente.load();
+  // Et garé sur son point d'entrée, pas au début du fichier : à la bascule, le
+  // lecteur devient visible immédiatement, et il montrait jusqu'ici les
+  // premières images du fichier — celles-là mêmes qui avaient été coupées — le
+  // temps que la position s'applique.
+  const garer = () => demanderPosition(attente, entreeDe(plan));
+  attente.addEventListener("loadedmetadata", garer, { once: true });
+  if (attente.readyState >= 1) garer();
 }
 
 // Plein écran à gauche, lecture au centre, annuler et rétablir à droite.
@@ -3822,6 +3833,10 @@ function rattraperPosition(video) {
   const vise = Number(video.dataset.vise);
   if (!Number.isFinite(vise)) return;
   if (performance.now() > Number(video.dataset.viseFin)) return oublierPosition(video);
+  // Une lecture en cours commande. Sans cette garde, une cible posée juste avant
+  // le démarrage — au changement de plan, par exemple — ramenait le lecteur en
+  // arrière pendant qu'il jouait : on revoyait des images déjà passées.
+  if (lecture.demande && !lecture.scrub && !video.paused) return oublierPosition(video);
   // Un déplacement est déjà en route : on le laisse finir, la cible reste notée.
   if (video.seeking || video.readyState < 1) return;
   if (Math.abs(video.currentTime - vise) <= 0.06) return oublierPosition(video);
