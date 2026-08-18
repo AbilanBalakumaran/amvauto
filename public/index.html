@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 02:30";
+const VERSION_PAGE = "2026-08-18 02:42";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2405,6 +2405,10 @@ function pasGrille() {
 }
 
 const cle = (pas, index) => `${pas.toFixed(4)}:${index}`;
+// La première image d'un bloc n'est pas prise sur la grille : elle doit tomber
+// pile sur le point d'entrée, sinon la couverture d'un plan rogné montre encore
+// une image d'avant la coupe.
+const cleExacte = (temps) => `exact:${temps.toFixed(3)}`;
 
 // Image la plus proche disponible : la grille demandée d'abord, puis les
 // grilles plus grossières — mieux vaut une image approchante que du noir.
@@ -2416,14 +2420,14 @@ function imagetteProche(bande, temps, pas) {
   return null;
 }
 
-function demanderImagette(plan, temps, pas) {
+function demanderImagette(plan, temps, pas, exact = false) {
   const bande = bandeDe(plan);
-  const index = Math.round(temps / pas);
-  const identifiant = cle(pas, index);
+  const identifiant = exact ? cleExacte(temps) : cle(pas, Math.round(temps / pas));
+  const instant = exact ? temps : Math.round(temps / pas) * pas;
   if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) return;
   if (plan.youtube || !plan.video || !plan.duree) return;
-  bande.demandes.set(identifiant, index * pas);
-  attenteImagettes.push({ plan, temps: index * pas, identifiant });
+  bande.demandes.set(identifiant, instant);
+  attenteImagettes.push({ plan, temps: instant, identifiant });
   servirImagettes();
 }
 
@@ -2562,9 +2566,23 @@ function redessinerBandes() {
     const entree = entreeDe(plan);
 
     for (let colonne = 0; colonne < colonnes; colonne += 1) {
-      const centre = gauche + ((colonne + 0.5) / colonnes) * (droite - gauche);
-      const temps = Math.min(sortieDe(plan) - IMAGE, entree + (centre - x) / lecture.echelle);
-      const image = imagetteProche(bande, temps, pas);
+      // Chaque colonne montre l'image de son bord gauche, pas de son milieu :
+      // la pellicule se lit alors comme une règle, et la première colonne porte
+      // exactement l'image sur laquelle le plan commence.
+      const bord = gauche + (colonne / colonnes) * (droite - gauche);
+      const temps = Math.min(
+        sortieDe(plan) - IMAGE,
+        Math.max(entree, entree + (bord - x) / lecture.echelle),
+      );
+      // Vrai seulement quand le début du bloc est à l'écran : ailleurs, la
+      // première colonne visible n'est pas le début du plan.
+      const couverture = colonne === 0 && Math.abs(gauche - x) < 0.5;
+      const exacte = couverture && bande.images.get(cleExacte(temps));
+      // La vignette de fond montre le premier plan du fichier, avant coupe :
+      // dès qu'on a la vraie image d'entrée, on l'efface, sinon les deux se
+      // contredisent le temps que la pellicule se remplisse.
+      if (exacte && bloc.style.backgroundImage !== "none") bloc.style.backgroundImage = "none";
+      const image = exacte || imagetteProche(bande, temps, pas);
       if (image) {
         const facteur = Math.max(largeurColonne / image.width, hauteurPx / image.height);
         const l = image.width * facteur;
@@ -2576,7 +2594,7 @@ function redessinerBandes() {
         ctx.drawImage(image, colonne * largeurColonne + (largeurColonne - l) / 2, (hauteurPx - h) / 2, l, h);
         ctx.restore();
       }
-      demanderImagette(plan, temps, pas);
+      demanderImagette(plan, temps, pas, couverture);
     }
     x += large;
   });
@@ -2917,7 +2935,9 @@ function brancherRognage(poignee, projet, index, cote) {
 
     const appliquer = () => {
       demande = null;
-      bandes.delete(plan.id);
+      // La pellicule n'est pas vidée : ses images sont rangées par instant dans
+      // le fichier source, donc rogner n'en périme aucune. Les jeter ferait
+      // clignoter le bloc en noir à chaque mouvement de la poignée.
       redessinerPiste();
       const debut = offsets(projet.plans)[index] || 0;
       // La tête colle à la borne qu'on déplace : c'est elle qu'on veut voir.
@@ -2987,7 +3007,6 @@ function couperAuCurseur() {
   plan.sortie = point;
   projet.plans.splice(index + 1, 0, suite);
 
-  bandes.delete(plan.id);
   sauver();
   enregistrer(projet);
   redessinerPiste();
@@ -3270,11 +3289,12 @@ function redessinerPiste() {
   }
   selectionner(lecture.index);
   majTransport();
+  // La pellicule est repeinte tout de suite : reconstruire la piste crée des
+  // toiles vides, et attendre l'image suivante laissait le bloc noir un instant
+  // — visible à chaque mouvement de poignée.
+  redessinerBandes();
   // Les imagettes manquantes se capturent une par une, sans bloquer le reste.
-  requestAnimationFrame(() => {
-    redessinerBandes();
-    ordonnancerBandes();
-  });
+  requestAnimationFrame(ordonnancerBandes);
 }
 
 function poserPlan(index, decalage = 0, enchainer = false) {
@@ -3811,7 +3831,6 @@ function apresImport(plan) {
       poserPlan(lecture.index, Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)));
     }
   }
-  bandes.delete(plan.id);
   const attente = elementAttente();
   if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
   redessinerPisteDifferee();
@@ -4016,7 +4035,6 @@ function rognerAuCurseur(cote) {
   if (cote === "entree") plan.entree = point;
   else plan.sortie = point;
 
-  bandes.delete(plan.id);
   sauver();
   enregistrer(projet);
   redessinerPiste();

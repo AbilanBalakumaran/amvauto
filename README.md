@@ -229,6 +229,13 @@ image figée :
   les gestes, il rend intouchable ce qui passe dessous — les poignées de rognage du premier
   plan étaient ainsi inatteignables. Seul le bouton rond en haut se saisit ; on se déplace
   aussi depuis la règle.
+- **La première imagette d'un bloc est son image d'entrée.** Chaque colonne montre l'image de
+  son bord gauche et non de son milieu, et la première est demandée à l'instant exact du point
+  d'entrée, hors de la grille de cache : sans quoi la couverture d'un plan rogné restait celle
+  d'avant la coupe, à une demi-colonne près — plusieurs secondes une fois dézoomé. La vignette
+  de fond, qui vient de la source et montre le début du fichier, s'efface dès que la vraie image
+  d'entrée est disponible, pour que les deux ne se contredisent pas. Rogner ne vide pas le cache
+  d'imagettes : il est rangé par instant dans le fichier source, donc aucune image n'y périme.
 - **La pellicule est peinte par fenêtre, pas par plan.** Un plan d'une minute zoomé à
   l'image mesure des dizaines de milliers de pixels — largeur qu'aucune toile n'accepte, et
   le bloc restait noir. Seule la partie visible est dessinée, dans une toile de la taille de
