@@ -1145,7 +1145,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 06:39";
+const VERSION_PAGE = "2026-08-18 07:07";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1632,6 +1632,14 @@ function puce(texte, variante = "") {
 }
 
 /* --- lecteur -------------------------------------------------------- */
+/* Adresse de lecture d'un rush hors montage : la copie locale si on l'a, sinon
+   le relais — jamais la source en direct, dont les octets ne serviraient qu'une
+   fois. */
+function adresseLecture(rush) {
+  if (!rush?.video) return "";
+  return locales.get(rush.video) || `/api/media?u=${encodeURIComponent(rush.video)}`;
+}
+
 function lire(rush) {
   const fond = $("lecteur");
   const boiteVideo = document.createElement("div");
@@ -1646,8 +1654,20 @@ function lire(rush) {
     video.style.cssText = "width:100%;aspect-ratio:16/9;border:0;display:block;border-radius:14px 14px 0 0";
   } else {
     video = document.createElement("video");
-    video.src = rush.video;
+    /* La prévisualisation passe par le relais, à l'adresse exacte qu'utilisera
+       l'import. Les octets qu'on regarde sont donc ceux qu'on garderait : le
+       navigateur les met en cache, et ajouter ce plan à un projet devient
+       quasi instantané au lieu de retélécharger le même fichier. Regarder un
+       rush, c'est déjà l'avoir. */
+    video.src = adresseLecture(rush);
+    video.preload = "auto";
     video.controls = true;
+    /* Regarder un rush, c'est déjà s'y intéresser : son rapatriement commence
+       ici, pendant qu'on le regarde, et non au moment où on l'ajoute. Le temps
+       d'attente se confond alors avec le temps qu'on passait de toute façon
+       devant. Refermer sans l'ajouter interrompt le transfert, et ce qui est
+       déjà arrivé est gardé : rien n'est téléchargé deux fois. */
+    setTimeout(() => { if (document.body.contains(video)) preparerLocal(rush); }, 1200);
     video.autoplay = true;
     video.loop = true;
     video.muted = true;
@@ -1683,17 +1703,24 @@ function lire(rush) {
       rendre();
     });
   });
+  // Fermer sans ajouter interrompt le rapatriement : on ne dépense pas le
+  // forfait de quelqu'un pour un plan qu'il vient d'écarter.
+  const refermer = () => {
+    fond.hidden = true;
+    fond.replaceChildren();
+    if (!dansProjet(rush.id)) interrompreImport(rush);
+  };
   const fermer = document.createElement("button");
   fermer.type = "button";
   fermer.textContent = "Fermer";
-  fermer.addEventListener("click", () => { fond.hidden = true; fond.replaceChildren(); });
+  fermer.addEventListener("click", refermer);
   actions.append(ajouter, fermer);
 
   corps.append(titre, meta, actions);
   boiteVideo.append(video, corps);
   fond.replaceChildren(boiteVideo);
   fond.hidden = false;
-  fond.onclick = (evt) => { if (evt.target === fond) { fond.hidden = true; fond.replaceChildren(); } };
+  fond.onclick = (evt) => { if (evt.target === fond) refermer(); };
 }
 
 document.addEventListener("keydown", (evt) => {
@@ -3988,6 +4015,9 @@ const fileImport = [];
 // Fichiers dont l'import a échoué : eux seuls autorisent la sonde à aller
 // chercher des images sur la source distante.
 const importsRates = new Set();
+// De quoi interrompre un téléchargement lancé par curiosité : on s'arrête, et
+// ce qui est arrivé reste pour la prochaine fois.
+const arretsImport = new Map();
 /* Un seul téléchargement à la fois, et le plan courant en premier.
 
    Mesuré sur quatre plans de douze mégaoctets, réseau bridé à six mégabits :
@@ -4024,6 +4054,12 @@ async function lireBase(adresse) {
   });
 }
 
+// Un téléchargement interrompu laisse ce qu'il a reçu, rangé à part. La
+// reprise repart de cet endroit avec une requête par plage : ouvrir un rush,
+// fermer, y revenir plus tard finit par le rapporter en entier sans jamais
+// retélécharger deux fois les mêmes octets.
+const cleParticelle = (adresse) => `partiel:${adresse}`;
+
 async function ecrireBase(adresse, blob) {
   const base = await ouvrirBase();
   if (!base) return;
@@ -4032,6 +4068,18 @@ async function ecrireBase(adresse, blob) {
     transaction.objectStore(MAGASIN).put(blob, adresse);
     transaction.oncomplete = ok;
     transaction.onerror = ok;   // quota plein : on continue en distant
+    transaction.onabort = ok;
+  });
+}
+
+async function effacerBase(adresse) {
+  const base = await ouvrirBase();
+  if (!base) return;
+  await new Promise((ok) => {
+    const transaction = base.transaction(MAGASIN, "readwrite");
+    transaction.objectStore(MAGASIN).delete(adresse);
+    transaction.oncomplete = ok;
+    transaction.onerror = ok;
     transaction.onabort = ok;
   });
 }
@@ -4058,6 +4106,15 @@ async function preparerLocal(plan) {
 const importPrevu = (plan) =>
   Boolean(plan?.video) && (enImport.has(plan.video) || fileImport.some((autre) => autre.video === plan.video));
 
+// Arrête un téléchargement en cours ou en attente, sans perdre ce qui est déjà
+// arrivé — la reprise s'en servira.
+function interrompreImport(plan) {
+  if (!plan?.video || locales.has(plan.video)) return;
+  const index = fileImport.findIndex((autre) => autre.video === plan.video);
+  if (index >= 0) fileImport.splice(index, 1);
+  arretsImport.get(plan.video)?.abort();
+}
+
 function planifierImport(plan) {
   if (!plan?.video || plan.youtube || locales.has(plan.video) || enImport.has(plan.video)) return;
   if (fileImport.some((autre) => autre.video === plan.video)) return;
@@ -4080,15 +4137,29 @@ async function lancerImport() {
   enImport.set(plan.video, 0);
   majImports();
 
+  const abandon = new AbortController();
+  arretsImport.set(plan.video, abandon);
+  let recus = [];
+  let deja = 0;
   try {
-    const reponse = await fetch(`/api/media?u=${encodeURIComponent(plan.video)}`);
-    if (!reponse.ok) throw new Error(String(reponse.status));
+    // Ce qu'un passage précédent avait déjà rapporté.
+    const partiel = await lireBase(cleParticelle(plan.video));
+    if (partiel instanceof Blob && partiel.size) {
+      recus.push(partiel);
+      deja = partiel.size;
+    }
+    const reponse = await fetch(`/api/media?u=${encodeURIComponent(plan.video)}`, {
+      signal: abandon.signal,
+      headers: deja ? { Range: `bytes=${deja}-` } : {},
+    });
+    if (deja && reponse.status !== 206) { recus = []; deja = 0; }   // reprise refusée
+    if (!reponse.ok && reponse.status !== 206) throw new Error(String(reponse.status));
 
     // Lecture en flux pour afficher un avancement : sur un rush de 40 Mo en
     // 4G, une barre qui bouge vaut mieux qu'une attente muette.
-    const attendu = Number(reponse.headers.get("content-length")) || plan.mb * 1e6 || 0;
-    const morceaux = [];
-    let recu = 0;
+    const attendu = deja + (Number(reponse.headers.get("content-length")) || plan.mb * 1e6 || 0);
+    const morceaux = recus;
+    let recu = deja;
     if (reponse.body?.getReader) {
       const lecteur = reponse.body.getReader();
       for (;;) {
@@ -4107,12 +4178,17 @@ async function lancerImport() {
 
     const blob = new Blob(morceaux, { type: reponse.headers.get("content-type") || "video/mp4" });
     await ecrireBase(plan.video, blob);
+    await effacerBase(cleParticelle(plan.video));
     locales.set(plan.video, URL.createObjectURL(blob));
-  } catch {
-    // Import raté : le plan reste jouable en distant, avec ses limites, et sa
-    // pellicule pourra se remplir depuis la source.
-    importsRates.add(plan.video);
+  } catch (erreur) {
+    // Interrompu ou en échec : on garde ce qui est arrivé pour la prochaine fois.
+    if (recus.length) {
+      const type = recus[0]?.type || "video/mp4";
+      await ecrireBase(cleParticelle(plan.video), new Blob(recus, { type }));
+    }
+    if (erreur?.name !== "AbortError") importsRates.add(plan.video);
   } finally {
+    arretsImport.delete(plan.video);
     enImport.delete(plan.video);
     importsEnCours -= 1;
     majImports();

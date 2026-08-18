@@ -265,6 +265,17 @@ image figée :
   dont le fichier ne viendra jamais. Résultat sur quatre plans de douze mégaoctets, réseau bridé
   à six mégabits : premier plan disponible à 8,9 s au lieu de 11,9 s, tout importé en 26,5 s au
   lieu de 29,6 s.
+- **Le rapatriement commence pendant qu'on regarde le rush.** Ouvrir la prévisualisation d'un
+  plan lance son téléchargement au bout d'une seconde : l'attente se confond alors avec le temps
+  qu'on passait de toute façon devant. Refermer sans l'ajouter interrompt le transfert, et ce qui
+  est déjà arrivé est gardé à part ; la fois suivante reprend par une requête par plage, à
+  l'octet où l'on s'était arrêté. Rien n'est jamais téléchargé deux fois.
+- **Ce qu'on ne peut pas accélérer.** Mesuré : lire un fichier dans un lecteur vidéo ne rend pas
+  son téléchargement ultérieur plus rapide (5,87 s contre 5,85 s sans lecture préalable) — le
+  navigateur garde ses octets média dans un cache séparé du reste. Demander le fichier par plages
+  plutôt qu'en une fois ne change rien non plus. Sur le premier passage, il n'y a donc rien à
+  gagner côté application : il faut que les octets traversent le réseau. Tout le reste consiste à
+  placer cette attente là où elle ne se remarque pas, et à ne jamais la refaire.
 - **Un seul téléchargement à la fois, le plan courant d'abord.** Les requêtes partagent la même
   connexion vers le même domaine : les paralléliser ne gagne rien en débit et retarde le premier
   fichier — celui sur lequel on travaille. Mesuré : premier plan à 8,9 s en séquentiel, 11,9 s à
