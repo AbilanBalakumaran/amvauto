@@ -40,6 +40,12 @@ button {
   appearance: none;
   -webkit-appearance: none;
   margin: 0;
+  /* Le remplissage par défaut d'un bouton n'est pas le même d'un navigateur à
+     l'autre — Chrome pose 1px/6px, d'autres autre chose. Tous les boutons de
+     l'application donnent leur propre taille ou leur propre remplissage : on
+     part donc de zéro, pour que rien ne dépende de ce que le navigateur croit
+     bon d'ajouter. */
+  padding: 0;
   font: inherit;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1383,7 +1389,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 13:11";
+const VERSION_PAGE = "2026-08-18 13:32";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3168,7 +3174,15 @@ const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" 
 
 function servirImagettes() {
   if (sondeOccupee) return;
-  const demande = attenteImagettes.pop();   // le plus récemment demandé d'abord
+  /* L'image d'entrée d'un bloc passe devant. La file se servait par la fin, et
+     les colonnes sont demandées de gauche à droite : la couverture du premier
+     bloc arrivait donc bonne dernière, après toutes les colonnes de tous les
+     blocs. Sur un montage de deux plans, on voyait le second se remplir pendant
+     que le premier restait nu. C'est pourtant l'image qui identifie le bloc. */
+  const prioritaire = attenteImagettes.findLastIndex((d) => d.identifiant.startsWith("exact:"));
+  const demande = prioritaire >= 0
+    ? attenteImagettes.splice(prioritaire, 1)[0]
+    : attenteImagettes.pop();
   if (!demande) return;
   const { plan, temps, identifiant } = demande;
   const bande = bandeDe(plan);
@@ -3444,13 +3458,7 @@ function redessinerBandes() {
           || bande.couverture?.image
           || imagetteAssezProche(bande, temps, pas, tolerance);
         const instant = bande.images.has(cleExacte(temps)) ? temps : bande.couverture?.temps;
-        if (instant !== undefined) {
-          // La vignette de fond montre le début du fichier, avant coupe : dès
-          // qu'on a une vraie image d'entrée, elle s'efface, sinon les deux se
-          // contredisent.
-          if (bloc.style.backgroundImage !== "none") bloc.style.backgroundImage = "none";
-          bloc.dataset.couverture = instant.toFixed(2);
-        }
+        if (instant !== undefined) bloc.dataset.couverture = instant.toFixed(2);
       } else {
         // Une colonne sans image laissait un trou noir au milieu de la
         // pellicule, le temps qu'elle soit capturée. On y met l'image connue la
@@ -3766,9 +3774,15 @@ function blocPlan(projet, plan, index) {
   clip.className = "clip";
   clip.dataset.index = String(index);
   clip.style.width = `${largeurClip(plan)}px`;
-  // La vignette de la source ne sert que tant qu'on n'a pas l'image d'entrée du
-  // plan : la reposer à chaque reconstruction la ferait réapparaître par-dessus.
-  if (plan.preview && !bandeDe(plan).couverture) clip.style.backgroundImage = `url("${plan.preview}")`;
+  /* Le bloc ne montre que des images tirées du fichier lui-même.
+
+     Il portait en fond la vignette fournie par la source — c'est-à-dire la
+     première image du fichier d'origine — en attendant la vraie image d'entrée.
+     Sur un plan rogné, cette vignette montrait donc précisément ce qu'on venait
+     de couper, et elle restait là tant que la capture n'avait pas eu lieu. Un
+     bloc doit montrer son plan, pas ce qu'il n'est plus. Il reste sur sa surface
+     nue le temps que sa première image arrive — et cette image est désormais
+     demandée avant toutes les autres. */
   if (plan.youtube) clip.classList.add("hors-lecture");
   if (estLocal(plan)) clip.classList.add("local");
 

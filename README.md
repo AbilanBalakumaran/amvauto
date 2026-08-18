@@ -563,6 +563,22 @@ Ce qui a changé :
 - Un rose du thème rouge d'avant traînait encore sur les étiquettes, posé sur un
   fond vert.
 
+### Un bloc ne montre que son propre plan
+
+Le bloc portait en fond **la vignette fournie par la source** — c'est-à-dire la
+première image du fichier d'origine — en attendant sa vraie image d'entrée. Sur
+un plan rogné, cette vignette montrait donc exactement ce qu'on venait de
+couper, et elle restait là jusqu'à la capture. Un bloc doit montrer son plan, pas
+ce qu'il n'est plus : la vignette de source a disparu des blocs, qui restent sur
+leur surface nue le temps que leur première image arrive.
+
+Et cette image arrive maintenant en premier. La file des captures se servait par
+la fin, alors que les colonnes sont demandées de gauche à droite : la couverture
+du premier bloc arrivait **bonne dernière**, après toutes les colonnes de tous
+les blocs. Sur un montage de deux plans, on voyait le second se remplir pendant
+que le premier restait nu. L'image d'entrée passe désormais devant toutes les
+autres.
+
 ### Le décalage qui restait : la forme, pas la boîte
 
 Une seconde capture, prise sur l'iPhone, montrait encore un décalage. Les boîtes
