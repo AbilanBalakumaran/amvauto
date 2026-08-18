@@ -553,6 +553,20 @@ main {
   color: #fff;
   font: 600 0.78rem/1.3 system-ui, sans-serif;
 }
+/* Même bandeau, autre ton : celui-ci annonce une perte possible, pas une
+   nouveauté. */
+.bandeau-version.alerte { background: linear-gradient(135deg, #C2352F, #7A1410); }
+.note-action {
+  display: block;
+  margin: 14px auto 0;
+  padding: 11px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  background: var(--surface, #161616);
+  color: var(--doux, #b9b9b9);
+  font: 600 0.82rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
 .bandeau-version button {
   margin-left: auto;
   flex: none;
@@ -1145,7 +1159,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 10:40";
+const VERSION_PAGE = "2026-08-18 11:04";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1771,13 +1785,72 @@ function charger() {
   majBadge();
 }
 
+/* Horodatage de chaque projet : c'est lui qui tranche, à la synchronisation,
+   entre la version du téléphone et celle de l'ordinateur. Les empreintes sont
+   tenues à part des projets — elles ne doivent pas se retrouver dans ce qu'on
+   enregistre. */
+const empreintes = new Map();
+
+function horodater() {
+  for (const projet of state.projets) {
+    const empreinte = instantane(projet);
+    if (empreintes.get(projet.id) !== empreinte) {
+      empreintes.set(projet.id, empreinte);
+      projet.maj = Date.now();
+    }
+  }
+}
+
+let stockagePlein = false;
+
 function sauver() {
+  horodater();
   try {
     localStorage.setItem(CLE, JSON.stringify({ projets: state.projets, actif: state.actif, reordre: state.reordre }));
+    stockagePlein = false;
   } catch {
-    // Quota plein : le projet reste utilisable dans l'onglet ouvert.
+    /* Le stockage refuse d'écrire — plein, ou navigation privée. L'erreur était
+       jusqu'ici avalée sans un mot : on continuait à monter en croyant que tout
+       était conservé, et le travail disparaissait à la fermeture de l'onglet.
+       Un montage perdu en silence est le pire défaut que cette application
+       puisse avoir. */
+    if (!stockagePlein) {
+      stockagePlein = true;
+      avertir(
+        "Impossible d'enregistrer sur cet appareil : le stockage est plein. " +
+        "Sauvegarde ton montage dans un fichier avant de fermer.",
+        "Sauvegarder", exporterProjets,
+      );
+    }
   }
   majBadge();
+  planifierDepot();
+  return !stockagePlein;
+}
+
+/* Un bandeau en haut de l'écran. Réservé à ce qui ne peut pas attendre que
+   l'utilisateur ouvre un panneau : une sauvegarde qui ne se fait pas, un
+   montage qu'on va perdre. */
+function avertir(texte, nomAction, action) {
+  document.querySelector(".bandeau-version.alerte")?.remove();
+  const bandeau = document.createElement("div");
+  bandeau.className = "bandeau-version alerte";
+  const message = document.createElement("span");
+  message.textContent = texte;
+  bandeau.append(message);
+  if (action) {
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.textContent = nomAction;
+    bouton.addEventListener("click", action);
+    bandeau.append(bouton);
+  }
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.textContent = "×";
+  fermer.addEventListener("click", () => bandeau.remove());
+  bandeau.append(fermer);
+  document.body.prepend(bandeau);
 }
 
 // Historique du montage : une pile d'états successifs du projet courant, dans
@@ -2128,6 +2201,17 @@ function rendreProjet() {
 
   if (!projet) {
     morceaux.push(note("Aucun projet. Ouvre un dossier, puis « + » sur un plan pour en démarrer un."));
+    /* Un appareil sans projet est exactement celui qui a besoin de récupérer :
+       téléphone neuf, application réinstallée, stockage effacé. Le panneau de
+       sauvegarde vit d'ordinaire derrière le bouton Réglages, lequel n'apparaît
+       qu'avec un projet ouvert — le chemin de secours était donc fermé au
+       moment précis où il sert. */
+    const secours = document.createElement("button");
+    secours.type = "button";
+    secours.className = "note-action";
+    secours.textContent = "Restaurer une sauvegarde";
+    secours.addEventListener("click", ouvrirCoffre);
+    morceaux.push(secours);
     vue.replaceChildren(...morceaux);
     return;
   }
@@ -4793,13 +4877,329 @@ $("btn-setting").addEventListener("click", () => {
   fermer.textContent = "Fermer";
   fermer.addEventListener("click", fermerFeuille);
 
-  actions.append(copier, renommer, supprimer, fermer);
+  const sauvegarde = document.createElement("button");
+  sauvegarde.type = "button";
+  sauvegarde.textContent = "Sauvegarde";
+  sauvegarde.addEventListener("click", ouvrirCoffre);
+
+  actions.append(sauvegarde, copier, renommer, supprimer, fermer);
   corps.append(titre, meta, actions);
   boite.append(corps);
   fond.replaceChildren(boite);
   fond.hidden = false;
   fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
 });
+
+/* --- sauvegarde ------------------------------------------------------ */
+/* Ce qu'un montage a d'irremplaçable tient dans presque rien : un plan pèse
+   environ 600 octets, soixante plans 37 Ko. Les vidéos, elles, font des
+   gigaoctets — mais l'application sait les retrouver seule depuis leur source.
+   On ne sauvegarde donc que les décisions : l'ordre, les coupes, les noms.
+
+   Deux chemins, parce qu'ils ne protègent pas des mêmes accidents. Le fichier
+   ne dépend de rien et marche hors ligne ; le coffre est automatique et suit
+   d'un appareil à l'autre. */
+
+const FORMAT_SAUVEGARDE = 1;
+
+function versSauvegarde() {
+  return JSON.stringify({
+    amvauto: FORMAT_SAUVEGARDE,
+    exporte: new Date().toISOString(),
+    version: VERSION_PAGE,
+    projets: state.projets,
+  }, null, 1);
+}
+
+function exporterProjets() {
+  if (!state.projets.length) return;
+  const jour = new Date().toISOString().slice(0, 10);
+  telecharger(`amvauto-sauvegarde-${jour}.json`, versSauvegarde());
+}
+
+/* Restaurer n'écrase jamais : un projet du fichier remplace celui de même
+   identifiant, les autres s'ajoutent. Restaurer une vieille sauvegarde ne peut
+   donc pas emporter un montage commencé depuis. */
+function fusionner(projets, provenance) {
+  let ajoutes = 0;
+  let remplaces = 0;
+  let ignores = 0;
+  for (const venu of projets) {
+    if (!venu?.id || !Array.isArray(venu.plans)) continue;
+    const place = state.projets.findIndex((autre) => autre.id === venu.id);
+    if (place < 0) {
+      state.projets.push(venu);
+      ajoutes += 1;
+      continue;
+    }
+    // Deux versions du même montage : la plus récente gagne. C'est ce qui
+    // permet de monter sur le téléphone puis de reprendre sur l'ordinateur
+    // sans se demander laquelle des deux est la bonne.
+    const ici = state.projets[place].maj || 0;
+    if ((venu.maj || 0) > ici) {
+      state.projets[place] = venu;
+      remplaces += 1;
+    } else {
+      ignores += 1;
+    }
+  }
+  if (!state.actif || !state.projets.some((p) => p.id === state.actif)) {
+    state.actif = state.projets[0]?.id || null;
+  }
+  empreintes.clear();
+  sauver();
+  return { ajoutes, remplaces, ignores, provenance };
+}
+
+function importerFichier() {
+  const choix = document.createElement("input");
+  choix.type = "file";
+  choix.accept = "application/json,.json";
+  choix.addEventListener("change", async () => {
+    const fichier = choix.files?.[0];
+    if (!fichier) return;
+    try {
+      const contenu = JSON.parse(await fichier.text());
+      const projets = Array.isArray(contenu?.projets) ? contenu.projets : null;
+      if (!projets) throw new Error("format");
+      const bilan = fusionner(projets, fichier.name);
+      fermerFeuille();
+      rendreProjet();
+      rendre();
+      alert(`Restauré depuis ${fichier.name} :\n` +
+        `${bilan.ajoutes} projet(s) ajouté(s), ${bilan.remplaces} mis à jour` +
+        `${bilan.ignores ? `, ${bilan.ignores} laissé(s) tel(s) quel(s) (déjà plus récent(s) ici)` : ""}.`);
+    } catch {
+      alert("Ce fichier n'est pas une sauvegarde amvauto.");
+    }
+  });
+  choix.click();
+}
+
+/* --- le coffre ------------------------------------------------------- */
+/* Pas de compte, pas d'adresse e-mail : un code tiré au hasard sur l'appareil
+   sert d'adresse et de clé. Cent bits de hasard, plus deux caractères de
+   contrôle que le serveur vérifie avant de toucher au stockage — un code mal
+   recopié est rejeté sur place. Qui a le code a les montages : c'est le prix de
+   l'absence de compte, et la raison de sa longueur. */
+
+const ALPHABET_CODE = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";   // Crockford : ni I, ni L, ni O, ni U
+const CLE_COFFRE = "amvauto-coffre";
+
+// La même fonction, mot pour mot, tourne dans le Worker. Les deux doivent
+// s'accorder, sinon aucun code n'est accepté.
+function controleCode(base) {
+  let a = 0x811c9dc5;
+  for (const caractere of base) {
+    a ^= caractere.charCodeAt(0);
+    a = Math.imul(a, 0x01000193) >>> 0;
+  }
+  return ALPHABET_CODE[a % 32] + ALPHABET_CODE[(a >>> 5) % 32];
+}
+
+function nouveauCode() {
+  const tirage = new Uint8Array(18);
+  crypto.getRandomValues(tirage);
+  const base = [...tirage].map((n) => ALPHABET_CODE[n % 32]).join("");
+  return base + controleCode(base);
+}
+
+const lisible = (code) => (code.match(/.{1,5}/g) || []).join("-");
+const nettoyerCode = (brut) => String(brut || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+
+function codeValide(code) {
+  if (code.length !== 20 || ![...code].every((c) => ALPHABET_CODE.includes(c))) return false;
+  return controleCode(code.slice(0, 18)) === code.slice(18);
+}
+
+const coffre = { code: null, actif: false, depot: null, dernier: null, etat: "" };
+
+function chargerCoffre() {
+  try {
+    const garde = JSON.parse(localStorage.getItem(CLE_COFFRE) || "{}");
+    if (garde.code && codeValide(garde.code)) {
+      coffre.code = garde.code;
+      coffre.actif = Boolean(garde.actif);
+      coffre.dernier = garde.dernier || null;
+    }
+  } catch { /* rien de sauvegardé, ou illisible : on repart de zéro */ }
+}
+
+function noterCoffre() {
+  try {
+    localStorage.setItem(CLE_COFFRE, JSON.stringify({ code: coffre.code, actif: coffre.actif, dernier: coffre.dernier }));
+  } catch { /* le coffre est un confort : son réglage peut se perdre */ }
+}
+
+/* Le dépôt est différé : on monte par petites touches, et chaque geste appelle
+   « sauver ». Envoyer à chaque fois épuiserait le quota d'écritures pour rien.
+   Dix secondes après le dernier geste, une seule écriture porte tout. */
+function planifierDepot() {
+  if (!coffre.actif || !coffre.code) return;
+  clearTimeout(coffre.depot);
+  coffre.depot = setTimeout(deposer, 10000);
+}
+
+async function deposer() {
+  if (!coffre.actif || !coffre.code) return;
+  try {
+    const reponse = await fetch("/api/coffre", {
+      method: "PUT",
+      headers: { "x-coffre": coffre.code, "content-type": "application/json" },
+      body: JSON.stringify({ projets: state.projets }),
+    });
+    if (!reponse.ok) throw new Error(String(reponse.status));
+    coffre.dernier = Date.now();
+    coffre.etat = "";
+    noterCoffre();
+  } catch (erreur) {
+    // Hors ligne, ou serveur muet : le montage reste sur l'appareil et le dépôt
+    // se refera au prochain geste. Rien à signaler tant que le local tient.
+    coffre.etat = `dernier envoi refusé (${erreur.message})`;
+  }
+  majPanneauCoffre();
+}
+
+async function recuperer(code) {
+  const reponse = await fetch(`/api/coffre?code=${encodeURIComponent(code)}`, {
+    headers: { "x-coffre": code },
+  });
+  if (!reponse.ok) throw new Error(`le serveur a répondu ${reponse.status}`);
+  const contenu = await reponse.json();
+  if (contenu.vide) return { vide: true };
+  return fusionner(contenu.projets || [], "le coffre");
+}
+
+/* Le panneau de sauvegarde. Il dit d'abord ce qui est en jeu — le poids réel
+   des montages — puis propose les deux chemins. */
+function ouvrirCoffre() {
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+  corps.id = "corps-coffre";
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = "Sauvegarde";
+
+  const meta = document.createElement("div");
+  meta.className = "lecteur-meta";
+  meta.id = "coffre-meta";
+  meta.style.whiteSpace = "pre-line";
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+
+  const enregistrer = document.createElement("button");
+  enregistrer.type = "button";
+  enregistrer.textContent = "Sauvegarder dans un fichier";
+  enregistrer.addEventListener("click", exporterProjets);
+
+  const restaurer = document.createElement("button");
+  restaurer.type = "button";
+  restaurer.textContent = "Restaurer depuis un fichier";
+  restaurer.addEventListener("click", importerFichier);
+
+  const enLigne = document.createElement("button");
+  enLigne.type = "button";
+  enLigne.id = "coffre-bascule";
+  enLigne.addEventListener("click", async () => {
+    if (coffre.actif) {
+      coffre.actif = false;
+      noterCoffre();
+      majPanneauCoffre();
+      return;
+    }
+    if (!coffre.code) coffre.code = nouveauCode();
+    coffre.actif = true;
+    noterCoffre();
+    majPanneauCoffre();
+    await deposer();
+  });
+
+  const reprendre = document.createElement("button");
+  reprendre.type = "button";
+  reprendre.textContent = "Récupérer avec un code";
+  reprendre.addEventListener("click", async () => {
+    const saisi = nettoyerCode(prompt("Code de sauvegarde de l'autre appareil"));
+    if (!saisi) return;
+    if (!codeValide(saisi)) return alert("Ce code n'est pas valide — vérifie la recopie.");
+    try {
+      const bilan = await recuperer(saisi);
+      if (bilan.vide) return alert("Ce code ne contient encore aucun montage.");
+      coffre.code = saisi;
+      coffre.actif = true;
+      noterCoffre();
+      fermerFeuille();
+      rendreProjet();
+      rendre();
+      alert(`Récupéré : ${bilan.ajoutes} projet(s) ajouté(s), ${bilan.remplaces} mis à jour` +
+        `${bilan.ignores ? `, ${bilan.ignores} déjà plus récent(s) ici` : ""}.`);
+    } catch (erreur) {
+      alert(`Récupération impossible : ${erreur.message}`);
+    }
+  });
+
+  const copierCode = document.createElement("button");
+  copierCode.type = "button";
+  copierCode.id = "coffre-copier";
+  copierCode.textContent = "Copier le code";
+  copierCode.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(lisible(coffre.code));
+    copierCode.textContent = "Copié";
+    setTimeout(() => { copierCode.textContent = "Copier le code"; }, 1600);
+  });
+
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.className = "fort";
+  fermer.textContent = "Fermer";
+  fermer.addEventListener("click", fermerFeuille);
+
+  actions.append(enregistrer, restaurer, enLigne, reprendre, copierCode, fermer);
+  corps.append(titre, meta, actions);
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
+  majPanneauCoffre();
+}
+
+function majPanneauCoffre() {
+  const meta = $("coffre-meta");
+  if (!meta) return;
+  const octets = JSON.stringify({ projets: state.projets }).length;
+  const plans = state.projets.reduce((somme, projet) => somme + projet.plans.length, 0);
+  const lignes = [
+    `${state.projets.length} projet(s), ${plans} plan(s) — ${(octets / 1024).toFixed(1)} Ko`,
+    "",
+    "Ce qui est sauvegardé : l'ordre des plans, les coupes, les noms.",
+    "Les vidéos restent sur l'appareil — elles pèsent mille fois plus et se",
+    "retéléchargent toutes seules depuis leur source.",
+    "",
+  ];
+  if (coffre.actif && coffre.code) {
+    lignes.push(
+      "Sauvegarde en ligne active.",
+      `Code : ${lisible(coffre.code)}`,
+      "Note-le : c'est lui, et lui seul, qui redonne accès aux montages.",
+      coffre.dernier ? `Dernier envoi : ${new Date(coffre.dernier).toLocaleString()}` : "Premier envoi en cours…",
+      coffre.etat || "",
+    );
+  } else {
+    lignes.push(
+      "Sauvegarde en ligne inactive : tes montages n'existent que sur cet appareil.",
+      coffre.code ? `Code existant : ${lisible(coffre.code)}` : "",
+    );
+  }
+  meta.textContent = lignes.filter((l) => l !== null).join("\n");
+  const bascule = $("coffre-bascule");
+  if (bascule) bascule.textContent = coffre.actif ? "Désactiver la sauvegarde en ligne" : "Activer la sauvegarde en ligne";
+  const copier = $("coffre-copier");
+  if (copier) copier.hidden = !coffre.code;
+}
 
 /* --- exports --------------------------------------------------------- */
 const nomDeFichier = (projet) => `amvauto-${projet.nom.toLowerCase().replace(/\W+/g, "-")}`;
@@ -4863,6 +5263,20 @@ function telecharger(nom, contenu) {
 }
 
 charger();
+chargerCoffre();
+
+/* Au lancement, le coffre est consulté : si l'autre appareil a monté depuis, sa
+   version arrive ici. La fusion se fait projet par projet, la plus récente
+   gagne — on ne perd donc rien de ce qui a été fait entre-temps de ce côté. */
+if (coffre.actif && coffre.code) {
+  recuperer(coffre.code)
+    .then((bilan) => {
+      if (bilan.vide || (!bilan.ajoutes && !bilan.remplaces)) return;
+      rendreProjet();
+      rendre();
+    })
+    .catch(() => { coffre.etat = "coffre injoignable au lancement"; });
+}
 
 // L'écran de démarrage s'efface dès que l'interface est prête. Un court minimum
 // de présence évite le clignotement quand tout est déjà en cache. Il n'est pas

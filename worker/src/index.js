@@ -3,6 +3,7 @@
 // passent par ici.
 
 import { themes } from "./animethemes.js";
+import { coffre } from "./coffre.js";
 import { relayerMedia } from "./media.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { rushes, searchSeries } from "./sakuga.js";
@@ -259,6 +260,7 @@ export default {
           return json({ series: suggest(url.searchParams.get("q") || "", 10) });
         }
         if (url.pathname === "/api/media") return await relayerMedia(request, url);
+        if (url.pathname === "/api/coffre") return await coffre(request, url, env);
         if (url.pathname === "/api/version") {
           // Jamais en cache : la page compare cette réponse à son propre
           // horodatage. Une copie gardée au bord ferait croire à une mise à

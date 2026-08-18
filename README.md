@@ -209,6 +209,62 @@ la version Blu-ray n'a pas. Même image, même durée, du texte en plus pendant 
 absent du rendu. Quand une variante de même nature existe (créditée comme le rendu, ou sans
 crédits comme lui), c'est elle qui est préférée.
 
+## Sauvegarder un montage
+
+Ce qu'un montage a d'irremplaçable tient dans presque rien. Mesuré : un plan
+pèse **609 octets**, soixante plans **37 Ko**. Les vidéos, elles, font des
+gigaoctets — mais l'application sait les retrouver seule depuis leur source. On
+ne sauvegarde donc que les décisions : l'ordre des plans, les coupes, les noms.
+
+Le risque est réel. Sur iPhone, [WebKit efface le stockage d'un site après sept
+jours sans interaction](https://webkit.org/blog/14403/updates-to-storage-policy/) ;
+une application posée sur l'écran d'accueil a son propre compteur, remis à zéro
+à chaque usage, mais deux semaines sans y toucher, un effacement des données de
+site ou un changement de téléphone emportaient tout. Et jusqu'ici, **un
+enregistrement qui échouait ne disait rien** : le quota plein était attrapé et
+ignoré, on continuait à monter en croyant que tout était conservé. Un bandeau le
+signale désormais, avec le bouton qui sauvegarde immédiatement dans un fichier.
+
+Deux chemins, parce qu'ils ne protègent pas des mêmes accidents.
+
+### Le fichier
+
+`Réglages → Sauvegarde → Sauvegarder dans un fichier` produit un `.json` de
+quelques kilo-octets, à poser où l'on veut. La restauration **n'écrase jamais** :
+un projet du fichier remplace celui de même identifiant s'il est plus récent, les
+autres s'ajoutent. Restaurer une vieille sauvegarde ne peut donc pas emporter un
+montage commencé depuis.
+
+### Le coffre
+
+Sauvegarde automatique, dix secondes après le dernier geste, sur
+[Workers KV](https://developers.cloudflare.com/workers/platform/pricing/) —
+1 Go, 1 000 écritures et 100 000 lectures par jour sur le plan gratuit. Un
+montage de 37 Ko y tient vingt-sept mille fois, et l'envoi différé fait qu'une
+séance de montage coûte quelques écritures, pas des centaines.
+
+Pas de compte, pas d'adresse e-mail : un **code tiré au hasard sur l'appareil**
+sert d'adresse et de clé — vingt caractères de l'alphabet de Crockford (ni I, ni
+L, ni O, ni U : rien qui se confonde à la recopie), dont dix-huit tirés au sort,
+soit quatre-vingt-dix bits. Taper ce code sur un autre appareil y fait arriver
+les montages ; c'est ainsi qu'on commence sur le téléphone et qu'on continue sur
+l'ordinateur.
+
+Les deux derniers caractères sont une **clé de contrôle vérifiée par le Worker
+avant tout accès au stockage** : un code mal recopié, ou tenté au hasard, est
+rejeté sans consommer une seule lecture. Contrepartie assumée de l'absence de
+compte : qui détient le code détient les montages.
+
+En cas de conflit, la fusion se fait **projet par projet, le plus récemment
+modifié gagne**, et un projet qui n'existe que d'un côté n'est jamais supprimé.
+Vérifié : deux appareils ayant chacun retouché le même montage plus un projet
+qui leur est propre se retrouvent avec les trois, dans leur dernière version.
+
+Enfin, le bouton de restauration apparaît **aussi sur l'écran vide**, sans
+projet. C'est exactement l'état d'un téléphone réinstallé : le panneau vivait
+derrière un bouton qui n'existe qu'avec un projet ouvert, donc le chemin de
+secours était fermé au moment précis où il sert.
+
 ## Ce que l'application coûte à un téléphone
 
 Un montage se fait sur un appareil qui chauffe vite et se décharge encore plus

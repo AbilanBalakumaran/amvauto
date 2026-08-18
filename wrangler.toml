@@ -12,3 +12,11 @@ binding = "ASSETS"
 # Sans cela, un fichier statique est servi avant que le Worker s'exécute : nos
 # en-têtes de cache sur la page ne s'appliquaient jamais.
 run_worker_first = true
+
+# Le coffre : les montages sauvegardés, quelques dizaines de kilo-octets chacun.
+# Rien d'autre n'y va — les vidéos restent sur l'appareil et se retrouvent
+# depuis leur source. L'identifiant ci-dessous désigne l'espace de stockage ;
+# ce n'est pas un secret, il ne donne accès à rien sans le compte.
+[[kv_namespaces]]
+binding = "COFFRE"
+id = "7e8485da6b724b1b93045c6aaf0a993d"
