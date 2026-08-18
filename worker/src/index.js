@@ -84,6 +84,12 @@ function fromSource(item) {
     provider: item.source,
     ref: item.serie || "",
     video: item.video,
+    // Deux adresses quand la source en offre : celle du rendu, et une plus
+    // légère pour monter. Le montage n'a pas besoin de 1080p, le rendu si.
+    montage: item.montage || null,
+    montageHauteur: item.montageHauteur || 0,
+    montageCredite: item.montageCredite || false,
+    mbRendu: item.mbRendu || null,
     youtube: item.youtube || null,
     preview: item.preview,
     page: item.page,
