@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 02:42";
+const VERSION_PAGE = "2026-08-18 02:58";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2383,14 +2383,17 @@ const derniereImage = { plan: null, quand: 0, toile: document.createElement("can
    de tout recapturer à chaque pincement. */
 
 const bandes = new Map();
-const LARGEUR_IMAGETTE = 96;
+const LARGEUR_IMAGETTE = 64;
 const MARGE_BANDE = 260;        // on peint un peu au-delà de l'écran
 const IMAGETTES_MAX = 600;      // au-delà, on oublie les plus anciennes
 
 function bandeDe(plan) {
   let bande = bandes.get(plan.id);
   if (!bande) {
-    bande = { images: new Map(), demandes: new Map(), epuise: false, ordre: [] };
+    // « couverture » : la dernière image d'entrée obtenue pour ce plan. Elle sert
+    // de secours pendant qu'on tire une poignée, le temps que l'image du nouveau
+    // point d'entrée soit capturée.
+    bande = { images: new Map(), demandes: new Map(), epuise: false, ordre: [], couverture: null };
     bandes.set(plan.id, bande);
   }
   return bande;
@@ -2420,12 +2423,28 @@ function imagetteProche(bande, temps, pas) {
   return null;
 }
 
+// Comme imagetteProche, mais elle refuse une image trop éloignée de l'instant
+// demandé : mieux vaut ne rien montrer qu'une image qui ment.
+function imagetteAssezProche(bande, temps, pas, tolerance) {
+  for (let echelon = pas, tours = 0; tours < 9; echelon *= 2, tours += 1) {
+    const index = Math.round(temps / echelon);
+    if (Math.abs(index * echelon - temps) > tolerance) continue;
+    const trouve = bande.images.get(cle(echelon, index));
+    if (trouve) return trouve;
+  }
+  return null;
+}
+
 function demanderImagette(plan, temps, pas, exact = false) {
   const bande = bandeDe(plan);
   const identifiant = exact ? cleExacte(temps) : cle(pas, Math.round(temps / pas));
   const instant = exact ? temps : Math.round(temps / pas) * pas;
   if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) return;
   if (plan.youtube || !plan.video || !plan.duree) return;
+  // Une copie locale est en route : on l'attend plutôt que de retélécharger le
+  // même fichier pour en tirer des imagettes. Sur un téléphone en 4G, ce serait
+  // payer deux fois la même vidéo — et l'attente est courte.
+  if (!estLocal(plan) && importPrevu(plan)) return;
   bande.demandes.set(identifiant, instant);
   attenteImagettes.push({ plan, temps: instant, identifiant });
   servirImagettes();
@@ -2467,6 +2486,7 @@ function servirImagettes() {
     bande.demandes.delete(identifiant);
     if (image) {
       bande.images.set(identifiant, image);
+      if (identifiant.startsWith("exact:")) bande.couverture = { temps, image };
       bande.ordre.push(identifiant);
       // Mémoire bornée : au-delà du plafond, les plus anciennes images sortent.
       while (bande.ordre.length > IMAGETTES_MAX) bande.images.delete(bande.ordre.shift());
@@ -2577,12 +2597,29 @@ function redessinerBandes() {
       // Vrai seulement quand le début du bloc est à l'écran : ailleurs, la
       // première colonne visible n'est pas le début du plan.
       const couverture = colonne === 0 && Math.abs(gauche - x) < 0.5;
-      const exacte = couverture && bande.images.get(cleExacte(temps));
-      // La vignette de fond montre le premier plan du fichier, avant coupe :
-      // dès qu'on a la vraie image d'entrée, on l'efface, sinon les deux se
-      // contredisent le temps que la pellicule se remplisse.
-      if (exacte && bloc.style.backgroundImage !== "none") bloc.style.backgroundImage = "none";
-      const image = exacte || imagetteProche(bande, temps, pas);
+      let image;
+      if (couverture) {
+        // L'image d'entrée ne se contente pas d'une approximation : dézoomé, le
+        // pas de la grille vaut plusieurs secondes, et l'image la plus proche
+        // était celle du début du fichier — la couverture ne bougeait donc pas
+        // d'un poil quand on rognait. On prend l'image exacte, à défaut la
+        // dernière image d'entrée connue de ce plan, et en dernier recours une
+        // image de la grille seulement si elle tombe assez près.
+        const tolerance = Math.max(IMAGE, (largeurColonne / dpr) / lecture.echelle / 2);
+        image = bande.images.get(cleExacte(temps))
+          || bande.couverture?.image
+          || imagetteAssezProche(bande, temps, pas, tolerance);
+        const instant = bande.images.has(cleExacte(temps)) ? temps : bande.couverture?.temps;
+        if (instant !== undefined) {
+          // La vignette de fond montre le début du fichier, avant coupe : dès
+          // qu'on a une vraie image d'entrée, elle s'efface, sinon les deux se
+          // contredisent.
+          if (bloc.style.backgroundImage !== "none") bloc.style.backgroundImage = "none";
+          bloc.dataset.couverture = instant.toFixed(2);
+        }
+      } else {
+        image = imagetteProche(bande, temps, pas);
+      }
       if (image) {
         const facteur = Math.max(largeurColonne / image.width, hauteurPx / image.height);
         const l = image.width * facteur;
@@ -2882,7 +2919,9 @@ function blocPlan(projet, plan, index) {
   clip.className = "clip";
   clip.dataset.index = String(index);
   clip.style.width = `${largeurClip(plan)}px`;
-  if (plan.preview) clip.style.backgroundImage = `url("${plan.preview}")`;
+  // La vignette de la source ne sert que tant qu'on n'a pas l'image d'entrée du
+  // plan : la reposer à chaque reconstruction la ferait réapparaître par-dessus.
+  if (plan.preview && !bandeDe(plan).couverture) clip.style.backgroundImage = `url("${plan.preview}")`;
   if (plan.youtube) clip.classList.add("hors-lecture");
   if (estLocal(plan)) clip.classList.add("local");
 
@@ -3736,6 +3775,10 @@ async function preparerLocal(plan) {
   planifierImport(plan);
 }
 
+// Vrai tant que le fichier est en file d'attente ou en cours de téléchargement.
+const importPrevu = (plan) =>
+  Boolean(plan?.video) && (enImport.has(plan.video) || fileImport.some((autre) => autre.video === plan.video));
+
 function planifierImport(plan) {
   if (!plan?.video || plan.youtube || locales.has(plan.video) || enImport.has(plan.video)) return;
   if (fileImport.some((autre) => autre.video === plan.video)) return;
@@ -3834,6 +3877,8 @@ function apresImport(plan) {
   const attente = elementAttente();
   if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
   redessinerPisteDifferee();
+  // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
+  redessinerBandes();
 }
 
 // Tous les plans du projet sont importés, le plan courant d'abord.

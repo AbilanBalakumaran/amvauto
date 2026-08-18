@@ -234,8 +234,15 @@ image figée :
   d'entrée, hors de la grille de cache : sans quoi la couverture d'un plan rogné restait celle
   d'avant la coupe, à une demi-colonne près — plusieurs secondes une fois dézoomé. La vignette
   de fond, qui vient de la source et montre le début du fichier, s'efface dès que la vraie image
-  d'entrée est disponible, pour que les deux ne se contredisent pas. Rogner ne vide pas le cache
-  d'imagettes : il est rangé par instant dans le fichier source, donc aucune image n'y périme.
+  d'entrée est disponible, pour que les deux ne se contredisent pas. Elle ne se contente jamais
+  d'une approximation : à défaut de l'image exacte, elle reprend la dernière image d'entrée
+  connue du plan, et n'accepte une image de la grille que si celle-ci tombe dans la demi-colonne
+  — dézoomé, le pas de la grille vaut plusieurs secondes, et l'image « la plus proche » était
+  celle du début du fichier. Rogner ne vide pas le cache d'imagettes : il est rangé par instant
+  dans le fichier source, donc aucune image n'y périme.
+- **Les imagettes attendent la copie locale.** Tant qu'un import est en cours pour un plan, la
+  pellicule ne va pas chercher ses images sur la source distante : ce serait payer deux fois le
+  même fichier en 4G. Elles partent dès que la copie est sur l'appareil.
 - **La pellicule est peinte par fenêtre, pas par plan.** Un plan d'une minute zoomé à
   l'image mesure des dizaines de milliers de pixels — largeur qu'aucune toile n'accepte, et
   le bloc restait noir. Seule la partie visible est dessinée, dans une toile de la taille de
