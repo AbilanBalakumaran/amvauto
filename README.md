@@ -209,6 +209,45 @@ la version Blu-ray n'a pas. Même image, même durée, du texte en plus pendant 
 absent du rendu. Quand une variante de même nature existe (créditée comme le rendu, ou sans
 crédits comme lui), c'est elle qui est préférée.
 
+## Ce que l'application coûte à un téléphone
+
+Un montage se fait sur un appareil qui chauffe vite et se décharge encore plus
+vite. L'aperçu était un **moniteur peint sur une toile, soixante fois par
+seconde, en permanence** — même à l'arrêt, même quand la vue du projet n'était
+pas affichée. Mesuré au compteur du navigateur, sur un projet de deux plans :
+
+| situation | avant | après |
+|---|---|---|
+| projet ouvert, à l'arrêt | 31 % de processeur, 54 images/s | **0 %, 0 image/s** |
+| onglet Explorer affiché | 14 % de processeur, 60 images/s | **0 %, 0 image/s** |
+| lecture en cours | 61 % de processeur, 93 images/s | **35 %, 18 images peintes/s** |
+
+Cinq changements, tous invisibles à l'usage :
+
+1. **Le moniteur ne peint que lorsqu'il a quelque chose de neuf à montrer.**
+   Un déplacement, un doigt sur la piste, un changement de plan le réveillent ;
+   sinon un battement de quatre par seconde suffit à faire vivre le chien de
+   garde et le rattrapage de position. Rien de ce qu'il garantissait n'est perdu.
+2. **Une seule boucle d'images à la fois.** Pendant la lecture, c'est celle du
+   transport qui peint ; ailleurs, celle du moniteur. Elles tournaient toutes
+   les deux.
+3. **Une image identique n'est pas repeinte.** Pendant la lecture, l'instant est
+   arrondi au trentième de seconde : une animation en compte vingt-quatre,
+   peindre soixante fois refaisait deux fois le même travail. L'arrondi porte sur
+   le temps du média, pas sur l'horloge — même résultat sur tous les appareils.
+4. **La toile fait la taille à laquelle on la regarde**, et non 1280 × 720 : sur
+   un téléphone, près de trois fois moins de pixels à produire par image. Elle
+   est déclarée opaque, ce qui évite au navigateur de la mélanger avec ce qu'il y
+   a derrière — à elle seule, cette ligne a retiré dix points de processeur en
+   lecture.
+5. **La réserve d'imagettes ne se constitue que pour les blocs visibles**, à un
+   écran près de part et d'autre, et le défilement prépare la suite. Un projet de
+   dix plans lançait jusqu'à quatre cent quatre-vingts décodages d'un coup pour
+   des blocs hors de l'écran.
+
+La sonde à imagettes relâche par ailleurs sa source trois secondes après la
+dernière capture : elle gardait un fichier ouvert et décodé pour rien.
+
 ## Comment la lecture est construite
 
 L'aperçu n'est pas un lecteur : c'est un **moniteur** dessiné image par image sur une toile,
