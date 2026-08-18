@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 03:09";
+const VERSION_PAGE = "2026-08-18 03:19";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3434,6 +3434,10 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   const demarrer = () => {
     if (enchainer || lecture.jouant) {
       video.play().catch(() => {
+        // Sans cette garde, une lecture interrompue par nos soins — parce qu'on
+        // vient d'atteindre la fin — était aussitôt relancée, et le lecteur
+        // repartait sur la partie coupée.
+        if (!lecture.demande) return;
         video.muted = true;
         video.play().catch(() => { lecture.jouant = false; majTransport(); });
       });
@@ -3476,6 +3480,12 @@ function basculerLecture() {
     return;
   }
   lecture.demande = true;
+  // Arrivé au bout, « lecture » reprend depuis le début : sinon le bouton ne
+  // ferait rien, ou pire, le lecteur repartirait sur ce qui a été coupé.
+  if (lecture.position >= total(projet) - IMAGE) {
+    lecture.position = 0;
+    lecture.index = 0;
+  }
   demarrerHorloge();
   suivreTete();
 
@@ -3505,6 +3515,7 @@ function basculerLecture() {
   const essai = video.play();
   if (essai) {
     essai.catch(() => {
+      if (!lecture.demande) return;
       video.muted = true;
       video.play().catch(() => { lecture.jouant = false; majTransport(); });
     });
@@ -3724,7 +3735,11 @@ function appliquerSeek(jouer = false) {
     const vise = entreeDe(plan) + dans;
     const poser = () => {
       demanderPosition(video, Math.min(vise, video.duration || vise));
-      if (jouer) video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+      if (jouer) video.play().catch(() => {
+        if (!lecture.demande) return;
+        video.muted = true;
+        video.play().catch(() => {});
+      });
     };
     // Un fichier pas encore prêt ignorait la consigne, et l'image restait celle
     // d'avant : on la repose dès que ses métadonnées arrivent.
@@ -3968,9 +3983,8 @@ function positionCourante() {
 
   if (position >= duree_totale) {
     position = duree_totale;
-    lecture.demande = false;
-    lecture.jouant = false;
-    video?.pause();
+    lecture.position = position;
+    terminerLecture();
   }
   lecture.position = Math.max(0, position);
   return lecture.position;
@@ -4006,6 +4020,18 @@ function majTransport() {
   majBoutonsHistoire();
 }
 
+// Fin du montage : on s'arrête sur la dernière image, sans déborder.
+function terminerLecture() {
+  const projet = projetActif();
+  lecture.demande = false;
+  lecture.jouant = false;
+  lecture.horloge = null;
+  if (projet) lecture.position = total(projet);
+  elementActif()?.pause();
+  arreterSon();
+  majTransport();
+}
+
 function suivreTete() {
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   const pas = () => {
@@ -4014,9 +4040,22 @@ function suivreTete() {
     // fichier : un plan dont la lecture patine n'immobilise plus le montage.
     const projet = projetActif();
     if (lecture.demande && projet) {
+      const plan = projet.plans[lecture.index];
       const debuts = offsets(projet.plans);
-      const fin = (debuts[lecture.index] || 0) + duree(projet.plans[lecture.index]);
-      if (lecture.position >= fin - 0.02 && lecture.index + 1 < projet.plans.length) planSuivant();
+      const fin = (debuts[lecture.index] || 0) + duree(plan);
+      const video = elementActif();
+      // Le point de sortie est une limite dure. Le fichier continue au-delà,
+      // mais ce qui suit a été coupé : il ne fait plus partie du montage. On
+      // surveille donc aussi la position du fichier, pas seulement l'horloge —
+      // sur le dernier plan, rien n'arrêtait le lecteur et il enchaînait sur la
+      // partie retirée.
+      const auBout = lecture.position >= fin - 0.02
+        || (video && !video.paused && video.dataset.plan === plan?.id
+            && video.currentTime >= sortieDe(plan) - 0.02);
+      if (auBout) {
+        if (lecture.index + 1 < projet.plans.length) planSuivant();
+        else terminerLecture();
+      }
     }
     if (lecture.demande) lecture.boucle = requestAnimationFrame(pas);
   };

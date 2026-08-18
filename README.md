@@ -240,6 +240,13 @@ image figée :
   — dézoomé, le pas de la grille vaut plusieurs secondes, et l'image « la plus proche » était
   celle du début du fichier. Rogner ne vide pas le cache d'imagettes : il est rangé par instant
   dans le fichier source, donc aucune image n'y périme.
+- **Le point de sortie est une limite dure.** Le fichier continue au-delà, mais ce qui suit a
+  été coupé et ne fait plus partie du montage. La fin d'un plan est donc surveillée sur la
+  position du fichier lui-même, pas seulement sur l'horloge de transport : sur le dernier plan,
+  rien n'arrêtait le lecteur et il enchaînait sur la partie retirée. Et une lecture interrompue
+  par nos soins n'est jamais relancée — le rattrapage qui rejoue en sourdine après un refus
+  confondait notre propre pause avec un refus du navigateur, et repartait sur le morceau coupé.
+  Arrivé au bout, un appui sur lecture reprend depuis le début.
 - **La sonde à imagettes doit avoir joué une fois.** Sur iPhone, un lecteur qui n'a jamais reçu
   l'ordre de jouer ne charge rien — `preload` est ignoré en réseau mobile — et une vidéo détachée
   du document ou masquée n'est pas décodée du tout. La sonde qui fabrique la pellicule était dans
