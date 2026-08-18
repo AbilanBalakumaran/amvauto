@@ -247,6 +247,15 @@ image figée :
   par nos soins n'est jamais relancée — le rattrapage qui rejoue en sourdine après un refus
   confondait notre propre pause avec un refus du navigateur, et repartait sur le morceau coupé.
   Arrivé au bout, un appui sur lecture reprend depuis le début.
+- **La vignette de la source est la première image du fichier.** C'est ce que le moniteur
+  affichait faute de mieux, tant que le lecteur n'avait rien à montrer — y compris sur un plan
+  fractionné dont on venait de retirer le début, où elle exhibait précisément ce qu'on avait
+  supprimé. Le repli puise maintenant dans la réserve d'imagettes du plan, à la position de la
+  tête, puis dans son image d'entrée ; la vignette de la source ne sert plus que si le plan
+  commence bien au début de son fichier, et à défaut on laisse du noir — une image fausse est
+  pire que pas d'image. Un plan rogné n'a pas non plus d'affiche. Vérifié en fractionnant un
+  plan, en supprimant la première partie et en rechargeant : le moniteur ne dessine plus que la
+  vidéo, là où il commençait par la vignette.
 - **Le plan suivant est garé sur son point d'entrée.** Il est préchargé pendant que le plan
   courant se joue, mais il restait au début de son fichier : à la bascule, le lecteur devient
   visible immédiatement et montrait les premières images du fichier — celles-là mêmes qui
