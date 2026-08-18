@@ -1137,7 +1137,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 03:52";
+const VERSION_PAGE = "2026-08-18 04:08";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2350,7 +2350,7 @@ function dessinerMoniteur() {
   if (source) {
     // une imagette de défilement a déjà été retenue
   } else if (video && video.readyState >= 2 && video.videoWidth
-             && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - IMAGE)) {
+             && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - 0.15)) {
     // La dernière condition écarte une image située avant le point d'entrée :
     // elle a été retirée du montage, elle n'a rien à faire à l'écran, même une
     // fraction de seconde pendant qu'un plan se met en place.
@@ -3810,7 +3810,9 @@ function demanderPosition(video, temps) {
   if (!video || !Number.isFinite(temps)) return;
   video.dataset.vise = String(temps);
   // Une cible a une fin de validité : sans elle, une position jamais atteinte
-  // ramènerait le lecteur en arrière indéfiniment.
+  // ramènerait le lecteur en arrière indéfiniment. Et l'heure de sa demande,
+  // qui distingue une consigne que l'on vient de donner d'un reste oublié.
+  video.dataset.viseQuand = String(performance.now());
   video.dataset.viseFin = String(performance.now() + 4000);
   rattraperPosition(video);
 }
@@ -3818,6 +3820,7 @@ function demanderPosition(video, temps) {
 const oublierPosition = (video) => {
   delete video.dataset.vise;
   delete video.dataset.viseFin;
+  delete video.dataset.viseQuand;
 };
 
 /* Le lecteur est ramené vers sa cible tant qu'il ne l'a pas atteinte, et cette
@@ -3833,10 +3836,14 @@ function rattraperPosition(video) {
   const vise = Number(video.dataset.vise);
   if (!Number.isFinite(vise)) return;
   if (performance.now() > Number(video.dataset.viseFin)) return oublierPosition(video);
-  // Une lecture en cours commande. Sans cette garde, une cible posée juste avant
-  // le démarrage — au changement de plan, par exemple — ramenait le lecteur en
-  // arrière pendant qu'il jouait : on revoyait des images déjà passées.
-  if (lecture.demande && !lecture.scrub && !video.paused) return oublierPosition(video);
+  /* Une cible que la lecture a dépassée et qu'on n'a pas redemandée depuis est
+     un reste : l'appliquer ramènerait en arrière, et l'on reverrait des images
+     déjà passées. Une cible fraîche, elle, est une consigne — un appui sur la
+     piste pendant la lecture, même vers l'arrière — et doit toujours être
+     suivie. La version précédente les confondait et abandonnait les deux : le
+     curseur se déplaçait sans que l'image suive. */
+  const fraiche = performance.now() - Number(video.dataset.viseQuand) < 400;
+  if (!fraiche && !video.paused && video.currentTime > vise + 0.35) return oublierPosition(video);
   // Un déplacement est déjà en route : on le laisse finir, la cible reste notée.
   if (video.seeking || video.readyState < 1) return;
   if (Math.abs(video.currentTime - vise) <= 0.06) return oublierPosition(video);

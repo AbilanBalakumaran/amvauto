@@ -252,11 +252,16 @@ image figée :
   visible immédiatement et montrait les premières images du fichier — celles-là mêmes qui
   avaient été coupées — le temps que la position s'applique. Mesuré : 0 s au lieu de 4 s avant
   correction. Le moniteur refuse en outre de dessiner une image située avant le point d'entrée.
-- **Une lecture en cours n'est jamais ramenée en arrière.** La reprise de position, qui repose
-  la cible tant qu'elle n'est pas atteinte, ne distinguait pas une cible périmée d'une consigne
-  vivante : posée juste avant un démarrage, elle tirait le lecteur en arrière pendant qu'il
-  jouait, et l'on revoyait des images déjà passées. Mesuré : 4,21 s ramené à 3,79 s avant
-  correction, aucun recul après.
+- **Une cible périmée n'est pas une consigne.** La reprise de position, qui repose la cible tant
+  qu'elle n'est pas atteinte, ne distinguait pas un reste d'une demande vivante : posée juste
+  avant un démarrage, elle tirait le lecteur en arrière pendant qu'il jouait. Interdire toute
+  reprise pendant la lecture a été une erreur — cela abandonnait aussi les positions demandées
+  par l'utilisateur, et l'image ne suivait plus le curseur. Le critère est donc la fraîcheur :
+  une cible redemandée dans les 400 dernières millisecondes est une consigne et s'applique
+  toujours, même vers l'arrière ; une cible plus ancienne que la lecture a dépassée est un reste
+  et s'oublie. Les deux exigences sont vérifiées ensemble — l'image suit le curseur à l'arrêt
+  comme pendant la lecture, et quarante relevés sur quatre secondes de lecture ne montrent aucun
+  retour en arrière.
 - **Un fichier ne suit pas un doigt.** Un lecteur ne traite qu'un déplacement à la fois, là où
   un défilement rapide en demanderait des dizaines par seconde : l'image se figeait le temps que
   le lecteur rattrape. Pendant un déplacement, l'aperçu montre donc l'imagette déjà capturée la
