@@ -1159,7 +1159,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 11:04";
+const VERSION_PAGE = "2026-08-18 11:15";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5012,7 +5012,19 @@ function codeValide(code) {
   return controleCode(code.slice(0, 18)) === code.slice(18);
 }
 
-const coffre = { code: null, actif: false, depot: null, dernier: null, etat: "" };
+const coffre = { code: null, actif: false, depot: null, dernier: null, etat: "", echecs: 0, envoi: 0, depuis: 0, enAttente: false };
+
+/* Deux limites du plan gratuit gouvernent l'espacement des envois : mille
+   écritures par jour, et pas plus d'une par seconde sur la même clé — et nos
+   envois vont tous sur la même. Dix secondes après le dernier geste suffiraient
+   pour la seconde, mais un montage de trois heures ponctué de pauses
+   approcherait la première. Un envoi au plus toutes les trente secondes plafonne
+   à cent vingt par heure : plus de huit heures de montage d'affilée avant
+   d'inquiéter le quota. Ce qui est différé n'est jamais perdu — un dernier envoi
+   part quand l'application passe à l'arrière-plan. */
+const DEPOT_REPOS = 10000;      // le calme après le dernier geste
+const DEPOT_ESPACE = 30000;     // l'intervalle minimum entre deux écritures
+const DEPOT_MAX = 60000;        // le retard maximum toléré, même sans répit
 
 function chargerCoffre() {
   try {
@@ -5036,12 +5048,27 @@ function noterCoffre() {
    Dix secondes après le dernier geste, une seule écriture porte tout. */
 function planifierDepot() {
   if (!coffre.actif || !coffre.code) return;
+  // L'heure de la plus ancienne modification pas encore envoyée : c'est elle qui
+  // mesure le retard, et non le dernier geste.
+  if (!coffre.enAttente) coffre.depuis = performance.now();
+  coffre.enAttente = true;
   clearTimeout(coffre.depot);
-  coffre.depot = setTimeout(deposer, 10000);
+
+  const maintenant = performance.now();
+  /* Attendre le calme est juste tant qu'il finit par venir. Un montage mené sans
+     répit repoussait l'envoi à chaque geste et n'en déclenchait aucun — une
+     heure de travail pouvait n'avoir jamais quitté l'appareil. Trois délais se
+     composent donc : le calme après le dernier geste, l'intervalle minimum entre
+     deux écritures, et un retard maximum qui finit par l'emporter sur le calme. */
+  const espace = Math.max(0, DEPOT_ESPACE - (maintenant - coffre.envoi));
+  const retard = Math.max(0, DEPOT_MAX - (maintenant - coffre.depuis));
+  coffre.depot = setTimeout(deposer, Math.max(espace, Math.min(DEPOT_REPOS, retard)));
 }
 
 async function deposer() {
   if (!coffre.actif || !coffre.code) return;
+  coffre.enAttente = false;
+  coffre.envoi = performance.now();
   try {
     const reponse = await fetch("/api/coffre", {
       method: "PUT",
@@ -5051,14 +5078,44 @@ async function deposer() {
     if (!reponse.ok) throw new Error(String(reponse.status));
     coffre.dernier = Date.now();
     coffre.etat = "";
+    coffre.echecs = 0;
     noterCoffre();
   } catch (erreur) {
-    // Hors ligne, ou serveur muet : le montage reste sur l'appareil et le dépôt
-    // se refera au prochain geste. Rien à signaler tant que le local tient.
+    /* Hors ligne, ou serveur muet : le montage reste sur l'appareil et le dépôt
+       se refera au prochain geste. Un échec isolé ne mérite pas d'alarme — le
+       travail n'est pas en danger tant que le stockage local tient. Trois de
+       suite, en revanche, veulent dire que la sauvegarde en ligne ne se fait
+       plus, et cela doit se savoir. */
+    coffre.echecs += 1;
     coffre.etat = `dernier envoi refusé (${erreur.message})`;
+    coffre.enAttente = true;
+    if (coffre.echecs === 3) {
+      avertir("La sauvegarde en ligne ne passe plus — tes montages ne sont que sur cet appareil.",
+        "Sauvegarder dans un fichier", exporterProjets);
+    }
   }
   majPanneauCoffre();
 }
+
+/* L'application qui passe à l'arrière-plan sur un téléphone peut ne jamais
+   revenir : le système la referme sans prévenir. Ce qui attendait d'être envoyé
+   part donc maintenant, par le seul moyen qui survit à la mise en veille — un
+   envoi que le navigateur poursuit tout seul après la page. */
+function deposerAvantDeQuitter() {
+  if (!coffre.actif || !coffre.code || !coffre.enAttente) return;
+  const corps = JSON.stringify({ projets: state.projets });
+  const adresse = `/api/coffre?code=${encodeURIComponent(coffre.code)}`;
+  const parti = navigator.sendBeacon?.(adresse, new Blob([corps], { type: "application/json" }));
+  if (parti) { coffre.enAttente = false; return; }
+  // « sendBeacon » refuse au-delà de sa taille limite : on retombe sur un envoi
+  // ordinaire marqué pour survivre à la page.
+  fetch(adresse, { method: "POST", body: corps, headers: { "content-type": "application/json" }, keepalive: true })
+    .then(() => { coffre.enAttente = false; })
+    .catch(() => {});
+}
+
+document.addEventListener("visibilitychange", () => { if (document.hidden) deposerAvantDeQuitter(); });
+window.addEventListener("pagehide", deposerAvantDeQuitter);
 
 async function recuperer(code) {
   const reponse = await fetch(`/api/coffre?code=${encodeURIComponent(code)}`, {

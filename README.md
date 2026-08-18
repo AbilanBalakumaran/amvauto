@@ -237,11 +237,22 @@ montage commencé depuis.
 
 ### Le coffre
 
-Sauvegarde automatique, dix secondes après le dernier geste, sur
-[Workers KV](https://developers.cloudflare.com/workers/platform/pricing/) —
-1 Go, 1 000 écritures et 100 000 lectures par jour sur le plan gratuit. Un
-montage de 37 Ko y tient vingt-sept mille fois, et l'envoi différé fait qu'une
-séance de montage coûte quelques écritures, pas des centaines.
+Sauvegarde automatique sur [Workers KV](https://developers.cloudflare.com/kv/platform/limits/) :
+1 Go de stockage, 1 000 écritures et 100 000 lectures par jour sur le plan
+gratuit — et **au plus une écriture par seconde sur une même clé**, ce que nos
+envois visent tous.
+
+Trois délais se composent donc : dix secondes de calme après le dernier geste,
+trente secondes au minimum entre deux écritures, et un retard maximum d'une
+minute qui finit par l'emporter sur le calme. Sans ce dernier, un montage mené
+sans répit repoussait l'envoi à chaque geste et n'en déclenchait aucun : une
+heure de travail pouvait n'avoir jamais quitté l'appareil. Mesuré sur quarante
+modifications en quatre-vingts secondes : **deux envois, soit 89 écritures par
+heure** — onze heures de montage d'affilée avant d'inquiéter le quota. Et ce qui
+attend part quand l'application passe à l'arrière-plan, par `sendBeacon`, le seul
+moyen qui survive à une mise en veille.
+
+Un montage de 37 Ko tient vingt-sept mille fois dans le gigaoctet offert.
 
 Pas de compte, pas d'adresse e-mail : un **code tiré au hasard sur l'appareil**
 sert d'adresse et de clé — vingt caractères de l'alphabet de Crockford (ni I, ni

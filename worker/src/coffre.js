@@ -55,7 +55,10 @@ export async function coffre(request, url, env) {
     return new Response(garde || JSON.stringify({ vide: true }), { headers: entetes });
   }
 
-  if (request.method === "PUT") {
+  /* POST vaut PUT : c'est la seule méthode qu'un « sendBeacon » sait employer,
+     et c'est par lui que passe le dernier envoi quand l'application part en
+     arrière-plan — le moment où l'on risque justement de tout perdre. */
+  if (request.method === "PUT" || request.method === "POST") {
     const texte = await request.text();
     if (texte.length > POIDS_MAX) return new Response("contenu trop lourd", { status: 413 });
     let contenu;
