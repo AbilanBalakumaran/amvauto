@@ -41,6 +41,49 @@ export function codeValide(code) {
 
 const nettoyer = (brut) => String(brut || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 
+async function lire(env, cle) {
+  try {
+    const garde = await env.COFFRE.get(cle);
+    const contenu = garde ? JSON.parse(garde) : null;
+    return contenu && Array.isArray(contenu.projets) ? contenu : { projets: [], supprimes: {} };
+  } catch {
+    return { projets: [], supprimes: {} };
+  }
+}
+
+const valable = (projet) =>
+  Boolean(projet) && typeof projet === "object" && typeof projet.id === "string" && projet.id
+  && Array.isArray(projet.plans);
+
+const quand = (projet) => (typeof projet.maj === "number" ? projet.maj : 0);
+
+/* Réconciliation : les suppressions se réunissent, chaque montage garde sa
+   version la plus récente, et un montage supprimé après sa dernière
+   modification s'en va. Trois mois plus tard, la trace d'une suppression ne sert
+   plus qu'à encombrer et disparaît. */
+const OUBLI = 90 * 24 * 3600 * 1000;
+
+function fusionner(ancien, neuf) {
+  const supprimes = { ...(ancien.supprimes || {}) };
+  for (const [id, date] of Object.entries(neuf.supprimes || {})) {
+    if (typeof date === "number") supprimes[id] = Math.max(supprimes[id] || 0, date);
+  }
+
+  const parId = new Map();
+  for (const projet of [...(ancien.projets || []), ...neuf.projets]) {
+    if (!valable(projet)) continue;
+    const present = parId.get(projet.id);
+    if (!present || quand(projet) > quand(present)) parId.set(projet.id, projet);
+  }
+
+  const projets = [...parId.values()].filter((projet) => !(supprimes[projet.id] > quand(projet)));
+
+  const limite = Date.now() - OUBLI;
+  for (const [id, date] of Object.entries(supprimes)) if (!(date > limite)) delete supprimes[id];
+
+  return { projets, supprimes };
+}
+
 export async function coffre(request, url, env) {
   if (!env.COFFRE) return new Response("coffre indisponible", { status: 503 });
 
@@ -70,9 +113,23 @@ export async function coffre(request, url, env) {
     if (!contenu || !Array.isArray(contenu.projets)) {
       return new Response("contenu inattendu", { status: 400 });
     }
-    const range = JSON.stringify({ projets: contenu.projets, depose: Date.now() });
+
+    /* Le dépôt fusionne au lieu d'écraser.
+
+       Deux appareils ouverts en même temps déposent chacun leur état. Le dernier
+       à parler effaçait le travail de l'autre : un montage supprimé sur le
+       téléphone revenait dès que l'ordinateur redéposait sa copie, encore
+       ignorante de la suppression — vérifié, il revenait des deux côtés. Aucun
+       appareil ne peut connaître l'état de l'autre au moment où il parle ; le
+       coffre, lui, les voit tous les deux. C'est donc ici que les deux versions
+       se réconcilient, et nulle part ailleurs. */
+    const ancien = await lire(env, cle);
+    const fusion = fusionner(ancien, contenu);
+    const range = JSON.stringify({ ...fusion, depose: Date.now() });
     await env.COFFRE.put(cle, range);
-    return new Response(JSON.stringify({ depose: true, octets: range.length }), { headers: entetes });
+    return new Response(JSON.stringify({
+      depose: true, octets: range.length, projets: fusion.projets.length,
+    }), { headers: entetes });
   }
 
   if (request.method === "DELETE") {

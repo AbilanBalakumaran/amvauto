@@ -54,13 +54,23 @@ export async function posts(tags, limit) {
   // page vide signifie qu'on a atteint le fond du tag.
   const pages = Math.max(1, Math.ceil(limit / PAGE_SIZE));
   const raw = [];
-  for (let debut = 0; debut < pages; debut += VAGUE) {
-    const vague = Array.from({ length: Math.min(VAGUE, pages - debut) }, (_, index) =>
-      api("/post.json", { tags, limit: PAGE_SIZE, page: debut + index + 1 }, 1800),
-    );
-    const lots = await Promise.all(vague);
-    raw.push(...lots.flat());
-    if (lots.some((lot) => lot.length < PAGE_SIZE)) break;
+
+  /* La première page part seule. Un tag sans vidéo — le cas de figure quand on
+     essaie plusieurs candidats avant de trouver le bon — coûtait cinq requêtes
+     pour apprendre qu'il n'y a rien : la vague était lancée d'un bloc. Or le
+     plan gratuit plafonne à cinquante sous-requêtes par appel, et six tags
+     essayés en dépassaient. Une requête suffit à le savoir. */
+  const premiere = await api("/post.json", { tags, limit: PAGE_SIZE, page: 1 }, 1800);
+  raw.push(...premiere);
+  if (premiere.length === PAGE_SIZE) {
+    for (let debut = 1; debut < pages; debut += VAGUE) {
+      const vague = Array.from({ length: Math.min(VAGUE, pages - debut) }, (_, index) =>
+        api("/post.json", { tags, limit: PAGE_SIZE, page: debut + index + 1 }, 1800),
+      );
+      const lots = await Promise.all(vague);
+      raw.push(...lots.flat());
+      if (lots.some((lot) => lot.length < PAGE_SIZE)) break;
+    }
   }
   const artists = await artistTags();
   return raw.map((item) => {

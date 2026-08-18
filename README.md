@@ -484,6 +484,83 @@ médias chargeables en parallèle est faible. D'où, respectivement : le déverr
 premier geste, la lecture lancée dans le geste, la position reposée jusqu'à ce qu'elle prenne
 (avec repli sur un fragment `#t=`), et une seule sonde à la fois.
 
+## Audit : quatorze défauts trouvés et corrigés
+
+Une revue complète du code et un passage en force sur l'interface, geste par
+geste, en relevant chaque erreur. L'interface elle-même s'est révélée saine — pas
+une erreur de script sur vingt-trois gestes enchaînés. Les défauts étaient
+ailleurs.
+
+**Perte de données**
+
+- **Un montage supprimé revenait d'entre les morts.** Vérifié : effacé sur le
+  téléphone, il subsistait sur l'ordinateur, qui le redéposait au coffre et le
+  renvoyait au téléphone. Une fusion qui ne sait qu'ajouter ne peut pas propager
+  un retrait. Les suppressions sont désormais datées et voyagent avec les
+  projets — et surtout, **le dépôt fusionne au lieu d'écraser, côté serveur** :
+  deux appareils ouverts en même temps déposaient chacun leur état, et le dernier
+  à parler effaçait le travail de l'autre. Aucun appareil ne peut connaître
+  l'état de l'autre au moment où il parle ; le coffre, lui, les voit tous les
+  deux.
+- **Ouvrir un projet suffisait à le déclarer « plus récent ».** L'horodatage
+  suivait la durée lue dans les fichiers — une donnée que l'application se
+  procure toute seule. Lancer l'application sur le second appareil pouvait donc
+  écarter une vraie modification faite sur le premier. L'empreinte ne retient
+  plus que les décisions : le nom, la suite des plans, leurs bornes.
+- **Un projet malformé emportait toute l'application.** Un seul projet sans
+  tableau de plans — écriture interrompue, fichier bricolé — et l'affichage
+  échouait ; comme le bouton de restauration vit dans cet affichage, on se
+  retrouvait devant une application morte, sans retour possible. Ce qui est lu
+  est maintenant filtré sur sa forme.
+
+**Robustesse**
+
+- **Une panne passagère devenait durable.** Les réponses en erreur portaient
+  `public, max-age=900` comme les autres : une recherche tombée sur un hoquet de
+  Sakugabooru renvoyait « Rien trouvé » pendant un quart d'heure, y compris pour
+  un animé qui existe. Elles sont en `no-store`.
+- **Un fichier manquant figeait l'application chez l'utilisateur.** Le service
+  worker mettait sa coquille en cache d'un bloc ; une icône renommée dans un
+  déploiement faisait échouer l'installation entière, le nouveau worker ne
+  prenait jamais la main, et la mise à jour n'arrivait plus jamais. Chaque
+  fichier est désormais mis en cache pour lui-même.
+- **Une panne du serveur devenait la page hors ligne**, gardée telle quelle.
+  Seule une réponse valable est conservée.
+- **Le budget de sous-requêtes était atteignable.** Le plan gratuit en autorise
+  cinquante par appel ; essayer six tags avant de trouver le bon en coûtait
+  jusqu'à cinquante-quatre, parce qu'un tag vide déclenchait une vague de cinq
+  requêtes pour apprendre qu'il n'y a rien. La première page part seule : une
+  requête suffit à le savoir.
+- **« Sakugabooru est injoignable » s'affichait pour tout**, y compris une panne
+  d'AnimeThemes ou du coffre. Le message nomme la route qui a échoué.
+
+**Sécurité et ressources**
+
+- **Le relais était ouvert à tout le web.** Il annonçait
+  `access-control-allow-origin: *` : n'importe quel site pouvait servir des
+  vidéos à travers ce Worker, aux frais du compte et sur son quota de cent mille
+  requêtes par jour. Le cas principal — une balise `<video>` posée ailleurs —
+  n'envoie aucun en-tête `Origin` : c'est `Sec-Fetch-Site` qui le trahit, et
+  c'est lui qu'on regarde. Vérifié en production : `cross-site` → 403, notre page
+  → 206.
+- **Les redirections n'étaient pas vérifiées.** Une source de la liste blanche
+  qui renverrait ailleurs faisait de ce relais un passe-plat vers n'importe quel
+  hôte. Chaque saut est revérifié.
+- **La mémoire des imagettes ne se libérait jamais.** Elles sont rangées par
+  identifiant de plan, et rien n'effaçait celles d'un plan disparu — or
+  fractionner un plan donne au second morceau un identifiant neuf. Six cents
+  images de 160 × 90 font trente-quatre méga-octets pour un seul plan : sur une
+  longue séance, la mémoire ne faisait que monter, jusqu'à ce que le système
+  referme l'onglet. Les pellicules orphelines sont maintenant purgées.
+
+**Détails**
+
+- L'en-tête débordait de la fenêtre sur un écran de 320 points, et toute la page
+  défilait latéralement. Mesuré : 354 pixels dans une fenêtre de 320.
+- Deux coupes dans la même milliseconde produisaient deux plans de même
+  identifiant, ce qui dérègle la sélection et l'historique.
+- L'export échouait sur un rush sans adresse de fichier.
+
 ## Deux pièges rencontrés, et leur contournement
 
 - **Des tags de série sont masqués.** `mob_psycho_100_series` existe sur le site mais

@@ -556,6 +556,17 @@ main {
 /* Même bandeau, autre ton : celui-ci annonce une perte possible, pas une
    nouveauté. */
 .bandeau-version.alerte { background: linear-gradient(135deg, #C2352F, #7A1410); }
+/* Sur un écran de 320 points, « Export » et « Setting » poussaient l'en-tête
+   au-delà de la fenêtre et toute la page défilait latéralement. Le titre cède la
+   place avant les boutons, et les boutons se resserrent plutôt que de sortir. */
+@media (max-width: 360px) {
+  .app-title { font-size: 0.86rem; }
+  .app-actions { gap: 6px; }
+  .tete-btn { padding: 6px 9px; font-size: 0.7rem; }
+}
+.app-header-inner { min-width: 0; }
+.app-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-actions { flex: none; }
 .note-action {
   display: block;
   margin: 14px auto 0;
@@ -1159,7 +1170,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 11:15";
+const VERSION_PAGE = "2026-08-18 11:56";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1227,7 +1238,7 @@ fetch("/api/version", { cache: "no-store" })
   })
   .catch(() => {});
 const PAR_PAGE = 100;
-const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], actif: null, reordre: false };
+const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], supprimes: {}, actif: null, reordre: false };
 
 /* Deux adresses par plan quand la source en offre deux : celle du rendu, en
    pleine définition, et une plus légère pour monter. Tout ce qui télécharge,
@@ -1240,7 +1251,7 @@ const mediaDe = (plan) => plan?.montage || plan?.video || "";
 // L'extension vient du fichier, pas d'une supposition : AnimeThemes sert du
 // WebM, Sakugabooru du MP4, et une bande-annonce n'est pas un fichier.
 function nomFichier(rush) {
-  if (rush.youtube) return rush.name;
+  if (rush.youtube || !rush.video) return rush.name;
   const extension = (rush.video.match(/\.(mp4|webm|mkv|mov)(?:\?|$)/i) || [])[1];
   return extension ? `${rush.name}.${extension.toLowerCase()}` : rush.name;
 }
@@ -1768,16 +1779,42 @@ const CLE = "amvauto-projets";
 const IMAGES_PAR_SECONDE = 24;
 const DUREE_DEFAUT = 2;   // pour un plan dont on n'a pas pu lire la durée
 
+/* Un projet venu du stockage, d'un fichier ou du coffre n'est pas forcément
+   entier : une écriture interrompue, une sauvegarde d'une autre version, un
+   fichier bricolé. Un seul projet sans tableau de plans faisait échouer tout
+   l'affichage — et comme le bouton de restauration vit dans cet affichage, on se
+   retrouvait devant une application morte, sans moyen de revenir en arrière. On
+   ne garde donc que ce qui a la bonne forme. */
+function projetValable(projet) {
+  return Boolean(projet) && typeof projet === "object"
+    && typeof projet.id === "string" && projet.id
+    && Array.isArray(projet.plans);
+}
+
+function assainir(projets) {
+  if (!Array.isArray(projets)) return [];
+  const vus = new Set();
+  return projets.filter((projet) => {
+    if (!projetValable(projet) || vus.has(projet.id)) return false;
+    vus.add(projet.id);
+    if (typeof projet.nom !== "string" || !projet.nom) projet.nom = "Sans nom";
+    projet.plans = projet.plans.filter((plan) => plan && typeof plan === "object" && plan.id);
+    return true;
+  });
+}
+
 function charger() {
   try {
     const brut = JSON.parse(localStorage.getItem(CLE) || "{}");
-    state.projets = Array.isArray(brut.projets) ? brut.projets : [];
+    state.projets = assainir(brut.projets);
+    state.supprimes = brut.supprimes && typeof brut.supprimes === "object" ? brut.supprimes : {};
     state.actif = brut.actif || state.projets[0]?.id || null;
     // Déplacer les plans est un mode qu'on active : par défaut, un doigt qui
     // traîne sur la piste ne doit pas pouvoir changer l'ordre des scènes.
     state.reordre = Boolean(brut.reordre);
   } catch {
     state.projets = [];
+    state.supprimes = {};
     state.actif = null;
     state.reordre = false;
   }
@@ -1791,9 +1828,26 @@ function charger() {
    enregistre. */
 const empreintes = new Map();
 
+/* L'empreinte ne retient que ce que l'utilisateur a décidé : le nom, la suite
+   des plans, leurs bornes. Elle ignore ce que l'application découvre toute
+   seule — la durée lue dans le fichier, par exemple. Sinon, ouvrir simplement un
+   projet sur le second appareil suffisait à le déclarer « plus récent » que
+   celui du premier, et une vraie modification faite ailleurs se trouvait écartée
+   au profit de rien du tout. */
+const decisions = (projet) => JSON.stringify([
+  projet.nom,
+  projet.plans.map((plan) => [plan.id, plan.rush || null, plan.entree || 0, plan.sortie ?? null]),
+]);
+
 function horodater() {
   for (const projet of state.projets) {
-    const empreinte = instantane(projet);
+    const empreinte = decisions(projet);
+    if (!empreintes.has(projet.id)) {
+      // Premier passage : on ne réhorodate pas un projet qu'on vient de lire.
+      empreintes.set(projet.id, empreinte);
+      if (typeof projet.maj !== "number") projet.maj = 0;
+      continue;
+    }
     if (empreintes.get(projet.id) !== empreinte) {
       empreintes.set(projet.id, empreinte);
       projet.maj = Date.now();
@@ -1806,7 +1860,9 @@ let stockagePlein = false;
 function sauver() {
   horodater();
   try {
-    localStorage.setItem(CLE, JSON.stringify({ projets: state.projets, actif: state.actif, reordre: state.reordre }));
+    localStorage.setItem(CLE, JSON.stringify({
+      projets: state.projets, supprimes: state.supprimes, actif: state.actif, reordre: state.reordre,
+    }));
     stockagePlein = false;
   } catch {
     /* Le stockage refuse d'écrire — plein, ou navigation privée. L'erreur était
@@ -2694,6 +2750,17 @@ const LARGEUR_IMAGETTE = 64;
 const MARGE_BANDE = 260;        // on peint un peu au-delà de l'écran
 const IMAGETTES_MAX = 600;      // au-delà, on oublie les plus anciennes
 
+/* Les imagettes d'un plan disparu ne servent plus à rien, et elles pèsent : six
+   cents images de 160 × 90 en font trente-quatre méga-octets pour un seul plan.
+   Rien ne les libérait — ni la suppression d'un plan, ni un fractionnement, qui
+   donne au second morceau un identifiant neuf. Sur une longue séance, la mémoire
+   ne faisait que monter, jusqu'à ce que le système referme l'onglet. */
+function purgerBandes() {
+  const vivants = new Set();
+  for (const projet of state.projets) for (const plan of projet.plans) vivants.add(plan.id);
+  for (const id of bandes.keys()) if (!vivants.has(id)) bandes.delete(id);
+}
+
 function bandeDe(plan) {
   let bande = bandes.get(plan.id);
   if (!bande) {
@@ -3543,6 +3610,10 @@ function brancherRognage(poignee, projet, index, cote) {
 
 // Coupe le plan sous la tête de lecture en deux, comme un coup de ciseaux : la
 // partie gauche s'arrête là, la partie droite reprend exactement au même point.
+// Deux coupes dans la même milliseconde donneraient le même identifiant, et deux
+// plans indiscernables dérèglent la sélection comme l'historique.
+let compteurCoupes = 0;
+
 function couperAuCurseur() {
   const projet = projetActif();
   if (!projet?.plans.length) return;
@@ -3566,7 +3637,7 @@ function couperAuCurseur() {
   const point = entreeDe(plan) + dans;
   const suite = {
     ...plan,
-    id: `${idRush(plan)}#${Date.now().toString(36)}`,
+    id: `${idRush(plan)}#${Date.now().toString(36)}${(compteurCoupes += 1).toString(36)}`,
     rush: idRush(plan),
     entree: point,
     sortie: sortieDe(plan),
@@ -3853,6 +3924,7 @@ function redessinerPiste() {
   const projet = projetActif();
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
+  purgerBandes();
   ancienne.closest(".piste-enveloppe").replaceWith(pisteComplete(projet));
   // La carte du projet porte la durée totale : elle vieillit dès qu'une durée
   // est mesurée.
@@ -4854,6 +4926,12 @@ $("btn-setting").addEventListener("click", () => {
   supprimer.addEventListener("click", () => {
     if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
     state.projets = state.projets.filter((autre) => autre.id !== projet.id);
+    /* Une suppression se note. Sans cela, l'autre appareil gardait sa copie, la
+       redéposait au coffre, et le projet effacé réapparaissait des deux côtés :
+       vérifié, il revenait. Une fusion qui ne sait qu'ajouter ne peut pas
+       propager un retrait. */
+    state.supprimes[projet.id] = Date.now();
+    empreintes.delete(projet.id);
     state.actif = state.projets[0]?.id || null;
     histoire.projet = null;
     sauver();
@@ -4908,6 +4986,7 @@ function versSauvegarde() {
     exporte: new Date().toISOString(),
     version: VERSION_PAGE,
     projets: state.projets,
+    supprimes: state.supprimes,
   }, null, 1);
 }
 
@@ -4920,12 +4999,42 @@ function exporterProjets() {
 /* Restaurer n'écrase jamais : un projet du fichier remplace celui de même
    identifiant, les autres s'ajoutent. Restaurer une vieille sauvegarde ne peut
    donc pas emporter un montage commencé depuis. */
-function fusionner(projets, provenance) {
+/* Les traces de suppression ne servent qu'à propager un retrait ; passé trois
+   mois, un projet effacé ne peut plus revenir de nulle part et sa trace ne sert
+   plus qu'à encombrer. */
+const OUBLI_SUPPRESSION = 90 * 24 * 3600 * 1000;
+
+function purgerSuppressions() {
+  const limite = Date.now() - OUBLI_SUPPRESSION;
+  for (const [id, quand] of Object.entries(state.supprimes)) {
+    if (!(quand > limite)) delete state.supprimes[id];
+  }
+}
+
+function fusionner(projets, provenance, supprimes = {}) {
   let ajoutes = 0;
   let remplaces = 0;
   let ignores = 0;
+  let effaces = 0;
+
+  // Les suppressions des deux côtés se réunissent, la plus ancienne date faisant
+  // foi pour un même projet.
+  for (const [id, quand] of Object.entries(supprimes || {})) {
+    if (typeof quand !== "number") continue;
+    state.supprimes[id] = Math.max(state.supprimes[id] || 0, quand);
+  }
+  // Un projet effacé ailleurs après notre dernière modification s'en va d'ici.
+  state.projets = state.projets.filter((mien) => {
+    const efface = state.supprimes[mien.id];
+    if (efface && efface > (mien.maj || 0)) { effaces += 1; empreintes.delete(mien.id); return false; }
+    return true;
+  });
+
   for (const venu of projets) {
-    if (!venu?.id || !Array.isArray(venu.plans)) continue;
+    if (!projetValable(venu)) continue;
+    // Ce qu'on a supprimé après sa dernière modification ne remonte pas.
+    const efface = state.supprimes[venu.id];
+    if (efface && efface > (venu.maj || 0)) continue;
     const place = state.projets.findIndex((autre) => autre.id === venu.id);
     if (place < 0) {
       state.projets.push(venu);
@@ -4946,9 +5055,10 @@ function fusionner(projets, provenance) {
   if (!state.actif || !state.projets.some((p) => p.id === state.actif)) {
     state.actif = state.projets[0]?.id || null;
   }
+  purgerSuppressions();
   empreintes.clear();
   sauver();
-  return { ajoutes, remplaces, ignores, provenance };
+  return { ajoutes, remplaces, ignores, effaces, provenance };
 }
 
 function importerFichier() {
@@ -4962,7 +5072,7 @@ function importerFichier() {
       const contenu = JSON.parse(await fichier.text());
       const projets = Array.isArray(contenu?.projets) ? contenu.projets : null;
       if (!projets) throw new Error("format");
-      const bilan = fusionner(projets, fichier.name);
+      const bilan = fusionner(projets, fichier.name, contenu.supprimes);
       fermerFeuille();
       rendreProjet();
       rendre();
@@ -5073,7 +5183,7 @@ async function deposer() {
     const reponse = await fetch("/api/coffre", {
       method: "PUT",
       headers: { "x-coffre": coffre.code, "content-type": "application/json" },
-      body: JSON.stringify({ projets: state.projets }),
+      body: JSON.stringify({ projets: state.projets, supprimes: state.supprimes }),
     });
     if (!reponse.ok) throw new Error(String(reponse.status));
     coffre.dernier = Date.now();
@@ -5103,7 +5213,7 @@ async function deposer() {
    envoi que le navigateur poursuit tout seul après la page. */
 function deposerAvantDeQuitter() {
   if (!coffre.actif || !coffre.code || !coffre.enAttente) return;
-  const corps = JSON.stringify({ projets: state.projets });
+  const corps = JSON.stringify({ projets: state.projets, supprimes: state.supprimes });
   const adresse = `/api/coffre?code=${encodeURIComponent(coffre.code)}`;
   const parti = navigator.sendBeacon?.(adresse, new Blob([corps], { type: "application/json" }));
   if (parti) { coffre.enAttente = false; return; }
@@ -5124,7 +5234,7 @@ async function recuperer(code) {
   if (!reponse.ok) throw new Error(`le serveur a répondu ${reponse.status}`);
   const contenu = await reponse.json();
   if (contenu.vide) return { vide: true };
-  return fusionner(contenu.projets || [], "le coffre");
+  return fusionner(contenu.projets || [], "le coffre", contenu.supprimes);
 }
 
 /* Le panneau de sauvegarde. Il dit d'abord ce qui est en jeu — le poids réel

@@ -16,8 +16,15 @@ const JSON_HEADERS = {
   "cache-control": "public, max-age=900",
 };
 
+/* Une réponse en erreur n'est jamais gardée. Elle l'était un quart d'heure comme
+   les autres : une recherche tombée sur une panne passagère de Sakugabooru
+   renvoyait « Rien trouvé » pendant quinze minutes, y compris pour un animé qui
+   existe — et rien, côté page, ne permettait de s'en sortir. */
 function json(payload, status = 200) {
-  return new Response(JSON.stringify(payload), { status, headers: JSON_HEADERS });
+  const entetes = status >= 400
+    ? { ...JSON_HEADERS, "cache-control": "no-store" }
+    : JSON_HEADERS;
+  return new Response(JSON.stringify(payload), { status, headers: entetes });
 }
 
 function serialize({ post, score }) {
@@ -276,7 +283,10 @@ export default {
         }
         return json({ error: "Route inconnue." }, 404);
       } catch (error) {
-        return json({ error: `Sakugabooru est injoignable : ${error.message}` }, 502);
+        // Le nom de la route, pas celui d'une source au hasard : « Sakugabooru
+        // est injoignable » s'affichait aussi bien pour une panne d'AnimeThemes
+        // que du coffre, et envoyait chercher au mauvais endroit.
+        return json({ error: `${url.pathname} a échoué : ${error.message}` }, 502);
       }
     }
 

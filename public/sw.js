@@ -6,7 +6,7 @@
 // ouverte. Sans cette estampille automatique, il faudrait penser à incrémenter
 // un numéro à chaque déploiement — et l'oublier une fois suffit à figer
 // l'application chez l'utilisateur.
-const VERSION = "2026-08-18 11:15";
+const VERSION = "2026-08-18 11:56";
 const CACHE = `amvauto-${VERSION}`;
 
 const COQUILLE = [
@@ -22,11 +22,20 @@ const COQUILLE = [
 ];
 
 self.addEventListener("install", (event) => {
-  // cache: "reload" court-circuite le cache HTTP : le nouveau worker s'installe
-  // avec des copies réellement fraîches.
+  /* Chaque fichier est mis en cache pour lui-même. « addAll » échoue en bloc :
+     un seul fichier absent — une icône renommée, une police oubliée dans un
+     déploiement — faisait échouer l'installation entière. Le nouveau worker ne
+     prenait alors jamais la main et l'application restait figée sur son ancienne
+     version chez l'utilisateur, sans le moindre message. Mieux vaut une coquille
+     incomplète, qui se complètera au premier passage en ligne, qu'une mise à
+     jour qui n'arrive jamais.
+
+     cache: "reload" court-circuite le cache HTTP : les copies sont fraîches. */
   event.waitUntil(
     caches.open(CACHE).then((cache) =>
-      cache.addAll(COQUILLE.map((url) => new Request(url, { cache: "reload" }))),
+      Promise.all(COQUILLE.map((url) =>
+        cache.add(new Request(url, { cache: "reload" })).catch(() => null),
+      )),
     ),
   );
   self.skipWaiting();
@@ -58,8 +67,12 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(requete)
         .then((reponse) => {
-          const copie = reponse.clone();
-          caches.open(CACHE).then((cache) => cache.put("./index.html", copie));
+          // Seule une page valable est gardée : une panne passagère du serveur
+          // devenait sinon la page servie hors ligne, définitivement.
+          if (reponse.ok) {
+            const copie = reponse.clone();
+            caches.open(CACHE).then((cache) => cache.put("./index.html", copie));
+          }
           return reponse;
         })
         .catch(() => caches.match("./index.html").then((cache) => cache || Response.error())),
