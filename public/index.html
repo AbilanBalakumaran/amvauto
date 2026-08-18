@@ -1145,7 +1145,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 07:07";
+const VERSION_PAGE = "2026-08-18 08:14";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1214,6 +1214,14 @@ fetch("/api/version", { cache: "no-store" })
   .catch(() => {});
 const PAR_PAGE = 100;
 const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], actif: null, reordre: false };
+
+/* Deux adresses par plan quand la source en offre deux : celle du rendu, en
+   pleine définition, et une plus légère pour monter. Tout ce qui télécharge,
+   lit, sonde ou range un média passe par « mediaDe » ; seuls la conduite EDL et
+   l'export de liens gardent l'adresse du rendu. Le procédé ne dépend d'aucune
+   capacité du navigateur : il marche à l'identique sur téléphone comme sur
+   ordinateur. */
+const mediaDe = (plan) => plan?.montage || plan?.video || "";
 
 // L'extension vient du fichier, pas d'une supposition : AnimeThemes sert du
 // WebM, Sakugabooru du MP4, et une bande-annonce n'est pas un fichier.
@@ -1593,7 +1601,11 @@ function ligneFichier(rush) {
     rush.artists.join(", ") || (rush.provider === "sakugabooru" ? "animateur non identifié" : null),
     rush.ref || null,
     rush.height ? `${rush.width}×${rush.height}` : null,
-    rush.mb ? `${rush.mb} Mo` : null,
+    // Deux poids quand la source offre deux fichiers : celui qu'on téléchargera
+    // pour monter, et celui que l'export désigne pour le rendu.
+    rush.mb && rush.montage && rush.mbRendu
+      ? `${rush.mb} Mo au montage · ${rush.mbRendu} Mo au rendu`
+      : rush.mb ? `${rush.mb} Mo` : null,
   ].filter(Boolean).join(" · ");
   const puces = document.createElement("span");
   puces.className = "puces";
@@ -1636,8 +1648,9 @@ function puce(texte, variante = "") {
    le relais — jamais la source en direct, dont les octets ne serviraient qu'une
    fois. */
 function adresseLecture(rush) {
-  if (!rush?.video) return "";
-  return locales.get(rush.video) || `/api/media?u=${encodeURIComponent(rush.video)}`;
+  const adresse = mediaDe(rush);
+  if (!adresse) return "";
+  return locales.get(adresse) || `/api/media?u=${encodeURIComponent(adresse)}`;
 }
 
 function lire(rush) {
@@ -1684,7 +1697,13 @@ function lire(rush) {
   meta.textContent = [
     rush.artists.join(", ") || null,
     rush.ref || null,
-    rush.height ? `${rush.width}×${rush.height}${rush.mb ? ` · ${rush.mb} Mo` : ""}` : null,
+    rush.height
+      ? `rendu ${rush.width}×${rush.height}${rush.mbRendu || rush.mb ? ` · ${rush.mbRendu || rush.mb} Mo` : ""}`
+      : null,
+    rush.montage
+      ? `montage ${rush.montageHauteur ? `${rush.montageHauteur}p` : "allégé"}${rush.mb ? ` · ${rush.mb} Mo` : ""}` +
+        (rush.montageCredite ? " · crédits visibles au montage seulement" : "")
+      : null,
     rush.score === null
       ? `${PROVENANCE[rush.provider]} · pas de note`
       : `${PROVENANCE[rush.provider]} · score ${rush.score}${rush.votes ? ` · ${rush.votes} votes` : ""}`,
@@ -1932,7 +1951,7 @@ const enMesure = new Set();
 let sondeActive = false;
 
 function mesurerDuree(plan) {
-  if (plan.youtube || !plan.video || plan.duree || enMesure.has(plan.id)) return;
+  if (plan.youtube || !mediaDe(plan) || plan.duree || enMesure.has(plan.id)) return;
   enMesure.add(plan.id);
   attenteMesure.push(plan);
   mesurerSuivant();
@@ -1998,15 +2017,18 @@ function totaux(projet) {
   const comptes = new Set();
   return projet.plans.reduce(
     (somme, plan) => {
-      const neuf = plan.video && !comptes.has(plan.video);
-      if (plan.video) comptes.add(plan.video);
+      const adresse = mediaDe(plan);
+      const neuf = adresse && !comptes.has(adresse);
+      if (adresse) comptes.add(adresse);
       return {
         duree: somme.duree + (plan.duree ? duree(plan) : 0),
         mb: somme.mb + (neuf ? plan.mb || 0 : 0),
+        // Ce que pèsera le même projet une fois monté sur les fichiers de rendu.
+        mbRendu: somme.mbRendu + (neuf ? plan.mbRendu || plan.mb || 0 : 0),
         mesures: somme.mesures + (plan.duree ? 1 : 0),
       };
     },
-    { duree: 0, mb: 0, mesures: 0 },
+    { duree: 0, mb: 0, mbRendu: 0, mesures: 0 },
   );
 }
 
@@ -2560,7 +2582,7 @@ function demanderImagette(plan, temps, pas, exact = false) {
   const identifiant = exact ? cleExacte(temps) : cle(pas, Math.round(temps / pas));
   const instant = exact ? temps : Math.round(temps / pas) * pas;
   if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) return;
-  if (plan.youtube || !plan.video || !plan.duree) return;
+  if (plan.youtube || !mediaDe(plan) || !plan.duree) return;
   /* Tant qu'un fichier se télécharge, la sonde se tait complètement.
      Elle passe par le même relais et tient une connexion ouverte pendant qu'elle
      décode : mesuré, ses lectures occupaient jusqu'à neuf secondes de réseau
@@ -2573,7 +2595,7 @@ function demanderImagette(plan, temps, pas, exact = false) {
   // Exception à l'exception : un plan sans vignette de source n'a rien à montrer
   // pendant son import. Une seule image, celle de son entrée, lui donne un
   // visage — le reste attend la copie locale.
-  if (!estLocal(plan) && !importsRates.has(plan.video) && !(exact && !plan.preview)) return;
+  if (!estLocal(plan) && !importsRates.has(mediaDe(plan)) && !(exact && !plan.preview)) return;
   bande.demandes.set(identifiant, instant);
   pellicule.demandees += 1;
   attenteImagettes.push({ plan, temps: instant, identifiant });
@@ -2637,7 +2659,7 @@ function servirImagettes() {
      le moniteur — et interdit d'en relire quoi que ce soit. Sur une copie
      locale, la question ne se pose pas : elle vient de la page elle-même. */
   const local = estLocal(plan);
-  const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(plan.video)}`;
+  const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(mediaDe(plan))}`;
   const exact = identifiant.startsWith("exact:");
 
   let fini = false;
@@ -2901,7 +2923,7 @@ function redessinerBandes() {
 function preparerSuivant(index) {
   const plan = projetActif()?.plans[index];
   const attente = elementAttente();
-  if (!plan || !attente || plan.youtube || !plan.video) return;
+  if (!plan || !attente || plan.youtube || !mediaDe(plan)) return;
   const source = sourceDe(plan);
   if (attente.dataset.plan === plan.id && attente.dataset.source === source) return;
   attente.dataset.plan = plan.id;
@@ -3174,6 +3196,7 @@ function bilanProjet(projet) {
   const reste = projet.plans.length - importes;
   return (
     `${projet.plans.length} plans · ${bilan.mb.toFixed(0)} Mo` +
+    (bilan.mbRendu > bilan.mb + 0.5 ? ` au montage · ${bilan.mbRendu.toFixed(0)} Mo au rendu` : "") +
     (reste ? ` · ${reste} à importer` : " · tous importés") +
     (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "") +
     ` · v${VERSION_PAGE.slice(-5)}`
@@ -4086,17 +4109,19 @@ async function effacerBase(adresse) {
 
 // L'adresse à donner au lecteur : le fichier local dès qu'on l'a.
 function sourceDe(plan) {
-  return (plan?.video && locales.get(plan.video)) || plan?.video || "";
+  const adresse = mediaDe(plan);
+  return (adresse && locales.get(adresse)) || adresse;
 }
 
-const estLocal = (plan) => Boolean(plan?.video && locales.get(plan.video));
-const avancement = (plan) => enImport.get(plan?.video);
+const estLocal = (plan) => Boolean(mediaDe(plan) && locales.get(mediaDe(plan)));
+const avancement = (plan) => enImport.get(mediaDe(plan));
 
 async function preparerLocal(plan) {
-  if (!plan?.video || plan.youtube || locales.has(plan.video)) return;
-  const garde = await lireBase(plan.video);
+  const adresse = mediaDe(plan);
+  if (!adresse || plan.youtube || locales.has(adresse)) return;
+  const garde = await lireBase(adresse);
   if (garde instanceof Blob) {
-    locales.set(plan.video, URL.createObjectURL(garde));
+    locales.set(adresse, URL.createObjectURL(garde));
     return;
   }
   planifierImport(plan);
@@ -4104,20 +4129,22 @@ async function preparerLocal(plan) {
 
 // Vrai tant que le fichier est en file d'attente ou en cours de téléchargement.
 const importPrevu = (plan) =>
-  Boolean(plan?.video) && (enImport.has(plan.video) || fileImport.some((autre) => autre.video === plan.video));
+  Boolean(mediaDe(plan)) && (enImport.has(mediaDe(plan)) || fileImport.some((autre) => mediaDe(autre) === mediaDe(plan)));
 
 // Arrête un téléchargement en cours ou en attente, sans perdre ce qui est déjà
 // arrivé — la reprise s'en servira.
 function interrompreImport(plan) {
-  if (!plan?.video || locales.has(plan.video)) return;
-  const index = fileImport.findIndex((autre) => autre.video === plan.video);
+  const adresse = mediaDe(plan);
+  if (!adresse || locales.has(adresse)) return;
+  const index = fileImport.findIndex((autre) => mediaDe(autre) === adresse);
   if (index >= 0) fileImport.splice(index, 1);
-  arretsImport.get(plan.video)?.abort();
+  arretsImport.get(adresse)?.abort();
 }
 
 function planifierImport(plan) {
-  if (!plan?.video || plan.youtube || locales.has(plan.video) || enImport.has(plan.video)) return;
-  if (fileImport.some((autre) => autre.video === plan.video)) return;
+  const adresse = mediaDe(plan);
+  if (!adresse || plan.youtube || locales.has(adresse) || enImport.has(adresse)) return;
+  if (fileImport.some((autre) => mediaDe(autre) === adresse)) return;
   fileImport.push(plan);
   lancerImport();
 }
@@ -4134,21 +4161,22 @@ async function lancerImport() {
   libererSondeBande();
   // On enchaîne aussitôt sur le suivant, sans attendre celui-ci.
   if (fileImport.length) setTimeout(lancerImport, 0);
-  enImport.set(plan.video, 0);
+  const adresse = mediaDe(plan);
+  enImport.set(adresse, 0);
   majImports();
 
   const abandon = new AbortController();
-  arretsImport.set(plan.video, abandon);
+  arretsImport.set(adresse, abandon);
   let recus = [];
   let deja = 0;
   try {
     // Ce qu'un passage précédent avait déjà rapporté.
-    const partiel = await lireBase(cleParticelle(plan.video));
+    const partiel = await lireBase(cleParticelle(adresse));
     if (partiel instanceof Blob && partiel.size) {
       recus.push(partiel);
       deja = partiel.size;
     }
-    const reponse = await fetch(`/api/media?u=${encodeURIComponent(plan.video)}`, {
+    const reponse = await fetch(`/api/media?u=${encodeURIComponent(adresse)}`, {
       signal: abandon.signal,
       headers: deja ? { Range: `bytes=${deja}-` } : {},
     });
@@ -4168,7 +4196,7 @@ async function lancerImport() {
         morceaux.push(value);
         recu += value.byteLength;
         if (attendu) {
-          enImport.set(plan.video, Math.min(0.99, recu / attendu));
+          enImport.set(adresse, Math.min(0.99, recu / attendu));
           majImports();
         }
       }
@@ -4177,19 +4205,19 @@ async function lancerImport() {
     }
 
     const blob = new Blob(morceaux, { type: reponse.headers.get("content-type") || "video/mp4" });
-    await ecrireBase(plan.video, blob);
-    await effacerBase(cleParticelle(plan.video));
-    locales.set(plan.video, URL.createObjectURL(blob));
+    await ecrireBase(adresse, blob);
+    await effacerBase(cleParticelle(adresse));
+    locales.set(adresse, URL.createObjectURL(blob));
   } catch (erreur) {
     // Interrompu ou en échec : on garde ce qui est arrivé pour la prochaine fois.
     if (recus.length) {
       const type = recus[0]?.type || "video/mp4";
-      await ecrireBase(cleParticelle(plan.video), new Blob(recus, { type }));
+      await ecrireBase(cleParticelle(adresse), new Blob(recus, { type }));
     }
-    if (erreur?.name !== "AbortError") importsRates.add(plan.video);
+    if (erreur?.name !== "AbortError") importsRates.add(adresse);
   } finally {
-    arretsImport.delete(plan.video);
-    enImport.delete(plan.video);
+    arretsImport.delete(adresse);
+    enImport.delete(adresse);
     importsEnCours -= 1;
     majImports();
     apresImport(plan);
@@ -4626,7 +4654,7 @@ function versTexte(projet) {
   const bilan = totaux(projet);
   const entete = [
     `# ${projet.nom}`,
-    `# ${projet.plans.length} plans · ${secondes(bilan.duree)} · ${bilan.mb.toFixed(1)} Mo`,
+    `# ${projet.plans.length} plans · ${secondes(bilan.duree)} · ${bilan.mbRendu.toFixed(1)} Mo au rendu`,
     "",
   ];
   const corps = projet.plans.map((plan, index) => [

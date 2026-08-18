@@ -183,6 +183,32 @@ octets par une page, et un relais ouvert servirait à n'importe qui.
 L'importation se fait un fichier à la fois, le plan courant d'abord, avec l'avancement
 affiché sur le bloc. Un plan non encore importé reste jouable en distant, avec ses limites.
 
+### Monter léger, rendre en pleine définition
+
+AnimeThemes sert souvent **plusieurs fichiers pour un même générique** : un 720p et un
+1080p Blu-ray. Ce sont deux poids pour la même image, pas deux plans — les deux fichiers
+d'une même *entrée* partagent le montage et la durée. Mesuré sur deux paires : 0,00 s et
+0,07 s d'écart de durée, et des images identiques à 1 près sur une échelle de 255 aux
+instants 1 s, 5 s, 15 s, 30 s et 60 s.
+
+Chaque rush porte donc deux adresses. Tout ce qui télécharge, lit, sonde ou range un média
+passe par la plus légère ; l'EDL et l'export de liens désignent celle du rendu. On monte
+sur un fichier réduit, le logiciel de montage rend sur le fichier complet, et les points de
+coupe tombent au même endroit puisque les durées coïncident.
+
+Sur *Frieren*, cela fait 41,2 Mo à télécharger au lieu de 57,6 pour l'OP1, 28,2 au lieu de
+48,4 pour l'ED1-TV — de 28 % à 42 % de moins. En dessous de 15 % d'économie, l'application
+ne garde qu'un seul fichier : doubler le nombre d'adresses pour rien n'apporte rien.
+
+Le procédé **ne dépend d'aucune capacité du navigateur** : ni WebCodecs, ni encodage sur
+l'appareil, rien qui existe sur un poste et manque sur un téléphone. C'est le choix d'une
+adresse plutôt qu'une autre — identique sur iPhone, sur Android et sur ordinateur.
+
+Une réserve, affichée dans la fiche du rush : le fichier léger porte parfois les crédits que
+la version Blu-ray n'a pas. Même image, même durée, du texte en plus pendant le montage —
+absent du rendu. Quand une variante de même nature existe (créditée comme le rendu, ou sans
+crédits comme lui), c'est elle qui est préférée.
+
 ## Comment la lecture est construite
 
 L'aperçu n'est pas un lecteur : c'est un **moniteur** dessiné image par image sur une toile,
