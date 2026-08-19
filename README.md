@@ -810,11 +810,62 @@ les rushs, et facturer une génération musicale parce qu'un jeton gratuit a
 échoué serait une très mauvaise surprise : Lyria demande désormais un
 `MUSIQUE_LYRIA` explicite.
 
-### Ce que ça ne fait pas
+### Les paroles choisissent les plans
 
-**Les paroles ne pilotent pas encore le choix des plans.** La lecture donne
-pourtant de quoi le faire — un résumé, des mots-clés, une émotion — et c'est la
-prochaine marche : rapprocher un vers d'une scène décrite.
+Le montage s'accordait sur l'énergie : un drop appelait un plan de combat, un
+pont un plan calme. C'est juste, et c'est **sourd** — les paroles disent quelque
+chose, et rien ne l'écoutait.
+
+Depuis que les plans sont lus, on sait ce qu'ils montrent. Rapprocher « une fille
+marche sous la pluie » d'un vers sur la pluie n'est plus un problème de vision,
+c'est un problème de langue — et le modèle de Workers AI le traite pour rien.
+
+Un seul appel par montage, quel que soit le nombre de plans. Éprouvé sur des
+paroles et des plans construits pour la démonstration :
+
+```
+[verse] Rain on the empty street / I walk away from you
+   → pluie/marche  >  chat endormi
+
+[chorus] Burn it all down / Steel and fire
+   → explosion  >  épées  >  course
+
+[verse] Quiet now, the smoke is gone
+   → fumée sur les ruines
+```
+
+« Steel » a trouvé les épées, « smoke » les ruines. Ce n'est pas de l'énergie,
+c'est du sens.
+
+Ce qui revient est **un ordre de préférence par section, pas un choix ferme** :
+le montage garde la main, parce qu'il connaît des contraintes que le modèle
+ignore — la durée des sources, la fraîcheur, ce qui vient d'être montré.
+
+Le poids a demandé un réglage. L'accord doit l'emporter sur **un** écart
+d'énergie — un plan de pluie sur un vers de pluie vaut mieux qu'un plan d'énergie
+parfaite qui ne parle de rien — mais pas sur trois, sinon un drop se remplirait
+de plans calmes. Il ne doit pas non plus écraser la fraîcheur : revoir six fois
+le même plan « juste » resterait pire que varier.
+
+Mesuré, sur trois sections de même énergie et six plans — de sorte que seul
+l'accord puisse les départager :
+
+| | Section 0 | Section 1 | Section 2 |
+| --- | --- | --- | --- |
+| sans accord | tout à 4–5 emplois | tout à 4–5 | tout à 4–5 |
+| **avec accord** | **pluie ×7, explosion ×7** | **épées ×9, ruines ×8** | **course ×9, chat ×8** |
+
+Chaque section est dominée par exactement la paire qu'on lui avait désignée, et
+les autres plans continuent d'apparaître — la variété survit à la pertinence.
+
+Deux détails de mise au point valent d'être notés. Workers AI rend selon le
+modèle soit du texte, soit l'objet déjà analysé : le premier essai butait sur
+« [object Object] », et le message d'erreur, qui ne montrait pas la réponse, ne
+le disait pas. Et les identifiants rendus par le modèle ne sont pas crus sur
+parole — ce qui ne correspond à aucun plan connu est écarté à l'arrivée plutôt
+que de faire échouer le montage plus loin.
+
+### Ce que ça ne fait pas
 
 **Sans lecture, l'outil reste aveugle.** Tant qu'on n'a pas appuyé sur l'œil, il
 s'accorde sur les étiquettes de Sakugabooru et coupe au début des plans.
