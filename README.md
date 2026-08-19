@@ -897,6 +897,70 @@ les rushs, et facturer une génération musicale parce qu'un jeton gratuit a
 échoué serait une très mauvaise surprise : Lyria demande désormais un
 `MUSIQUE_LYRIA` explicite.
 
+### Un mashup, pas un plan étalé
+
+Un rush réemployé donnait ses secondes **dans l'ordre** : premier emploi le
+début, deuxième la suite. Recollés dans un montage, ces morceaux racontaient la
+scène d'origine en pointillé. Ce n'est pas un mashup, c'est le plan de départ
+étalé sur toute la durée.
+
+Chaque source est maintenant découpée en cases, servies dans un **ordre
+dispersé**. Le pas d'or fait cela mieux qu'un tirage au sort : il ne repasse
+jamais deux fois au même endroit et ne laisse aucun trou, là où le hasard fait
+les deux. Deux emplois successifs d'une même source tombent aux deux bouts du
+fichier, jamais côte à côte.
+
+Et **deux blocs de suite venus du même rush sont interdits** — règle dure, plus
+une pénalité qu'on pouvait franchir : c'est le plan d'origine qui réapparaîtrait.
+
+Mesuré sur cinq sources de vingt-quatre secondes, soixante-quinze coupes :
+
+```
+p0, entrées successives dans le montage :
+0,1 → 14,1 → 5,1 → 20,1 → 11,1 → 2,1 → 16,1 → 7,1 → 22,1 → 13,1 → …
+```
+
+43 % seulement des emplois successifs avancent dans le fichier — c'est le
+hasard, donc aucune dérive. Écart moyen entre deux emplois d'une même source :
+cinq blocs. Aucun doublon collé.
+
+### Le raccord de mouvement
+
+Couper d'un geste qui part à droite vers un geste qui part à droite se voit à
+peine : l'œil suit, et c'est ce qui fait qu'un mashup s'enchaîne au lieu de
+claquer. L'inverse — droite puis gauche — est la coupure qui fait sursauter,
+celle qu'on garde pour les impacts.
+
+**Il s'agit du mouvement de l'action, jamais de la caméra.** C'est écrit ainsi
+dans la consigne de lecture : un personnage qui bondit à droite pendant que la
+caméra l'accompagne compte comme « droite » ; un personnage immobile filmé par
+un panoramique compte comme « immobile ». La lecture rend donc, en plus du
+reste, une direction et sa force.
+
+Rien à calculer sur l'appareil : la question part avec la vidéo qu'on envoyait
+déjà. Sur un plan de Chainsaw Man où des mains jaillissent du sol, elle rend
+`mouvement: "up", force: 2`.
+
+Mesuré sur six sources — trois qui vont à droite, trois à gauche, tout le reste
+identique :
+
+| | Enchaînements dans le même sens |
+| --- | --- |
+| sans lecture | 34 % |
+| **avec lecture** | **74 %** |
+
+Le montage produit des séries — `l l l r r r l l l` — : il continue tant qu'il
+peut, et ne rompt que lorsque la fraîcheur l'exige.
+
+### Cinq sources ne doivent pas défiler en rond
+
+Défaut visible dès le premier essai de dispersion : à énergie et à note
+strictement égales, les candidats se relayaient dans un ordre parfaitement
+cyclique — `p0 p1 p2 p3 p4`, quinze fois de suite. Un grain de sable déterministe,
+tiré de l'identifiant et du rang, départage désormais les ex æquo. Sa valeur
+reste sous le plus petit écart qui ait un sens, donc il ne dérange aucune
+préférence réelle.
+
 ### Les paroles choisissent les plans
 
 Le montage s'accordait sur l'énergie : un drop appelait un plan de combat, un

@@ -1462,7 +1462,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 14:04";
+const VERSION_PAGE = "2026-08-19 15:47";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6009,7 +6009,41 @@ const TEMPS_PAR_PLAN = { 3: 2, 2: 4, 1: 8, 0: 16 };
    le plus : c'est lui qu'on entend. Vient ensuite la variété — revoir le même
    plan trois fois de suite tue un AMV plus sûrement qu'un mauvais choix —, puis
    la qualité du rush, en simple départage. */
-function noterCandidat(plan, section, vus, rang, accord) {
+/* Le raccord de mouvement.
+
+   Couper d'un geste qui part à droite vers un geste qui part à droite se voit à
+   peine : l'œil suit, et c'est ce qui fait qu'un mashup s'enchaîne au lieu de
+   claquer. L'inverse — droite puis gauche — est la coupure qui fait sursauter,
+   celle qu'on garde pour les impacts.
+
+   Il s'agit du mouvement de l'action, jamais de la caméra : c'est écrit ainsi
+   dans la consigne de lecture, un personnage qui bondit à droite pendant que la
+   caméra l'accompagne compte comme « droite », et un personnage immobile filmé
+   par un panoramique compte comme « immobile ». */
+const OPPOSES = { right: "left", left: "right", up: "down", down: "up", toward: "away", away: "toward" };
+
+function accordDuMouvement(precedent, plan) {
+  const avant = precedent?.lecture?.mouvement;
+  const apres = plan.lecture?.mouvement;
+  if (!avant || !apres || avant === "still" || apres === "still") return 0;
+  // Une intensité faible ne doit pas commander : on pèse par la plus timide des deux.
+  const poids = Math.min(3, Math.min(precedent.lecture.force ?? 2, plan.lecture.force ?? 2)) / 3;
+  if (avant === apres) return -3 * poids;
+  if (OPPOSES[avant] === apres) return 3 * poids;
+  return 1 * poids;
+}
+
+/* De quoi départager deux candidats rigoureusement à égalité. Sans cela, cinq
+   sources de même énergie et de même note se relayaient dans un ordre
+   parfaitement cyclique — p0 p1 p2 p3 p4, quinze fois de suite —, et le montage
+   se voyait. La valeur reste sous le plus petit écart qui ait un sens. */
+function grainDeSable(id, rang) {
+  let a = 0x811c9dc5 ^ rang;
+  for (const c of String(id)) { a ^= c.charCodeAt(0); a = Math.imul(a, 0x01000193) >>> 0; }
+  return (a % 100) / 400;
+}
+
+function noterCandidat(plan, section, vus, rang, accord, precedent) {
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
   const derniereFois = vus.get(plan.id);
   const fraicheur = derniereFois === undefined ? 0 : Math.max(0, 6 - (rang - derniereFois));
@@ -6028,17 +6062,50 @@ function noterCandidat(plan, section, vus, rang, accord) {
   const place = accord ? accord.indexOf(String(plan.id)) : -1;
   const parole = place < 0 ? 0 : -8 + place * 1.5;
 
-  return ecart * 6 + fraicheur * 2 + usure + parole - (plan.score || 0) / 100;
+  return ecart * 6 + fraicheur * 2 + usure + parole
+    + accordDuMouvement(precedent, plan)
+    + grainDeSable(plan.id, rang)
+    - (plan.score || 0) / 100;
 }
 
 /* La case suivante à remplir dans une source : on avance dans le rush à chaque
    réemploi, pour ne pas remontrer les mêmes images. Quand on arrive au bout, on
    revient au début. */
+/* Découper une source en morceaux, et les servir dans le désordre.
+
+   Un rush réemployé donnait jusqu'ici ses secondes dans l'ordre : premier
+   emploi le début, deuxième la suite, et ainsi de suite. Recollés dans un
+   montage, ces morceaux racontaient la scène d'origine en pointillé — ce n'est
+   pas un mashup, c'est le plan de départ étalé.
+
+   On le découpe donc en cases, et on les sert dans un ordre dispersé. Le pas
+   d'or fait ça mieux qu'un tirage au sort : il ne repasse jamais deux fois au
+   même endroit et ne laisse aucun trou, là où le hasard fait les deux. Deux
+   emplois successifs d'une même source tombent ainsi aux deux bouts, jamais
+   côte à côte. */
+const PAS_DOR = 0.6180339887;
+
+function morceauxDe(plan, tenue) {
+  const source = dureeSource(plan);
+  const combien = Math.max(1, Math.min(24, Math.floor(source / Math.max(tenue, PLAN_MINI))));
+  if (plan.__morceaux?.combien === combien) return plan.__morceaux;
+  const pas = source / combien;
+  const ordre = [];
+  const vus = new Set();
+  for (let k = 0; ordre.length < combien && k < combien * 8; k += 1) {
+    const place = Math.floor(((k * PAS_DOR) % 1) * combien);
+    if (!vus.has(place)) { vus.add(place); ordre.push(place); }
+  }
+  // Ce que le pas d'or aurait manqué, on le complète dans l'ordre naturel.
+  for (let k = 0; k < combien; k += 1) if (!vus.has(k)) ordre.push(k);
+  plan.__morceaux = { combien, pas, ordre };
+  return plan.__morceaux;
+}
+
 function fenetreDans(plan, duree, viserLePic = false) {
   const source = dureeSource(plan);
-  if (!(source > 0)) return null;
+  if (!(source > 0) || source < PLAN_MINI) return null;
   const tenue = Math.min(duree, Math.max(PLAN_MINI, source));
-  if (source < PLAN_MINI) return null;
   const pris = plan.__pris || 0;
 
   /* Le pic est l'instant que la lecture a repéré comme le plus fort — l'impact,
@@ -6053,9 +6120,11 @@ function fenetreDans(plan, duree, viserLePic = false) {
     return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
   }
 
-  let entree = pris * tenue;
-  if (entree + tenue > source) entree = (entree % Math.max(tenue, source - tenue)) % Math.max(0.01, source - tenue);
-  entree = Math.max(0, Math.min(entree, source - tenue));
+  const { combien, pas, ordre } = morceauxDe(plan, tenue);
+  const place = ordre[pris % combien];
+  // Centré dans sa case : un morceau collé au bord en mordrait un autre.
+  const milieu = place * pas + pas / 2;
+  const entree = Math.max(0, Math.min(milieu - tenue / 2, source - tenue));
   return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
 }
 
@@ -6091,7 +6160,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
     ? rythme.sections
     : [{ debut: 0, fin: rythme.duree || 0, energie: 2, nom: "montee" }];
 
-  sources.forEach((plan) => { plan.__pris = 0; delete plan.__picVu; });
+  sources.forEach((plan) => { plan.__pris = 0; delete plan.__picVu; delete plan.__morceaux; });
   const vus = new Map();
   const montage = [];
 
@@ -6119,6 +6188,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
       const vise = Math.min(pas, reste);
       const rang = montage.length;
 
+      const precedent = montage[montage.length - 1];
       let choix = null;
       if (chrono) {
         choix = suite[rangSuite % suite.length];
@@ -6126,10 +6196,14 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
       } else {
         let meilleure = Infinity;
         for (const plan of sources) {
+          /* Deux blocs de suite venus du même rush, c'est le plan d'origine qui
+             réapparaît : exactement ce qu'un mashup doit éviter. La règle est
+             dure, pas une pénalité — sauf s'il n'y a rien d'autre. */
+          if (precedent && sources.length > 1 && String(plan.id) === String(precedent.id)) continue;
           // Un rush trop court pour la case n'est pas disqualifié — il n'y en
           // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
           const court = dureeSource(plan) < vise ? 3 : 0;
-          const note = noterCandidat(plan, section, vus, rang, accord) + court;
+          const note = noterCandidat(plan, section, vus, rang, accord, precedent) + court;
           if (note < meilleure) { meilleure = note; choix = plan; }
         }
       }
@@ -6154,8 +6228,8 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
     }
   });
 
-  sources.forEach((plan) => { delete plan.__pris; delete plan.__picVu; });
-  montage.forEach((plan) => { delete plan.__pris; delete plan.__picVu; });
+  sources.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; });
+  montage.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; });
   return montage.length ? montage : null;
 }
 

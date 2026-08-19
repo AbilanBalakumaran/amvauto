@@ -44,7 +44,12 @@ const CONSIGNE = `You are helping an AMV editor pick shots. Watch this short ani
 - motscles: 4 to 8 English keywords for what is visible (objects, actions, weather, body language). Lowercase, no punctuation.
 - energie: 0 to 3. 0 is stillness or quiet acting, 1 is gentle movement, 2 is fast action, 3 is an explosive peak.
 - pic: the second, as a number, where the strongest moment happens — the impact, the turn, the look. 0 if the clip is even throughout.
-- emotion: one English word for the feeling it carries.`;
+- emotion: one English word for the feeling it carries.
+- mouvement: the direction the ACTION travels across the frame — one of
+  "right", "left", "up", "down", "toward", "away", "still". Judge the subject,
+  never the camera: a character lunging right while the camera follows is
+  "right"; a still character filmed by a panning camera is "still".
+- force: 0 to 3, how strongly that motion reads.`;
 
 const SCHEMA = {
   type: "OBJECT",
@@ -54,8 +59,10 @@ const SCHEMA = {
     energie: { type: "INTEGER" },
     pic: { type: "NUMBER" },
     emotion: { type: "STRING" },
+    mouvement: { type: "STRING" },
+    force: { type: "INTEGER" },
   },
-  required: ["resume", "motscles", "energie", "pic", "emotion"],
+  required: ["resume", "motscles", "energie", "pic", "emotion", "mouvement", "force"],
 };
 
 /* btoa ne prend qu'une chaîne, et fromCharCode appliqué à plusieurs mégaoctets
