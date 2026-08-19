@@ -768,6 +768,28 @@ de nouveaux. La sélection reste une décision humaine.
 Le résultat est une proposition. Elle passe par l'historique, donc « annuler »
 la défait d'un coup — l'essayer ne coûte rien.
 
+## Un message qui montre une porte fermée
+
+Trois routes demandent le code du coffre — génération, paroles, lecture des
+plans. Elles disaient : « active la sauvegarde en ligne dans Réglages ». Or le
+bouton Réglages n'apparaissait **que si le projet contenait déjà des plans**, et
+l'assistant démarre justement d'un projet vide. Le message envoyait vers une
+porte qui n'existait pas.
+
+Deux corrections, et la seconde vaut pour toutes les autres :
+
+- **Les réglages s'ouvrent dès qu'un projet existe**, vide ou non. C'est là que
+  vit la sauvegarde en ligne, et un projet vide est justement celui d'où l'on
+  part. L'export, lui, n'aurait rien à écrire : il se grise.
+- **Le message ouvre le panneau lui-même** au lieu d'expliquer où le trouver.
+  Un passage obligé qui décrit un chemin est un passage obligé raté.
+
+Un défaut plus grave découvert en corrigeant celui-là : la lecture des plans
+utilisait un paramètre `enchaine` **jamais déclaré**. La fonction levait donc une
+erreur en fin de parcours, et l'assistant s'arrêtait là. Le test de bout en bout
+ne l'avait pas vu — il avait choisi « sans lecture », le seul chemin qui
+n'atteignait pas la ligne fautive.
+
 ## Archiver, plutôt que supprimer
 
 Un montage terminé n'a pas à disparaître pour cesser d'encombrer. Un quatrième

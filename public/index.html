@@ -1458,7 +1458,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 12:03";
+const VERSION_PAGE = "2026-08-19 12:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2575,7 +2575,11 @@ function rendreProjet() {
   const vue = $("vue-projet");
   const projet = projetActif();
   const morceaux = [barreProjets()];
-  $("app-actions").hidden = !projet || !projet.plans.length;
+  /* Les réglages s'ouvrent dès qu'un projet existe, même vide : c'est là que
+     vit la sauvegarde en ligne, et un projet vide est justement celui d'où l'on
+     part. L'export, lui, n'aurait rien à écrire — il se grise. */
+  $("app-actions").hidden = !projet;
+  $("btn-export").disabled = !projet.plans.length;
 
   if (!projet) {
     morceaux.push(note("Aucun projet. Ouvre un dossier, puis « + » sur un plan pour en démarrer un."));
@@ -6134,6 +6138,17 @@ function construireMontage(projet, { ordre = "libre" } = {}) {
   return montage.length ? montage : null;
 }
 
+/* Trois routes demandent le code du coffre. Elles disaient « active la
+   sauvegarde dans Réglages » — et sur un projet vide, ce bouton-là n'existait
+   pas : le message envoyait vers une porte absente. On ouvre donc le panneau
+   soi-même, plutôt que d'expliquer où le trouver. */
+function exigerCoffre(quoi) {
+  if (coffre.code) return true;
+  alert(`Il faut d'abord un code de sauvegarde : c'est lui qui sert de laissez-passer pour ${quoi}, sans quoi n'importe qui pourrait tirer sur le quota du compte.\n\nLe panneau s'ouvre juste après — « Activer » suffit.`);
+  ouvrirCoffre();
+  return false;
+}
+
 /* Aller chercher les plans soi-même.
 
    Jusqu'ici le montage automatique choisissait parmi les rushs déjà posés : il
@@ -6179,14 +6194,14 @@ async function chercherRushs(animes, secondes) {
    ne rendrait pas la lecture plus rapide, seulement refusée. */
 const PAUSE_LECTURE = 4200;
 
-async function lirePlans(bouton) {
+async function lirePlans(bouton, enchaine = false) {
   const projet = projetActif();
   if (!projet) return;
+  // Enchaînée, la lecture ne bloque pas tout : le montage reste possible sans
+  // elle, simplement moins juste.
+  if (!coffre.code && enchaine) return;
+  if (!exigerCoffre("la lecture des plans")) return;
   const code = coffre.code;
-  if (!code) {
-    alert("Active d'abord la sauvegarde en ligne dans Réglages : son code sert de laissez-passer.");
-    return;
-  }
   const arendre = projet.plans.filter((plan) => !plan.lecture && plan.video && !plan.local);
   const aLire = [...new Map(arendre.map((plan) => [plan.id, plan])).values()];
   if (!aLire.length) {
@@ -6579,11 +6594,8 @@ function consigneMusicale(bilan, brief = {}) {
    corrige avant d'être chanté. Rien ne part au générateur sans être passé sous
    les yeux : une parole ratée coûterait un appel de quota. */
 async function ecrireParoles(bouton, bilan, secondes, zone, histoire) {
+  if (!exigerCoffre("l'écriture des paroles")) return;
   const code = coffre.code;
-  if (!code) {
-    alert("Active d'abord la sauvegarde en ligne dans Réglages : son code sert de laissez-passer.");
-    return;
-  }
   const avant = bouton.textContent;
   bouton.disabled = true;
   bouton.textContent = "Écriture…";
@@ -6640,11 +6652,8 @@ async function genererMusique(bouton, brief, paroles) {
   const projet = projetActif();
   const bilan = projet && analyserMontage(projet);
   if (!bilan) return;
+  if (!exigerCoffre("la génération de musique")) return;
   const code = coffre.code;
-  if (!code) {
-    alert("Active d'abord la sauvegarde en ligne dans Réglages : son code sert aussi de laissez-passer pour la génération, sans quoi n'importe qui pourrait faire payer le compte.");
-    return;
-  }
   const avant = bouton.textContent;
   bouton.disabled = true;
   bouton.textContent = "Génération… (1–2 min)";
