@@ -687,6 +687,14 @@ main {
 .app-header-inner { min-width: 0; }
 .app-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-actions { flex: none; }
+.projets.colonne { flex-direction: column; }
+.projet-carte.archive { cursor: default; flex-wrap: wrap; }
+.archive-action {
+  padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--trait); background: #111; color: var(--texte);
+  font: 600 0.82rem/1 system-ui, sans-serif; cursor: pointer;
+}
+
 .note-action {
   display: block;
   margin: 14px auto 0;
@@ -1329,6 +1337,9 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 6v12M17 6v12"/></svg>
       <span class="tab-badge" id="badge" hidden>0</span>
     </button>
+    <button type="button" class="tab-btn" data-tab="histoire" title="Historique" aria-label="Historique">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></svg>
+    </button>
     <button type="button" class="tab-btn" data-tab="apropos" title="Infos" aria-label="Infos">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
     </button>
@@ -1364,6 +1375,8 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
     </section>
 
     <section id="vue-projet" hidden></section>
+
+    <section id="vue-histoire" hidden></section>
 
     <section id="vue-apropos" class="apropos" hidden>
       <h2>Ce que tu regardes</h2>
@@ -1445,7 +1458,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 11:53";
+const VERSION_PAGE = "2026-08-19 12:03";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1598,6 +1611,7 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     const onglet = bouton.dataset.tab;
     $("vue-explorer").hidden = onglet !== "explorer";
     $("vue-projet").hidden = onglet !== "projet";
+    $("vue-histoire").hidden = onglet !== "histoire";
     $("vue-apropos").hidden = onglet !== "apropos";
     document.querySelector("main").classList.toggle("montage", onglet === "projet");
     $("barre-outils").hidden = onglet !== "projet";
@@ -1605,6 +1619,7 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     if (onglet !== "projet") $("app-actions").hidden = true;
     if (onglet === "projet") rendreProjet();
     else arreter();
+    if (onglet === "histoire") rendreHistoire();
   });
 });
 
@@ -2096,6 +2111,9 @@ function assainir(projets) {
     if (!projetValable(projet) || vus.has(projet.id)) return false;
     vus.add(projet.id);
     if (typeof projet.nom !== "string" || !projet.nom) projet.nom = "Sans nom";
+    // L'archive porte sa date. Une valeur d'un autre type ferait afficher
+    // « archivé le Invalid Date » plutôt que d'échouer franchement.
+    if (projet.archive && typeof projet.archive !== "number") projet.archive = Date.now();
     projet.plans = projet.plans.filter((plan) => plan && typeof plan === "object" && plan.id);
     return true;
   });
@@ -2106,7 +2124,9 @@ function charger() {
     const brut = JSON.parse(localStorage.getItem(CLE) || "{}");
     state.projets = assainir(brut.projets);
     state.supprimes = brut.supprimes && typeof brut.supprimes === "object" ? brut.supprimes : {};
-    state.actif = brut.actif || state.projets[0]?.id || null;
+    // Un projet rangé ne doit pas se rouvrir tout seul : l'onglet Projet
+    // montrerait alors ce qu'on venait d'en retirer.
+    state.actif = brut.actif || state.projets.find((p) => !p.archive)?.id || null;
     // Déplacer les plans est un mode qu'on active : par défaut, un doigt qui
     // traîne sur la piste ne doit pas pouvoir changer l'ordre des scènes.
     state.reordre = Boolean(brut.reordre);
@@ -2134,6 +2154,10 @@ const empreintes = new Map();
    au profit de rien du tout. */
 const decisions = (projet) => JSON.stringify([
   projet.nom,
+  // Ranger un montage est une décision comme une autre : sans elle dans
+  // l'empreinte, l'archive ne bougeait pas « maj » et l'autre appareil
+  // continuait d'afficher le projet dans sa barre.
+  projet.archive || 0,
   projet.plans.map((plan) => [plan.id, plan.rush || null, plan.entree || 0, plan.sortie ?? null]),
 ]);
 
@@ -2278,7 +2302,7 @@ function creerProjet(nom) {
 // Le premier plan crée le projet tout seul ; à partir de deux projets, on
 // demande dans lequel ranger.
 function ajouterAUnProjet(rush, bouton, apres) {
-  if (state.projets.length > 1 && !dansProjet(rush.id)) {
+  if (projetsVivants().length > 1 && !dansProjet(rush.id)) {
     choisirProjet(rush, bouton, apres);
     return;
   }
@@ -2322,7 +2346,7 @@ function choisirProjet(rush, bouton, apres) {
 
   const liste = document.createElement("div");
   liste.className = "rows";
-  for (const projet of state.projets) {
+  for (const projet of projetsVivants()) {
     const ligne = document.createElement("button");
     ligne.type = "button";
     ligne.className = "row";
@@ -2610,11 +2634,128 @@ function rendreProjet() {
 }
 
 /* --- sélecteur de projets, chacun avec sa vignette -------------------- */
+/* --- archives ---------------------------------------------------------- */
+/* Un montage terminé n'a pas à disparaître pour cesser d'encombrer. L'archive
+   le range sans rien détruire : il quitte la barre des projets, il garde ses
+   plans, ses coupes et sa musique, et il revient d'un geste.
+
+   C'est aussi pour cela que l'archive n'est pas une suppression : la corbeille
+   du coffre pose une pierre tombale et oublie le montage sur tous les appareils
+   au bout de quatre-vingt-dix jours. Archiver ne promet rien de tel — c'est un
+   rangement, pas un adieu. */
+/* Une suppression se note. Sans cela, l'autre appareil gardait sa copie, la
+   redéposait au coffre, et le projet effacé réapparaissait des deux côtés :
+   vérifié, il revenait. Une fusion qui ne sait qu'ajouter ne peut pas propager
+   un retrait. */
+function supprimerProjet(projet) {
+  state.projets = state.projets.filter((autre) => autre.id !== projet.id);
+  state.supprimes[projet.id] = Date.now();
+  empreintes.delete(projet.id);
+  if (state.actif === projet.id) state.actif = projetsVivants()[0]?.id || null;
+  histoire.projet = null;
+  sauver();
+  rendreProjet();
+  rendre();
+}
+
+const estArchive = (projet) => Boolean(projet?.archive);
+const projetsVivants = () => state.projets.filter((projet) => !estArchive(projet));
+const projetsArchives = () => state.projets
+  .filter(estArchive)
+  .sort((a, b) => (b.archive || 0) - (a.archive || 0));
+
+function archiver(projet, oui = true) {
+  if (oui) projet.archive = Date.now();
+  else delete projet.archive;
+  /* Rendre la main au premier projet vivant : rester sur un montage rangé
+     laisserait l'onglet Projet montrer ce qu'on vient d'en retirer. */
+  if (oui && state.actif === projet.id) {
+    state.actif = projetsVivants()[0]?.id || null;
+  }
+  sauver();
+  rendreProjet();
+  rendre();
+  rendreHistoire();
+}
+
+const dateCourte = (instant) => new Date(instant).toLocaleDateString("fr-FR",
+  { day: "numeric", month: "long", year: "numeric" });
+
+function rendreHistoire() {
+  const vue = $("vue-histoire");
+  if (!vue) return;
+  const archives = projetsArchives();
+  const morceaux = [];
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.style.padding = "var(--e4) var(--e4) 0";
+  titre.textContent = "Archives";
+  morceaux.push(titre);
+
+  if (!archives.length) {
+    morceaux.push(note("Aucun montage archivé. Depuis un projet, « Archiver » le range ici sans rien perdre : ses plans, ses coupes et sa musique l'attendent."));
+    vue.replaceChildren(...morceaux);
+    return;
+  }
+
+  const liste = document.createElement("div");
+  liste.className = "projets colonne";
+  archives.forEach((projet) => {
+    const carte = document.createElement("div");
+    carte.className = "projet-carte archive";
+
+    const vignette = document.createElement("span");
+    vignette.className = "projet-vignette";
+    const image = projet.plans.find((plan) => plan.preview)?.preview;
+    if (image) vignette.style.backgroundImage = `url("${image}")`;
+    else vignette.innerHTML = icone("pellicule");
+
+    const texte = document.createElement("span");
+    texte.className = "projet-texte";
+    const nom = document.createElement("span");
+    nom.className = "projet-nom";
+    nom.textContent = projet.nom;
+    const sous = document.createElement("span");
+    sous.className = "projet-sous";
+    sous.textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""} · ${horloge(total(projet))}`
+      + `${projet.rythme?.bpm ? ` · ${Math.round(projet.rythme.bpm)} BPM` : ""}`
+      + ` · archivé le ${dateCourte(projet.archive)}`;
+    texte.append(nom, sous);
+
+    const rouvrir = document.createElement("button");
+    rouvrir.type = "button";
+    rouvrir.className = "archive-action";
+    rouvrir.textContent = "Rouvrir";
+    rouvrir.addEventListener("click", () => {
+      archiver(projet, false);
+      state.actif = projet.id;
+      sauver();
+      document.querySelector('[data-tab="projet"]').click();
+    });
+
+    const jeter = document.createElement("button");
+    jeter.type = "button";
+    jeter.className = "archive-action";
+    jeter.textContent = "Supprimer";
+    jeter.addEventListener("click", () => {
+      if (!confirm(`Supprimer « ${projet.nom} » définitivement ? Ses plans et ses coupes seront perdus, ici comme sur les autres appareils.`)) return;
+      supprimerProjet(projet);
+      rendreHistoire();
+    });
+
+    carte.append(vignette, texte, rouvrir, jeter);
+    liste.append(carte);
+  });
+  morceaux.push(liste);
+  vue.replaceChildren(...morceaux);
+}
+
 function barreProjets() {
   const barre = document.createElement("div");
   barre.className = "projets";
 
-  for (const projet of state.projets) {
+  for (const projet of projetsVivants()) {
     const carte = document.createElement("button");
     carte.type = "button";
     carte.className = "projet-carte" + (projet.id === state.actif ? " actif" : "");
@@ -5408,22 +5549,19 @@ $("btn-setting").addEventListener("click", () => {
 
   const supprimer = document.createElement("button");
   supprimer.type = "button";
-  supprimer.textContent = "Supprimer le projet";
+  supprimer.textContent = "Archiver le projet";
   supprimer.addEventListener("click", () => {
-    if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
-    state.projets = state.projets.filter((autre) => autre.id !== projet.id);
-    /* Une suppression se note. Sans cela, l'autre appareil gardait sa copie, la
-       redéposait au coffre, et le projet effacé réapparaissait des deux côtés :
-       vérifié, il revenait. Une fusion qui ne sait qu'ajouter ne peut pas
-       propager un retrait. */
-    state.supprimes[projet.id] = Date.now();
-    empreintes.delete(projet.id);
-    state.actif = state.projets[0]?.id || null;
-    histoire.projet = null;
-    sauver();
+    archiver(projet, true);
     fermerFeuille();
-    rendreProjet();
-    rendre();
+  });
+
+  const jeter = document.createElement("button");
+  jeter.type = "button";
+  jeter.textContent = "Supprimer le projet";
+  jeter.addEventListener("click", () => {
+    if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
+    supprimerProjet(projet);
+    fermerFeuille();
   });
 
   const copier = document.createElement("button");
@@ -5446,7 +5584,7 @@ $("btn-setting").addEventListener("click", () => {
   sauvegarde.textContent = "Sauvegarde";
   sauvegarde.addEventListener("click", ouvrirCoffre);
 
-  actions.append(sauvegarde, copier, renommer, supprimer, fermer);
+  actions.append(sauvegarde, copier, renommer, supprimer, jeter, fermer);
   corps.append(titre, meta, actions);
   boite.append(corps);
   fond.replaceChildren(boite);
@@ -7136,8 +7274,8 @@ function fusionner(projets, provenance, supprimes = {}) {
       ignores += 1;
     }
   }
-  if (!state.actif || !state.projets.some((p) => p.id === state.actif)) {
-    state.actif = state.projets[0]?.id || null;
+  if (!state.actif || !state.projets.some((p) => p.id === state.actif && !p.archive)) {
+    state.actif = state.projets.find((p) => !p.archive)?.id || null;
   }
   purgerSuppressions();
   empreintes.clear();

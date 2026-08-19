@@ -768,6 +768,36 @@ de nouveaux. La sélection reste une décision humaine.
 Le résultat est une proposition. Elle passe par l'historique, donc « annuler »
 la défait d'un coup — l'essayer ne coûte rien.
 
+## Archiver, plutôt que supprimer
+
+Un montage terminé n'a pas à disparaître pour cesser d'encombrer. Un quatrième
+onglet, **Historique**, range ce qu'on ne veut plus voir sans rien détruire :
+le projet quitte la barre, il garde ses plans, ses coupes, sa musique et son
+tempo, et il revient d'un geste.
+
+C'est aussi pourquoi l'archive n'est **pas** une suppression. La corbeille pose
+une pierre tombale et oublie le montage sur tous les appareils au bout de
+quatre-vingt-dix jours ; archiver ne promet rien de tel. Les deux boutons
+existent côte à côte dans les réglages du projet, et seule la suppression
+demande confirmation.
+
+Trois points qu'il a fallu traiter pour que le rangement tienne :
+
+- **L'archive voyage.** L'empreinte qui décide si un projet a changé ne retenait
+  que son nom et ses plans : ranger un montage ne bougeait donc pas sa date de
+  modification, et l'autre appareil continuait de l'afficher dans sa barre. Elle
+  retient maintenant l'archive.
+- **Un projet rangé ne se rouvre pas tout seul.** Au chargement comme après une
+  fusion avec le coffre, le projet actif est choisi parmi les vivants — sans
+  quoi l'onglet Projet montrait ce qu'on venait d'en retirer.
+- **Le choix « dans quel projet ranger ce plan » ignore les archives.** Elles
+  encombraient une liste qui sert à travailler.
+
+Éprouvé : archiver retire le montage de la barre et déplace l'actif vers un
+projet vivant ; l'historique l'affiche avec ses cinq plans, son tempo et sa date ;
+« Rouvrir » le rend à la barre, le rend actif, et rien n'a bougé — plans, tempo
+et drapeau d'archive compris.
+
 ## Sauvegarder un montage
 
 Ce qu'un montage a d'irremplaçable tient dans presque rien. Mesuré : un plan
