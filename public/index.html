@@ -3047,8 +3047,24 @@ function arrondirEcran() {
   if (ecran.style.height !== pose) ecran.style.height = pose;
 }
 
+/* Le moniteur est dimensionné pour l'écran qui le regarde — sur un iPhone en
+   414 points, cela fait 380 pixels de large. C'est le bon choix pour peindre,
+   et le mauvais pour exporter : « captureStream » lit la toile telle qu'elle
+   est, et le premier rendu sortait en 380×213. Pendant un rendu, la toile prend
+   donc la taille de la vidéo à produire ; l'affichage, lui, ne change pas — le
+   navigateur la réduit à la volée pour la montrer. */
+const RENDU_LARGEUR = 1280;
+const RENDU_HAUTEUR = 720;
+
 function ajusterMoniteur(toile) {
   arrondirEcran();
+  if (rendu.encours) {
+    if (toile.width !== RENDU_LARGEUR || toile.height !== RENDU_HAUTEUR) {
+      toile.width = RENDU_LARGEUR;
+      toile.height = RENDU_HAUTEUR;
+    }
+    return;
+  }
   const densite = Math.min(2, window.devicePixelRatio || 1);
   const large = toile.clientWidth * densite;
   const haut = toile.clientHeight * densite;
@@ -5611,8 +5627,296 @@ function rognerAuCurseur(cote) {
 $("btn-export").addEventListener("click", () => {
   const projet = projetActif();
   if (!projet?.plans.length) return;
-  telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet));
+  ouvrirExport(projet);
 });
+
+function ouvrirExport(projet) {
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = "Exporter";
+
+  const format = formatRendu();
+  const extension = format && format.startsWith("video/mp4") ? "MP4" : "WebM";
+  const absents = plansAbsents(projet);
+  const longueur = total(projet);
+
+  const meta = document.createElement("div");
+  meta.className = "lecteur-meta";
+  meta.style.whiteSpace = "pre-line";
+  const poids = (longueur * (5e6 + 192e3)) / 8 / 1e6;
+  meta.textContent = [
+    `${projet.plans.length} plans · ${minutage(longueur)}`,
+    lecture.audio ? `Musique : ${projet.audio?.nom || "chargée"}.` :
+      "Aucune musique chargée : la vidéo sortira muette. Recharge le fichier depuis la piste son.",
+    "",
+    format
+      ? `La vidéo sortira en ${extension}, ${IMAGES_PAR_SECONDE} images par seconde, ${RENDU_LARGEUR}×${RENDU_HAUTEUR}.`
+      : "Ce navigateur ne sait pas enregistrer de vidéo.",
+    `Le rendu se fait en temps réel : compte ${minutage(longueur)}, écran allumé et application au premier plan.`,
+    `Le fichier pèsera environ ${poids.toFixed(0)} Mo.`,
+    absents.length
+      ? `\n${absents.length} plan${absents.length > 1 ? "s ne sont" : " n'est"} pas encore sur l'appareil et sortira${absents.length > 1 ? "ont" : ""} noir. Laisse la page ouverte le temps que le téléchargement finisse, puis reviens ici.`
+      : "\nTous les plans sont sur l'appareil : le rendu sera complet.",
+  ].join("\n");
+
+  const etat = document.createElement("div");
+  etat.className = "lecteur-meta";
+  etat.style.whiteSpace = "pre-line";
+
+  const livraison = document.createElement("div");
+  livraison.className = "lecteur-actions";
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+
+  const video = document.createElement("button");
+  video.type = "button";
+  video.className = "fort";
+  video.textContent = "Rendre la vidéo";
+  video.disabled = !format;
+  video.addEventListener("click", () => {
+    lancerRendu(projet, video, etat, (blob, ext) => livrerRendu(blob, ext, projet, livraison));
+  });
+
+  const edl = document.createElement("button");
+  edl.type = "button";
+  edl.textContent = "Conduite EDL";
+  edl.title = "Le découpage, pour un logiciel de montage";
+  edl.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet)));
+
+  const liste = document.createElement("button");
+  liste.type = "button";
+  liste.textContent = "Liste des plans";
+  liste.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.txt`, versTexte(projet)));
+
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.textContent = "Fermer";
+  fermer.addEventListener("click", () => { arreterRendu(); fermerFeuille(); });
+
+  actions.append(video, edl, liste, fermer);
+  corps.append(titre, meta, etat, livraison, actions);
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) { arreterRendu(); fermerFeuille(); } };
+}
+
+/* --- rendu vidéo -------------------------------------------------------
+
+   Exporter un montage en vidéo, sur l'appareil, sans rien installer.
+
+   Un navigateur ne sait pas assembler des fichiers vidéo : il n'a pas de
+   ffmpeg. Ce qu'il sait faire, c'est enregistrer ce qu'il affiche. On lit donc
+   le montage comme on le regarde — même moniteur, mêmes coupes, même musique —
+   et « MediaRecorder » écrit le flux au fil de l'eau. Ce qu'on voit est
+   exactement ce qu'on obtient, ce qui vaut mieux qu'un rendu parallèle qui
+   pourrait diverger de l'aperçu.
+
+   Deux conséquences qu'il faut assumer plutôt que cacher :
+
+   — le rendu se fait en temps réel. Quatre minutes de montage prennent quatre
+     minutes, écran allumé. Il n'existe pas de raccourci : encoder plus vite que
+     la lecture demanderait WebCodecs et un multiplexeur MP4 écrit à la main.
+
+   — un plan qui n'est pas encore sur l'appareil sortira noir. On compte donc
+     ce qui manque avant de commencer, et on le dit.
+
+   Le format suit l'appareil : Safari écrit du MP4 (H.264/AAC), les navigateurs
+   Chromium du WebM. Les deux se lisent partout et s'envoient sur YouTube ou
+   Instagram sans conversion. */
+
+const FORMATS_RENDU = [
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1.4D401E,mp4a.40.2",
+  "video/mp4",
+  "video/webm;codecs=vp9,opus",
+  "video/webm;codecs=vp8,opus",
+  "video/webm",
+];
+
+function formatRendu() {
+  if (typeof MediaRecorder === "undefined") return null;
+  return FORMATS_RENDU.find((format) => {
+    try { return MediaRecorder.isTypeSupported(format); } catch { return false; }
+  }) || null;
+}
+
+const rendu = { encours: false, enregistreur: null, surveille: null, veille: null };
+
+// Ce qui n'est pas encore sur l'appareil sortira noir : autant le savoir avant.
+const plansAbsents = (projet) =>
+  projet.plans.filter((plan) => !plan.youtube && mediaDe(plan) && !estLocal(plan));
+
+/* La musique passe par un graphe audio pour être à la fois entendue et
+   enregistrée. « createMediaElementSource » ne s'appelle qu'une fois par
+   élément — un second appel lève une erreur et coupe le son pour de bon — d'où
+   la marque posée sur l'élément lui-même. */
+function sortieSonPourRendu() {
+  const son = lecture.audio;
+  if (!son) return null;
+  if (son.__sortieRendu) return son.__sortieRendu;
+  const Contexte = window.AudioContext || window.webkitAudioContext;
+  if (!Contexte) return null;
+  try {
+    const contexte = rendu.contexte || (rendu.contexte = new Contexte());
+    const source = contexte.createMediaElementSource(son);
+    const sortie = contexte.createMediaStreamDestination();
+    source.connect(contexte.destination);
+    source.connect(sortie);
+    son.__sortieRendu = sortie;
+    return sortie;
+  } catch {
+    // Sans son enregistré, la vidéo reste utilisable : on ne bloque pas le rendu.
+    return null;
+  }
+}
+
+function arreterRendu() {
+  rendu.encours = false;
+  if (rendu.surveille) { clearInterval(rendu.surveille); rendu.surveille = null; }
+  try { rendu.enregistreur?.stop(); } catch { /* déjà arrêté */ }
+  arreter();
+  rendu.veille?.release?.().catch(() => {});
+  rendu.veille = null;
+}
+
+async function lancerRendu(projet, bouton, etat, offrir) {
+  if (rendu.encours) { arreterRendu(); return; }
+  const format = formatRendu();
+  const moniteur = $("moniteur");
+  if (!format || !moniteur?.captureStream) {
+    etat.textContent = "Ce navigateur ne sait pas enregistrer une vidéo. Safari sur iPhone et Chrome le savent.";
+    return;
+  }
+
+  /* La toile passe à la taille de rendu avant la capture : « captureStream »
+     fige la taille du flux au moment de l'appel, et redimensionner ensuite
+     produirait une vidéo à l'ancienne taille. */
+  rendu.encours = true;
+  ajusterMoniteur(moniteur);
+  let flux;
+  try {
+    flux = moniteur.captureStream(IMAGES_PAR_SECONDE);
+  } catch (erreur) {
+    /* Une toile « teintée » par un fichier d'une autre origine refuse d'être
+       capturée. Depuis que l'aperçu lit par le relais — même origine — cela ne
+       devrait plus arriver ; si cela arrive, c'est qu'un plan est lu en direct
+       et il faut le dire au lieu d'échouer en silence. */
+    rendu.encours = false;
+    etat.textContent = `L'image ne peut pas être capturée (${erreur.name}). Attends que les plans soient sur l'appareil, puis réessaie.`;
+    return;
+  }
+
+  const sortie = sortieSonPourRendu();
+  if (sortie) {
+    await rendu.contexte?.resume?.().catch(() => {});
+    sortie.stream.getAudioTracks().forEach((piste) => flux.addTrack(piste));
+  }
+
+  const morceaux = [];
+  let enregistreur;
+  try {
+    enregistreur = new MediaRecorder(flux, {
+      mimeType: format,
+      /* Cinq mégabits pour du 720p : large pour de l'animation, dont les
+         aplats se compressent bien. Le débit n'est pas qu'une affaire de
+         qualité — l'enregistreur garde tout en mémoire jusqu'à la fin, et un
+         AMV de cinq minutes à huit mégabits demanderait trois cents mégaoctets
+         de mémoire vive à un téléphone qui en a trois giga. */
+      videoBitsPerSecond: 5e6,
+      audioBitsPerSecond: 192e3,
+    });
+  } catch (erreur) {
+    rendu.encours = false;
+    etat.textContent = `L'enregistreur a refusé de démarrer (${erreur.name}).`;
+    return;
+  }
+  rendu.enregistreur = enregistreur;
+  enregistreur.addEventListener("dataavailable", (evt) => { if (evt.data?.size) morceaux.push(evt.data); });
+  enregistreur.addEventListener("stop", () => {
+    rendu.encours = false;
+    bouton.textContent = "Rendre la vidéo";
+    bouton.classList.remove("stop");
+    const type = format.split(";")[0];
+    const blob = new Blob(morceaux, { type });
+    if (!blob.size) { etat.textContent = "Rien n'a été enregistré."; return; }
+    offrir(blob, type.endsWith("mp4") ? "mp4" : "webm");
+  });
+
+  // L'écran doit rester allumé : un téléphone qui se verrouille arrête de
+  // peindre, et le rendu enregistrerait une image figée.
+  try { rendu.veille = await navigator.wakeLock?.request("screen"); } catch { /* refusé */ }
+
+  arreter();
+  allerA(0);
+  bouton.textContent = "Arrêter le rendu";
+  bouton.classList.add("stop");
+  // Le premier plan doit être à l'image avant que l'enregistrement commence :
+  // sinon les premières secondes du fichier sont noires.
+  await new Promise((suite) => setTimeout(suite, 700));
+  if (!rendu.encours) return;
+  enregistreur.start(1000);
+  basculerLecture();
+
+  const longueur = total(projet);
+  rendu.surveille = setInterval(() => {
+    if (!rendu.encours) return;
+    const fait = Math.min(longueur, lecture.position);
+    etat.textContent =
+      `Rendu en cours — ${minutage(fait)} sur ${minutage(longueur)}.\n` +
+      "Laisse l'écran allumé et l'application au premier plan : le rendu enregistre ce qui est affiché.";
+    // La lecture s'arrête d'elle-même au bout du montage.
+    if (!lecture.demande || fait >= longueur - 0.05) arreterRendu();
+  }, 400);
+}
+
+/* Livrer le fichier.
+
+   Sur iPhone, une application ajoutée à l'écran d'accueil n'a pas de dossier de
+   téléchargement : un lien « download » n'y produit rien de visible. La feuille
+   de partage, elle, sait ranger une vidéo dans Fichiers ou dans Photos. On la
+   propose donc en premier quand le système l'accepte, et le lien reste en
+   secours pour l'ordinateur. */
+function livrerRendu(blob, extension, projet, hote) {
+  const nom = `${nomDeFichier(projet)}.${extension}`;
+  const taille = `${(blob.size / 1e6).toFixed(1)} Mo`;
+  hote.replaceChildren();
+
+  const fichier = new File([blob], nom, { type: blob.type });
+  const partageable = navigator.canShare?.({ files: [fichier] });
+
+  if (partageable) {
+    const partager = document.createElement("button");
+    partager.type = "button";
+    partager.className = "fort";
+    partager.textContent = `Enregistrer la vidéo (${taille})`;
+    partager.addEventListener("click", () => {
+      navigator.share({ files: [fichier], title: projet.nom }).catch(() => {});
+    });
+    hote.append(partager);
+  }
+
+  const lien = document.createElement("a");
+  lien.href = URL.createObjectURL(blob);
+  lien.download = nom;
+  lien.className = "fort";
+  lien.textContent = partageable ? "Télécharger" : `Télécharger la vidéo (${taille})`;
+  hote.append(lien);
+
+  const voir = document.createElement("a");
+  voir.href = lien.href;
+  voir.target = "_blank";
+  voir.rel = "noopener";
+  voir.textContent = "Ouvrir dans un onglet";
+  hote.append(voir);
+}
 
 $("btn-setting").addEventListener("click", () => {
   const projet = projetActif();

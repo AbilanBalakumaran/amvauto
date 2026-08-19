@@ -1290,6 +1290,81 @@ Le reste de la chaîne n'était pas en cause. Vérifié avec un vrai MP3 de 1,2 
 importé, durée lue à 29,91 s, tempo à **162,4 BPM**, deux sections découpées,
 sans une erreur.
 
+## Exporter en vidéo
+
+Le montage sortait en conduite EDL et en liste de plans — de quoi reprendre le
+travail dans un logiciel de montage, rien pour publier. Il sort maintenant en
+**vidéo**, depuis le téléphone, sans rien installer.
+
+### Enregistrer ce qu'on montre
+
+Un navigateur n'a pas de ffmpeg : il ne sait pas assembler des fichiers vidéo.
+Il sait en revanche enregistrer ce qu'il affiche. Le montage est donc lu comme
+on le regarde — même moniteur, mêmes coupes, même musique — et `MediaRecorder`
+écrit le flux au fil de l'eau. Ce qu'on voit est exactement ce qu'on obtient,
+ce qui vaut mieux qu'un rendu parallèle qui pourrait diverger de l'aperçu.
+
+Le format suit l'appareil : Safari écrit du **MP4** (H.264/AAC), les
+navigateurs Chromium du WebM. Les deux se lisent partout et s'envoient sur
+YouTube ou Instagram sans conversion.
+
+Vérifié de bout en bout — le fichier produit est décodé, pas seulement écrit :
+
+```
+amvauto-essai.mp4   1 280 × 720   4,72 s   1,9 Mo
+piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
+```
+
+Du son réel, pas du silence.
+
+### La toile de l'écran n'est pas la toile du rendu
+
+Premier fichier produit : **380 × 213**. Le moniteur est dimensionné pour
+l'écran qui le regarde — sur un iPhone en 414 points, cela fait 380 pixels — et
+`captureStream` lit la toile telle qu'elle est. Pendant un rendu, la toile prend
+donc la taille de la vidéo à produire, et la reprend à la fin ; l'affichage ne
+change pas, le navigateur la réduit à la volée pour la montrer.
+
+```
+moniteur avant    380×213
+moniteur pendant  1280×720
+moniteur après    380×213
+```
+
+### Ce qu'il faut assumer plutôt que cacher
+
+**Le rendu se fait en temps réel.** Quatre minutes de montage prennent quatre
+minutes, écran allumé, application au premier plan. Il n'y a pas de raccourci :
+encoder plus vite que la lecture demanderait WebCodecs et un multiplexeur MP4
+écrit à la main. Le panneau annonce la durée avant de commencer, montre
+l'avancement pendant, et un bouton arrête le rendu en gardant ce qui est déjà
+enregistré.
+
+**Un plan pas encore sur l'appareil sortira noir.** Ils sont comptés avant de
+commencer et le panneau le dit, plutôt que de livrer un fichier troué sans
+prévenir.
+
+**Cinq mégabits par seconde**, pas huit. Le débit n'est pas qu'une affaire de
+qualité : l'enregistreur garde tout en mémoire jusqu'à la fin, et un AMV de cinq
+minutes à huit mégabits demanderait trois cents mégaoctets de mémoire vive à un
+téléphone qui en a trois giga. Le poids attendu est annoncé avant de lancer.
+
+**L'écran doit rester allumé** — un téléphone qui se verrouille cesse de
+peindre, et le rendu enregistrerait une image figée. `wakeLock` est demandé au
+départ et relâché à la fin.
+
+### Livrer le fichier
+
+Sur iPhone, une application ajoutée à l'écran d'accueil n'a pas de dossier de
+téléchargement : un lien `download` n'y produit rien de visible. La feuille de
+partage, elle, sait ranger une vidéo dans Fichiers ou dans Photos. Elle est donc
+proposée en premier quand le système l'accepte, et le lien reste en secours pour
+l'ordinateur.
+
+Cet export n'était possible que depuis que l'aperçu lit par le relais : une
+toile « teintée » par un fichier d'une autre origine refuse d'être capturée.
+Le correctif de bande passante a ouvert la porte du rendu.
+
 ## Sauvegarder un montage
 
 Ce qu'un montage a d'irremplaçable tient dans presque rien. Mesuré : un plan
