@@ -282,8 +282,23 @@ Ailleurs, le même modèle a bien plus de temps :
 | Google Colab | 15 à 30 h/semaine, T4 | ~40× |
 | **Kaggle** | **30 h/semaine, T4/P100** | **~50×** |
 
-Le champ **« Mon serveur (sans quota) »** du panneau musique reçoit l'adresse
-qu'un Gradio lancé là-bas annonce. `tools/ace-step-gratuit.py` se colle dans un
+Le champ **« Serveur de secours (sans quota) »** du panneau musique reçoit
+l'adresse qu'un Gradio lancé là-bas annonce. Ce n'est pas un remplacement : le
+Space public passe **en premier**, parce que son quota gratuit se perd de toute
+façon à la fin de la journée, autant le dépenser. Dès qu'il refuse — deux ou
+trois morceaux plus tard — la génération bascule d'elle-même sur le carnet, et
+la page le dit.
+
+Un échec ne vaut pas toujours qu'on essaie ailleurs : un quota vidé, un serveur
+saturé, un carnet éteint, oui ; une consigne refusée, non — elle le serait
+partout, et insister ne ferait que doubler l'attente. Et si le carnet est
+éteint, le message rendu est celui du **premier** serveur : le quota, qui est la
+vraie cause, et non l'adresse morte.
+
+Éprouvé en conditions réelles, deux appels de suite : le premier est passé par
+le Space public, le second — son quota venant d'être vidé par le premier — a
+basculé sur le serveur personnel sans rien demander, en le signalant par
+l'en-tête `x-serveur: perso (secours)`. `tools/ace-step-gratuit.py` se colle dans un
 carnet Kaggle ou Colab et fait le reste : clone, dépendances, lancement avec
 `--share`. La ligne « Running on public URL » est celle à recopier.
 

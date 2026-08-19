@@ -1458,7 +1458,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 13:11";
+const VERSION_PAGE = "2026-08-19 13:20";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6745,7 +6745,13 @@ async function genererMusique(bouton, brief, paroles) {
     const blob = await reponse.blob();
     const nom = (reponse.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1]
       || `musique-${Date.now()}.mp3`;
+    // On ne le signale que quand le secours a servi : dire « c'est passé par le
+    // serveur public » à chaque fois serait du bruit.
+    const servi = reponse.headers.get("x-serveur") || "";
     fermerFeuille();
+    if (servi.includes("secours")) {
+      setTimeout(() => alert("Quota du Space public épuisé : le morceau vient de ton serveur de secours."), 300);
+    }
     chargerSon(projet, new File([blob], nom, { type: blob.type || "audio/mpeg" }));
   } catch (erreur) {
     alert(`Génération impossible : ${erreur.message}`);
@@ -7128,12 +7134,13 @@ function ouvrirBrief() {
     const serveur = document.createElement("input");
     serveur.type = "text";
     serveur.placeholder = "https://…gradio.live (facultatif)";
+    serveur.title = "Pris automatiquement quand le quota du Space public est épuisé";
     serveur.value = espacePerso();
     serveur.addEventListener("input", () => { poserEspacePerso(serveur.value); peindre(); });
     const ligneServeur = document.createElement("label");
     ligneServeur.className = "lecteur-reglage pile";
     const serveurTexte = document.createElement("span");
-    serveurTexte.textContent = "Mon serveur (sans quota)";
+    serveurTexte.textContent = "Serveur de secours (sans quota)";
     ligneServeur.append(serveurTexte, serveur);
     reglages.push(ligneServeur);
 
@@ -7198,8 +7205,8 @@ function ouvrirBrief() {
              lui : les deux boutons de copie le portent ailleurs sans rien
              coûter. Autant le dire là où l'on se heurte au mur. */
           espacePerso()
-            ? `La génération part sur ton serveur : ${espacePerso()}. Aucun quota, et rien ne passe par Hugging Face. Vide le champ pour revenir au Space public.`
-            : "Cinq minutes de GPU par jour, c'est le plafond de ZeroGPU. Kaggle en donne trente heures par semaine et Colab une quinzaine, gratuitement : le même ACE-Step y tourne derrière un Gradio, qui annonce une adresse à coller dans « Mon serveur ». Le carnet est dans le dépôt, sous tools/.",
+            ? `Secours en place : ${espacePerso()}. Le Space public passe en premier — autant dépenser son quota, il se perd de toute façon —, et dès qu'il est vide la génération bascule là-dessus toute seule.`
+            : "Cinq minutes de GPU par jour, c'est le plafond de ZeroGPU. Kaggle en donne trente heures par semaine et Colab une quinzaine, gratuitement : le même ACE-Step y tourne derrière un Gradio, qui annonce une adresse à coller dans « Serveur de secours ». Le carnet est dans le dépôt, sous tools/.",
           "",
           "Quota épuisé, ou envie d'essayer ailleurs ? « Copier le style » et « Copier les paroles » se collent dans Suno, mode Custom. Son palier gratuit rend une dizaine de morceaux par jour — bien plus qu'ici — mais il les filigrane et les réserve à un usage privé, là où ACE-Step, sous Apache 2.0, ne pose aucune de ces deux conditions. On télécharge, et « En apporter une » réimporte.",
         ] : [

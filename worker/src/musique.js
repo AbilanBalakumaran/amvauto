@@ -45,10 +45,12 @@ const DUREE_MIN = 10;
    tunnels connus, en HTTPS, et jamais une adresse brute. */
 const TUNNELS = [".gradio.live", ".trycloudflare.com", ".ngrok-free.app", ".ngrok.io", ".loca.lt"];
 
-function espacePersonnel(brut) {
+function espacePersonnel(brut, local = false) {
   if (typeof brut !== "string" || !brut) return null;
   let cible;
   try { cible = new URL(brut.trim()); } catch { return null; }
+  // En développement seulement, pour éprouver la bascule sans tunnel réel.
+  if (local && (cible.hostname === "127.0.0.1" || cible.hostname === "localhost")) return cible.origin;
   if (cible.protocol !== "https:") return null;
   if (!TUNNELS.some((suffixe) => cible.hostname.endsWith(suffixe))) return null;
   return `${cible.origin}`;
@@ -157,17 +159,14 @@ function trouverAudio(sortie) {
   return trouves[0] || null;
 }
 
-async function parEspaceHF(env, brief) {
-  // L'adresse annoncée par la page l'emporte : c'est le serveur de
-  // l'utilisateur, avec son GPU et sans quota.
-  const espace = brief.espace || env.ESPACE_MUSIQUE || ESPACE_DEFAUT;
-  /* Une adresse complète l'emporte sur un nom de Space : c'est par là qu'on
-     branche un ACE-Step tournant sur sa propre machine — même protocole, même
-     code, et plus aucun quota à respecter. */
-  const hote = /^https?:\/\//.test(espace) ? espace.replace(/\/+$/, "") : hoteEspace(espace);
+/* Un seul essai, sur un serveur donné. */
+async function surUnEspace(env, brief, poste) {
+  const hote = /^https?:\/\//.test(poste.espace)
+    ? poste.espace.replace(/\/+$/, "")
+    : hoteEspace(poste.espace);
   /* Pas de jeton vers un serveur personnel : il n'en demande pas, et l'envoyer
      le donnerait à une machine que nous ne contrôlons pas. */
-  const entetes = !brief.espace && env.JETON_HF ? { authorization: `Bearer ${env.JETON_HF}` } : {};
+  const entetes = poste.jeton ? { authorization: `Bearer ${poste.jeton}` } : {};
   const session = crypto.randomUUID().replace(/-/g, "");
 
   const secondes = Math.min(DUREE_MAX, Math.max(DUREE_MIN, Math.round(brief.secondes) || 60));
@@ -190,7 +189,7 @@ async function parEspaceHF(env, brief) {
   });
   if (!depot.ok) {
     const detail = (await depot.text()).slice(0, 200);
-    throw new Error(`le Space a refusé la demande (${depot.status}) : ${detail}`);
+    throw new Error(`le serveur a refusé la demande (${depot.status}) : ${detail}`);
   }
 
   const fin = await suivreLaFile(hote, session, entetes);
@@ -199,7 +198,7 @@ async function parEspaceHF(env, brief) {
   }
 
   const audio = trouverAudio(fin.output?.data);
-  if (!audio) throw new Error("le Space n'a rendu aucun fichier audio");
+  if (!audio) throw new Error("le serveur n'a rendu aucun fichier audio");
   const adresse = audio.url || `${hote}/gradio_api/file=${audio.path}`;
   const fichier = await fetch(adresse, { headers: entetes });
   if (!fichier.ok) throw new Error(`le fichier rendu est inaccessible (${fichier.status})`);
@@ -207,6 +206,45 @@ async function parEspaceHF(env, brief) {
   const octets = new Uint8Array(await fichier.arrayBuffer());
   const nom = audio.orig_name || "ace-step.wav";
   return { octets, type: audio.mime_type || fichier.headers.get("content-type") || "audio/wav", nom };
+}
+
+/* Un échec qui vaut la peine d'essayer ailleurs : quota vidé, serveur saturé,
+   carnet éteint, réseau coupé. Une consigne refusée, non — elle le serait
+   partout, et insister ne ferait que doubler l'attente. */
+const vautUnSecours = (motif) =>
+  /quota|GPU|indisponible|injoignable|refusé la demande \((4|5)\d\d|n'a pas répondu|fetch failed|network|ECONN|à temps/i
+    .test(String(motif));
+
+/* Le Space public d'abord, le serveur personnel en secours.
+
+   C'est l'ordre qui use le moins : le quota gratuit de ZeroGPU existe, autant
+   le dépenser, et il n'exige rien de l'utilisateur. Quand il est vide — deux ou
+   trois morceaux plus tard — la génération bascule d'elle-même sur le carnet
+   Kaggle ou Colab, s'il en tourne un. L'inverse gaspillerait un quota qui se
+   perd de toute façon à la fin de la journée.
+
+   Si le carnet est éteint, le message rendu est celui du premier serveur : le
+   quota, qui est la vraie cause, et non l'adresse morte. */
+async function parEspaceHF(env, brief) {
+  const postes = [];
+  if (env.JETON_HF) {
+    postes.push({ nom: "public", espace: env.ESPACE_MUSIQUE || ESPACE_DEFAUT, jeton: env.JETON_HF });
+  }
+  if (brief.espace) postes.push({ nom: "perso", espace: brief.espace, jeton: null });
+  if (!postes.length) postes.push({ nom: "public", espace: env.ESPACE_MUSIQUE || ESPACE_DEFAUT, jeton: null });
+
+  let premierEchec = null;
+  for (let i = 0; i < postes.length; i += 1) {
+    try {
+      const rendu = await surUnEspace(env, brief, postes[i]);
+      return { ...rendu, serveur: postes[i].nom, secours: i > 0 };
+    } catch (erreur) {
+      if (!premierEchec) premierEchec = erreur;
+      const reste = i < postes.length - 1;
+      if (!reste || !vautUnSecours(erreur.message)) throw premierEchec;
+    }
+  }
+  throw premierEchec;
 }
 
 /* Lyria, par l'API Gemini. Une seule requête : la réponse porte l'audio en
@@ -280,7 +318,7 @@ export async function genererMusique(request, url, env) {
     return new Response("consigne inattendue", { status: 400 });
   }
   if (brief.espace) {
-    const propre = espacePersonnel(brief.espace);
+    const propre = espacePersonnel(brief.espace, Boolean(env.ESPACE_LOCAL));
     if (!propre) {
       return new Response(JSON.stringify({
         erreur: `Adresse de serveur refusée. Seuls les tunnels connus sont acceptés, en HTTPS : ${TUNNELS.join(", ")}.`,
@@ -309,13 +347,14 @@ export async function genererMusique(request, url, env) {
   try {
     const attente = new Promise((_, rejeter) =>
       setTimeout(() => rejeter(new Error("le fournisseur n'a pas répondu à temps")), ATTENTE_MAX));
-    const { octets, type, nom } = await Promise.race([fournisseur(env, brief), attente]);
+    const { octets, type, nom, serveur, secours } = await Promise.race([fournisseur(env, brief), attente]);
     return new Response(octets, {
       headers: {
         "content-type": type,
         "content-disposition": `inline; filename="${nom}"`,
         "cache-control": "no-store",
         "x-generations-du-jour": String(rang),
+        ...(serveur ? { "x-serveur": serveur + (secours ? " (secours)" : "") } : {}),
       },
     });
   } catch (erreur) {
