@@ -209,6 +209,44 @@ la version Blu-ray n'a pas. Même image, même durée, du texte en plus pendant 
 absent du rendu. Quand une variante de même nature existe (créditée comme le rendu, ou sans
 crédits comme lui), c'est elle qui est préférée.
 
+## Le tempo se lit dans la musique, sur l'appareil
+
+Le but à terme est d'inverser le travail : au lieu de déduire une musique du
+montage, déduire le montage de la musique. Tout commence par lire le tempo dans
+le fichier lui-même — et le navigateur sait déjà tout ce qu'il faut. Décoder un
+son, parcourir ses échantillons : le reste est du calcul, et il tient dans un
+téléphone. **Pas de service, pas de clé, pas un centime, et ça marche hors
+ligne.**
+
+La méthode, et les quatre erreurs qu'il a fallu corriger — toutes trouvées en
+mesurant sur des pistes dont le tempo et le premier temps sont connus au
+centième :
+
+1. **L'enveloppe d'attaque.** Ce sont les montées d'énergie qui marquent les
+   frappes, pas le niveau absolu, qui suit le mixage.
+2. **Le tempo se lit sur la présence des frappes, pas sur leur force.** Corréler
+   l'énergie compare une grosse caisse à une caisse claire : elles s'accordent
+   mal, et une piste à 174 avec caisse claire un temps sur deux se lisait 87 — le
+   motif de deux temps se répétait mieux que le temps lui-même.
+3. **Chaque frappe est posée comme une petite bosse, pas comme un point.** Un
+   temps de 34,5 trames tombe alternativement sur 34 et 35 : la corrélation à 34
+   ne voyait qu'une paire sur deux, celle à 69 les voyait toutes, et le demi-tempo
+   l'emportait par pur artefact de quantification — 0,0237 contre 0,0172.
+4. **Période et phase sont ajustées ensemble sur les frappes.** La corrélation ne
+   donne la période qu'à la trame près, et un centième de seconde d'erreur déplace
+   la grille d'une seconde au bout de trois minutes. Chaque frappe tombant sur un
+   temps numéroté, il suffit de faire passer une droite par les points (numéro,
+   instant) : la pente est la période, l'ordonnée à l'origine la phase. Le départ
+   de l'ajustement vient d'une moyenne circulaire — partir de zéro rejetait toutes
+   les frappes quand la phase réelle tombait vers le milieu d'un temps.
+
+Résultat sur cinq pistes de 90 à 174 BPM : **tempo à 0,4 BPM près, premier temps à
+6 millisecondes près** — un quart d'image. La grille des temps s'affiche alors sur
+la piste, et la coupe comme le rognage s'aimantent sur le temps le plus proche
+quand la tête en est à moins d'un huitième de temps. Vérifié de bout en bout : une
+coupe demandée à 2,27 s se pose à 2,239 s, soit **exactement** sur le temps
+détecté.
+
 ## Le brief musical, calculé sur le montage
 
 Une musique générée sur une consigne vague ne collera jamais à un montage. Ce

@@ -892,6 +892,20 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   touch-action: pan-x;
 }
 .ligne { position: relative; min-width: 100%; }
+/* La grille des temps de la musique. Deux dégradés répétés suffisent — un trait
+   par temps, un plus marqué toutes les quatre mesures — ce qui évite de poser
+   des centaines d'éléments dans la page pour un morceau de trois minutes. */
+.ligne.rythme::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background-image:
+    repeating-linear-gradient(to right, rgba(255,255,255,.30) 0 1px, transparent 1px var(--mesure)),
+    repeating-linear-gradient(to right, rgba(255,255,255,.11) 0 1px, transparent 1px var(--temps));
+  background-position: var(--depart) 0;
+}
 .regle {
   position: relative;
   height: 24px;
@@ -1389,7 +1403,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 01:52";
+const VERSION_PAGE = "2026-08-19 03:37";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3757,6 +3771,18 @@ function pisteComplete(projet) {
   ligne.id = "ligne";
   ligne.style.width = `${Math.max(60, xDeSeconde(duree_totale))}px`;
 
+  /* La grille des temps n'apparaît que si elle est lisible : au-delà d'un trait
+     tous les six points, elle devient un aplat gris qui masque la pellicule au
+     lieu d'aider à viser. */
+  const rythme = projet.rythme;
+  const pasTemps = rythme ? xDeSeconde(60 / rythme.bpm) : 0;
+  if (rythme && pasTemps >= 6) {
+    ligne.classList.add("rythme");
+    ligne.style.setProperty("--temps", `${pasTemps}px`);
+    ligne.style.setProperty("--mesure", `${pasTemps * 4}px`);
+    ligne.style.setProperty("--depart", `${xDeSeconde(rythme.depart)}px`);
+  }
+
   const regle = document.createElement("div");
   regle.className = "regle";
   regle.id = "regle";
@@ -3951,6 +3977,21 @@ function brancherRognage(poignee, projet, index, cote) {
 
 // Coupe le plan sous la tête de lecture en deux, comme un coup de ciseaux : la
 // partie gauche s'arrête là, la partie droite reprend exactement au même point.
+/* Aimanter une coupe sur le temps le plus proche.
+
+   C'est tout l'intérêt de connaître le tempo : une coupe posée à trois centièmes
+   du temps s'entend, une coupe posée dessus disparaît dans la frappe. On n'aimante
+   que si la tête est déjà proche — moins d'un huitième de temps — pour ne jamais
+   déplacer une coupe volontairement décalée. */
+function surLeTemps(instant) {
+  const rythme = projetActif()?.rythme;
+  if (!rythme?.bpm) return instant;
+  const periode = 60 / rythme.bpm;
+  const k = Math.round((instant - rythme.depart) / periode);
+  const cale = rythme.depart + k * periode;
+  return Math.abs(cale - instant) <= periode / 8 && cale > 0 ? cale : instant;
+}
+
 // Deux coupes dans la même milliseconde donneraient le même identifiant, et deux
 // plans indiscernables dérèglent la sélection comme l'historique.
 let compteurCoupes = 0;
@@ -3958,12 +3999,14 @@ let compteurCoupes = 0;
 function couperAuCurseur() {
   const projet = projetActif();
   if (!projet?.plans.length) return;
+  // La coupe se cale sur le temps le plus proche quand la musique en donne un.
+  const ou = surLeTemps(lecture.position);
   const debuts = offsets(projet.plans);
-  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
+  let index = debuts.findIndex((debut, i) => ou < debut + duree(projet.plans[i]));
   if (index < 0) index = projet.plans.length - 1;
 
   const plan = projet.plans[index];
-  const dans = lecture.position - debuts[index];
+  const dans = ou - debuts[index];
   // Couper au ras d'un bord ne produirait qu'une miette : on le dit plutôt que
   // de laisser croire que le bouton ne répond pas.
   if (plan.youtube || dans < PLAN_MINI || dans > duree(plan) - PLAN_MINI) {
@@ -4172,8 +4215,9 @@ function boutonSon(projet) {
   bouton.type = "button";
   bouton.className = "son-ajout";
   bouton.innerHTML = `${icone("son")}<span></span>`;
+  const tempo = projet.rythme ? ` · ${Math.round(projet.rythme.bpm)} BPM` : "";
   bouton.querySelector("span").textContent = projet.audio
-    ? (lecture.audio ? "Remplacer la musique" : "Rouvrir le fichier")
+    ? (lecture.audio ? `Remplacer la musique${tempo}` : `Rouvrir le fichier${tempo}`)
     : "Ajouter une musique ou un SFX";
 
   const champ = document.createElement("input");
@@ -4232,6 +4276,18 @@ function chargerSon(projet, fichier) {
     sauver();
     enregistrer(projet);
     rendreProjet();
+    /* Le tempo se lit dans la foulée, sur l'appareil. C'est ce qui permettra de
+       poser les coupes sur les temps plutôt qu'à l'œil — et à terme de construire
+       le montage à partir de la musique plutôt que l'inverse. */
+    fichier.arrayBuffer()
+      .then(analyserRythme)
+      .then((rythme) => {
+        if (!rythme || !projetActif() || projetActif().id !== projet.id) return;
+        projet.rythme = rythme;
+        sauver();
+        rendreProjet();
+      })
+      .catch(() => {});
   }, { once: true });
   son.addEventListener("error", () => {
     URL.revokeObjectURL(url);
@@ -5175,7 +5231,8 @@ function rognerAuCurseur(cote) {
   const debuts = offsets(projet.plans);
   const index = Math.min(lecture.index, projet.plans.length - 1);
   const plan = projet.plans[index];
-  const dans = lecture.position - debuts[index];
+  // Comme la coupe : le bord se pose sur le temps quand il en est tout près.
+  const dans = surLeTemps(lecture.position) - debuts[index];
 
   const dire = (texte) => {
     const etiquette = $("plan-courant");
@@ -5320,6 +5377,278 @@ $("btn-setting").addEventListener("click", () => {
   fond.hidden = false;
   fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
 });
+
+/* --- rythme de la musique --------------------------------------------- */
+/* Le but à terme est d'inverser le travail : au lieu de déduire une musique du
+   montage, déduire le montage de la musique. Tout commence donc ici, par lire le
+   tempo dans le fichier lui-même.
+
+   Rien ne sort de l'appareil. Le navigateur sait décoder un son et en parcourir
+   les échantillons ; le reste est du calcul, et il tient largement dans un
+   téléphone : une piste de trois minutes s'analyse en une fraction de seconde.
+   Pas de service, pas de clé, pas un centime — et ça marche hors ligne. */
+
+const TRAMES_PAR_SECONDE = 100;      // une mesure d'énergie toutes les 10 ms
+const BPM_MIN = 60;
+const BPM_MAX = 190;
+
+/* L'enveloppe d'attaque : à chaque trame, de combien l'énergie a-t-elle
+   augmenté ? Ce sont ces montées qui marquent les frappes — la grosse caisse,
+   la caisse claire — et non le niveau absolu, qui varie avec le mixage. */
+function enveloppeAttaque(buffer) {
+  const taux = buffer.sampleRate;
+  const parTrame = Math.max(1, Math.round(taux / TRAMES_PAR_SECONDE));
+  const trames = Math.floor(buffer.length / parTrame);
+  const canaux = [];
+  for (let c = 0; c < buffer.numberOfChannels; c += 1) canaux.push(buffer.getChannelData(c));
+
+  const niveau = new Float32Array(trames);
+  for (let t = 0; t < trames; t += 1) {
+    let somme = 0;
+    const debut = t * parTrame;
+    for (let i = 0; i < parTrame; i += 1) {
+      let v = 0;
+      for (const canal of canaux) v += canal[debut + i];
+      somme += (v / canaux.length) ** 2;
+    }
+    niveau[t] = Math.sqrt(somme / parTrame);
+  }
+
+  // Différences positives, puis retrait d'une moyenne glissante : ce qui reste,
+  // ce sont les attaques qui sortent du fond sonore du moment.
+  const flux = new Float32Array(trames);
+  for (let t = 1; t < trames; t += 1) flux[t] = Math.max(0, niveau[t] - niveau[t - 1]);
+  const fenetre = TRAMES_PAR_SECONDE;   // une seconde
+  const net = new Float32Array(trames);
+  let cumul = 0;
+  for (let t = 0; t < trames; t += 1) {
+    cumul += flux[t];
+    if (t >= fenetre) cumul -= flux[t - fenetre];
+    const moyenne = cumul / Math.min(t + 1, fenetre);
+    net[t] = Math.max(0, flux[t] - moyenne);
+  }
+  return { net, niveau, trames };
+}
+
+/* Le tempo se lit dans la périodicité de ces attaques : on corrèle l'enveloppe
+   avec elle-même décalée, et le décalage qui donne le meilleur accord est la
+   durée d'un temps. Les erreurs d'octave — prendre le double ou la moitié du
+   tempo — sont le piège classique : on compare donc chaque candidat à son
+   double et à sa moitié, et on privilégie la plage où se tiennent les musiques
+   de montage. */
+/* Une piste d'impulsions : un pour chaque frappe, zéro ailleurs.
+
+   Corréler l'enveloppe d'énergie compare des amplitudes : une grosse caisse face
+   à une caisse claire s'accordent mal, si bien qu'un morceau à 174 avec caisse
+   claire un temps sur deux se lisait 87 — le motif de deux temps se répétait
+   mieux que le temps lui-même. En ne gardant que la présence d'une frappe, la
+   grosse caisse et la caisse claire pèsent pareil, et le vrai temps ressort. */
+function pisteDimpulsions(net) {
+  const plat = new Float32Array(net.length);
+  /* Chaque frappe est posée non comme un point mais comme une petite bosse.
+
+     Une impulsion d'une seule trame se heurte à la quantification : un temps de
+     34,5 trames tombe alternativement sur 34 et 35, si bien que la corrélation à
+     34 ne voit qu'une paire sur deux, celle à 35 l'autre moitié, tandis que celle
+     à 69 — la somme des deux — les voit toutes. Le demi-tempo l'emportait par pur
+     artefact : mesuré, 0,0237 contre 0,0172 sur une piste à 174. Étalée sur deux
+     trames de part et d'autre, la frappe est vue par les deux retards voisins et
+     le vrai temps reprend l'avantage. */
+  const bosse = [1, 0.6, 0.25];
+  for (const debut of attaques(net)) {
+    const t = Math.round(debut * TRAMES_PAR_SECONDE);
+    for (let d = -2; d <= 2; d += 1) {
+      const i = t + d;
+      if (i >= 0 && i < plat.length) plat[i] = Math.max(plat[i], bosse[Math.abs(d)]);
+    }
+  }
+  return plat;
+}
+
+function tempoDeLenveloppe(net) {
+  const retardMin = Math.round((60 / BPM_MAX) * TRAMES_PAR_SECONDE);
+  const retardMax = Math.round((60 / BPM_MIN) * TRAMES_PAR_SECONDE);
+  const plat = pisteDimpulsions(net);
+  const n = plat.length;
+  const scores = new Float32Array(retardMax + 1);
+  for (let retard = retardMin; retard <= retardMax; retard += 1) {
+    let somme = 0;
+    for (let t = retard; t < n; t += 1) somme += plat[t] * plat[t - retard];
+    scores[retard] = somme / (n - retard);
+  }
+
+  /* Somme harmonique : un vrai temps se retrouve aussi à son double, son triple
+     et son quadruple. En additionnant l'accord d'un retard et de ses multiples,
+     le temps réel ressort, là où la simple corrélation préférait le motif de deux
+     temps — mesuré, elle lisait 87 sur une piste à 174. */
+  const note = new Float32Array(retardMax + 1);
+  for (let retard = retardMin; retard <= retardMax; retard += 1) {
+    let somme = scores[retard];
+    for (const [facteur, poids] of [[2, 0.5], [3, 0.3], [4, 0.25]]) {
+      const multiple = retard * facteur;
+      if (multiple <= retardMax) somme += poids * scores[multiple];
+    }
+    note[retard] = somme;
+  }
+  let meilleur = retardMin;
+  for (let retard = retardMin; retard <= retardMax; retard += 1) {
+    if (note[retard] > note[meilleur]) meilleur = retard;
+  }
+  /* Un tempo et sa moitié expliquent aussi bien les attaques : une grosse caisse
+     sur chaque temps et une caisse claire un temps sur deux se lisent aussi bien
+     à 174 qu'à 87. Mesuré, la corrélation préférait systématiquement la moitié —
+     le motif de deux temps se répète plus franchement. On tranche donc comme
+     l'oreille : à accord comparable, c'est le tempo le plus rapide qui est le
+     bon, tant qu'il reste jouable. */
+  /* Le retard est compté en trames de dix millisecondes : à 90 BPM, le temps
+     dure 66,67 trames et l'entier le plus proche donne 89,6 BPM. L'écart paraît
+     minime — il déplace la grille de près d'une seconde au bout de trois minutes,
+     assez pour que plus aucune coupe ne tombe juste. On affine donc le sommet par
+     une parabole passant par ses deux voisins, ce qui rend le retard fractionnaire
+     et le tempo précis au centième. */
+  const g = note[Math.max(retardMin, meilleur - 1)];
+  const c = note[meilleur];
+  const d = note[Math.min(retardMax, meilleur + 1)];
+  const denominateur = g - 2 * c + d;
+  const correction = denominateur !== 0 ? (0.5 * (g - d)) / denominateur : 0;
+  const retard = meilleur + Math.max(-0.5, Math.min(0.5, correction));
+
+  const fond = scores.reduce((a, x) => a + x, 0) / Math.max(1, retardMax - retardMin);
+  return {
+    retard,
+    bpm: (60 * TRAMES_PAR_SECONDE) / retard,
+    confiance: fond > 0 ? scores[meilleur] / fond : 0,
+  };
+}
+
+/* Où sont les attaques, exactement ? Un sommet d'enveloppe arrive après le début
+   de la frappe : l'énergie met deux à cinq trames à monter. Se caler sur le
+   sommet décalait le premier temps de plusieurs dizaines de millisecondes —
+   mesuré jusqu'à 117 ms, soit près de trois images. On repère donc chaque
+   sommet, puis on remonte jusqu'au pied de sa montée : c'est là que la frappe
+   commence, et c'est cela qu'on entend. */
+function attaques(net) {
+  const sommet = Math.max(...net) || 1;
+  const seuil = sommet * 0.12;
+  const trouvees = [];
+  for (let t = 1; t < net.length - 1; t += 1) {
+    if (net[t] < seuil || net[t] < net[t - 1] || net[t] <= net[t + 1]) continue;
+    let pied = t;
+    while (pied > 0 && net[pied - 1] > 0 && net[pied - 1] < net[pied]) pied -= 1;
+    const derniere = trouvees[trouvees.length - 1];
+    if (derniere !== undefined && pied - derniere < 4) continue;   // même frappe
+    trouvees.push(pied);
+  }
+  return trouvees.map((t) => t / TRAMES_PAR_SECONDE);
+}
+
+/* La phase se lit alors sans peigne ni résolution de trame : chaque attaque
+   tombe à un reste près du début d'un temps, et la moyenne circulaire de ces
+   restes donne le décalage. Circulaire, parce que 0,01 s et 0,49 s d'un temps de
+   0,5 s sont voisins et non opposés. */
+/* Période et phase sont ajustées ensemble, directement sur les frappes.
+
+   La corrélation ne donne la période qu'à la trame près, et une erreur d'un
+   centième de seconde déplace la grille d'une seconde au bout de trois minutes.
+   Mais chaque frappe tombe sur un temps numéroté : si l'on connaît à peu près la
+   période, on sait à quel temps chaque frappe appartient, et il ne reste qu'à
+   faire passer une droite par ces points — temps k, instant t. La pente est la
+   période, l'ordonnée à l'origine la phase, et les deux se trouvent d'un coup.
+   Trois passes suffisent à converger. */
+function calerSurLesFrappes(net, periodeApprochee) {
+  const debuts = attaques(net);
+  if (debuts.length < 4) return { periode: periodeApprochee, phase: 0 };
+
+  let periode = periodeApprochee;
+
+  /* Départ : la moyenne circulaire des restes. Partir de zéro était une erreur —
+     quand la phase réelle tombe vers le milieu d'un temps, toutes les frappes se
+     retrouvent à plus d'un quart de temps de la grille supposée, l'ajustement les
+     rejette toutes et rend zéro. Mesuré sur une piste à 120 dont le premier temps
+     est à 0,25 s : phase trouvée 0,000. La moyenne circulaire, elle, n'a pas
+     d'origine à choisir. */
+  let x = 0;
+  let y = 0;
+  for (const debut of debuts) {
+    const angle = (2 * Math.PI * (debut % periode)) / periode;
+    x += Math.cos(angle);
+    y += Math.sin(angle);
+  }
+  let phase = ((Math.atan2(y, x) / (2 * Math.PI)) * periode + periode) % periode;
+
+  for (let passe = 0; passe < 3; passe += 1) {
+    // à quel temps chaque frappe appartient-elle, et de combien manque-t-elle ?
+    const gardes = [];
+    for (const debut of debuts) {
+      const k = Math.round((debut - phase) / periode);
+      const ecart = Math.abs(debut - (phase + k * periode));
+      // une frappe qui tombe à plus d'un quart de temps n'est pas sur la grille
+      if (ecart <= periode * 0.25) gardes.push({ k, t: debut });
+    }
+    if (gardes.length < 4) break;
+    let sk = 0, st = 0, skk = 0, skt = 0;
+    for (const { k, t } of gardes) { sk += k; st += t; skk += k * k; skt += k * t; }
+    const n = gardes.length;
+    const denominateur = n * skk - sk * sk;
+    if (!denominateur) break;
+    periode = (n * skt - sk * st) / denominateur;
+    phase = (st - periode * sk) / n;
+  }
+  // la phase se ramène dans le premier temps
+  const rendue = ((phase % periode) + periode) % periode;
+  return { periode, phase: rendue };
+}
+
+/* Les ruptures de la musique : on lisse le niveau sur deux secondes et on
+   repère les marches — c'est là que tombent les entrées et les chutes, et donc
+   les endroits où un montage doit changer de régime. */
+function rupturesDuNiveau(niveau) {
+  const lissage = TRAMES_PAR_SECONDE * 2;
+  const doux = new Float32Array(niveau.length);
+  let cumul = 0;
+  for (let t = 0; t < niveau.length; t += 1) {
+    cumul += niveau[t];
+    if (t >= lissage) cumul -= niveau[t - lissage];
+    doux[t] = cumul / Math.min(t + 1, lissage);
+  }
+  const sommet = Math.max(...doux) || 1;
+  const ruptures = [];
+  let derniere = -Infinity;
+  for (let t = lissage; t < doux.length - lissage; t += 1) {
+    const avant = doux[t - lissage];
+    const apres = doux[t + lissage];
+    const marche = Math.abs(apres - avant) / sommet;
+    if (marche > 0.25 && t - derniere > TRAMES_PAR_SECONDE * 8) {
+      ruptures.push({ temps: t / TRAMES_PAR_SECONDE, sens: apres > avant ? "montee" : "chute" });
+      derniere = t;
+    }
+  }
+  return ruptures;
+}
+
+async function analyserRythme(donnees) {
+  const Contexte = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!Contexte) return null;
+  // 22 050 Hz suffit très largement pour repérer des frappes, et divise par deux
+  // le travail de décodage comme celui du parcours.
+  const ctx = new Contexte(1, 1, 22050);
+  let buffer;
+  try {
+    buffer = await ctx.decodeAudioData(donnees);
+  } catch {
+    return null;
+  }
+  const { net, niveau } = enveloppeAttaque(buffer);
+  const tempo = tempoDeLenveloppe(net);
+  const cale = calerSurLesFrappes(net, tempo.retard / TRAMES_PAR_SECONDE);
+  return {
+    bpm: Math.round((60 / cale.periode) * 10) / 10,
+    depart: Math.round(cale.phase * 1000) / 1000,
+    confiance: Math.round(tempo.confiance * 100) / 100,
+    duree: Math.round(buffer.duration * 100) / 100,
+    ruptures: rupturesDuNiveau(niveau).slice(0, 24),
+  };
+}
 
 /* --- brief musical ---------------------------------------------------- */
 /* Une musique générée sur une consigne vague ne collera jamais à un montage.
