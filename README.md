@@ -298,6 +298,47 @@ faudrait lui repasser les paramètres de la génération précédente, et payer 
 appel de quota par rallonge. Ce n'est pas écrit — la longueur d'un AMV ne le
 demande pas encore.
 
+### Un plan de travail, pas un formulaire
+
+Le brief était entièrement déduit du montage. C'est un bon point de départ — il
+ne demande rien et il tombe souvent juste — mais **ce n'est pas ainsi qu'on fait
+une musique : on la choisit.** Le panneau est devenu une table de composition.
+
+Quatre axes, en pastilles :
+
+| Axe | Choix |
+| --- | --- |
+| **Voix** | Instrumental · Féminine · Masculine · Duo · Chœur |
+| **Style** | Rock · Métal · Orchestral · Cinématique · Électro · Trap · Phonk · J-Pop · Lo-fi · Drum & bass · Piano |
+| **Émotion** | Épique · Mélancolique · Rageur · Nostalgique · Sombre · Lumineux · Tendu · Triomphal |
+| **Tempo** | de 60 à 200 BPM, au curseur |
+
+Les pastilles plutôt qu'un menu déroulant : c'est la forme qui convient à un
+choix qu'on tâtonne. Tout est visible d'un coup, et l'on voit du même coup ce
+qu'on a pris **et ce qu'on a laissé**.
+
+**Ce qui n'est pas choisi suit le montage ; ce qui l'est l'emporte.** On ouvre le
+panneau, tout est déjà rempli d'après l'image, et on ne touche qu'à ce qui ne va
+pas. « Repartir du montage » efface les choix d'un geste.
+
+Deux règles apprises en le construisant :
+
+- **Deux genres au maximum.** Au-delà, le générateur ne fait plus de choix, il
+  fait de la bouillie. Le troisième clic chasse le plus ancien.
+- **Les instruments déduits s'effacent dès qu'un genre est choisi.** Demander
+  « piano intimiste » et recevoir des taïkos par-dessus, parce que le montage est
+  un combat, serait exactement le contraire de choisir.
+
+La ligne qui part au générateur est affichée en clair, et se réécrit à chaque
+geste : montrer un brief périmé sous des boutons qu'on vient de changer serait
+pire que ne rien montrer.
+
+Vérifié : sans rien choisir, `epic orchestral hybrid, 120 BPM, taiko drums,
+distorted 808s, aggressive brass, felt piano, emotional dynamics, instrumental,
+no vocals` — le montage seul. Après trois clics et un curseur, `phonk, cowbell,
+distorted bass, 172 BPM, aggressive, furious, female vocals, clear lead voice`.
+Plus une trace des taïkos. Les choix survivent à la fermeture du panneau.
+
 ### Chanté ou instrumental
 
 Par défaut, la musique est **instrumentale** : c'est ce que demandait le brief,

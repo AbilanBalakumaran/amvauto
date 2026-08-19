@@ -587,6 +587,23 @@ main {
 /* Sans cette ligne, « hidden » ne cache rien : la mise en flex ci-dessus
    l'emporte sur la feuille du navigateur. */
 .lecteur-reglage[hidden] { display: none; }
+/* Les pastilles : tout le vocabulaire visible d'un coup, ce qui est pris se
+   distingue du reste sans avoir à lire. */
+.pastilles { display: flex; flex-wrap: wrap; gap: var(--e2); }
+.pastille {
+  padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--trait); background: #111; color: var(--doux);
+  font: 600 0.82rem/1 system-ui, sans-serif; cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.pastille.on {
+  background: var(--vert); border-color: var(--vert-fonce); color: #fff;
+}
+.lecteur-reglage input[type="range"] {
+  appearance: auto; -webkit-appearance: auto;
+  flex: 1 1 150px; min-width: 120px; padding: 0; background: transparent; border: 0;
+  accent-color: var(--vert);
+}
 .lecteur-reglage button {
   align-self: flex-start;
   padding: 8px 12px; border-radius: 8px; border: 1px solid var(--trait);
@@ -1428,7 +1445,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 10:17";
+const VERSION_PAGE = "2026-08-19 10:25";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6036,25 +6053,98 @@ function analyserMontage(projet) {
 
 const minutage = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
+/* Le vocabulaire de composition.
+
+   Le brief était entièrement déduit du montage. C'est un bon point de départ —
+   il ne demande rien et il tombe souvent juste — mais ce n'est pas ainsi qu'on
+   fait une musique : on la choisit. Voix, genre, émotion, tempo se décident,
+   et le montage ne sert plus que de proposition initiale.
+
+   Chaque entrée porte son étiquette en français et ce qui part réellement au
+   générateur, en anglais — les modèles de musique comprennent très mal le
+   français, et l'utilisateur n'a pas à connaître leur jargon. */
+const VOIX_MUSIQUE = [
+  ["instrumental", "Instrumental", "instrumental, no vocals"],
+  ["feminine", "Voix féminine", "female vocals, clear lead voice"],
+  ["masculine", "Voix masculine", "male vocals, clear lead voice"],
+  ["duo", "Duo", "male and female duet vocals"],
+  ["choeur", "Chœur", "choir vocals, layered harmonies"],
+];
+
+const STYLES_MUSIQUE = [
+  ["rock", "Rock", "anime rock, electric guitar, driving drums"],
+  ["metal", "Métal", "metalcore, distorted guitars, double kick"],
+  ["orchestral", "Orchestral", "epic orchestral, soaring strings, brass"],
+  ["cinema", "Cinématique", "cinematic hybrid, trailer music"],
+  ["electro", "Électro", "electronic, wide synth leads"],
+  ["trap", "Trap", "hybrid trap, 808 bass, hi-hat rolls"],
+  ["phonk", "Phonk", "phonk, cowbell, distorted bass"],
+  ["jpop", "J-Pop", "j-pop, bright synths, catchy melody"],
+  ["lofi", "Lo-fi", "lo-fi, warm keys, brushed drums"],
+  ["dnb", "Drum & bass", "drum and bass, fast breakbeat"],
+  ["piano", "Piano", "solo piano, intimate, sparse"],
+];
+
+const EMOTIONS_MUSIQUE = [
+  ["epique", "Épique", "epic, triumphant"],
+  ["melancolique", "Mélancolique", "melancholic, bittersweet"],
+  ["rageur", "Rageur", "aggressive, furious"],
+  ["nostalgique", "Nostalgique", "nostalgic, wistful"],
+  ["sombre", "Sombre", "dark, ominous"],
+  ["lumineux", "Lumineux", "bright, hopeful"],
+  ["tendu", "Tendu", "tense, suspenseful"],
+  ["triomphal", "Triomphal", "victorious, soaring"],
+];
+
+const motsDe = (table, cles) => (cles || []).map((c) => table.find((e) => e[0] === c)?.[2]).filter(Boolean);
+
+/* Les choix vivent avec le projet : rouvrir le panneau doit retrouver ce qu'on
+   avait décidé, pas repartir de zéro. Vide veut dire « suis le montage ». */
+const briefDe = (projet) => {
+  if (!projet.brief || typeof projet.brief !== "object") projet.brief = {};
+  const b = projet.brief;
+  if (!Array.isArray(b.styles)) b.styles = [];
+  if (!Array.isArray(b.emotions)) b.emotions = [];
+  return b;
+};
+
 // Le champ « Style » de Suno : une seule ligne, dense, en anglais.
-function styleSuno(bilan, chante = false) {
-  /* La palette suit le sommet du montage, pas sa moyenne. Un AMV qui passe
-     trente secondes en calme et douze en combat s'entend comme un morceau de
-     combat : c'est le pic qui reste en tête, et c'est sur lui qu'on coupe. On
-     pondère donc chaque ambiance par son énergie autant que par sa durée. */
-  const couleurs = bilan.pesees.slice(0, 2).flatMap((a) => COULEURS[a] || []).slice(0, 4);
+function styleSuno(bilan, brief = {}) {
+  /* Chaque axe suit le choix s'il y en a un, le montage sinon. C'est ce qui
+     rend le panneau utilisable sans rien décider : on ouvre, tout est déjà
+     rempli, et on ne touche qu'à ce qui ne va pas.
+
+     La palette déduite suit le sommet du montage, pas sa moyenne. Un AMV qui
+     passe trente secondes en calme et douze en combat s'entend comme un morceau
+     de combat : c'est le pic qui reste en tête, et c'est sur lui qu'on coupe. */
   const nerveux = bilan.tempo.bpm >= 140;
-  const morceaux = [
-    nerveux ? "cinematic hybrid trap" : "epic orchestral hybrid",
-    `${bilan.tempo.bpm} BPM`,
+  const styles = brief.styles?.length
+    ? motsDe(STYLES_MUSIQUE, brief.styles)
+    : [nerveux ? "cinematic hybrid trap" : "epic orchestral hybrid"];
+
+  const emotions = brief.emotions?.length
+    ? motsDe(EMOTIONS_MUSIQUE, brief.emotions)
+    : [bilan.dominantes.includes("acting") ? "emotional dynamics" : "relentless momentum"];
+
+  /* Les instruments déduits ne s'ajoutent que si aucun genre n'a été choisi :
+     demander « piano intimiste » et recevoir des taïkos par-dessus, parce que le
+     montage est un combat, serait exactement le contraire de choisir. */
+  const couleurs = brief.styles?.length
+    ? []
+    : bilan.pesees.slice(0, 2).flatMap((a) => COULEURS[a] || []).slice(0, 4);
+
+  const voix = motsDe(VOIX_MUSIQUE, [brief.voix || "instrumental"]);
+
+  return [
+    ...styles,
+    `${brief.bpm || bilan.tempo.bpm} BPM`,
     ...couleurs,
-    bilan.dominantes.includes("acting") ? "emotional dynamics" : "relentless momentum",
-    /* La voix change la nature du morceau, pas seulement sa couleur : on le dit
-       au générateur en toutes lettres, faute de quoi il fait ce qu'il veut. */
-    chante ? "english vocals, sung chorus, clear lead voice" : "instrumental, no vocals",
-  ];
-  return morceaux.join(", ");
+    ...emotions,
+    ...voix,
+  ].join(", ");
 }
+
+const chanteAvec = (brief) => Boolean(brief.voix) && brief.voix !== "instrumental";
 
 /* Le champ des paroles sert ici de plan de montage : Suno lit les balises entre
    crochets comme des consignes de structure. On y met les sections aux instants
@@ -6118,11 +6208,11 @@ function parolesAce(bilan) {
    puis la structure minutée. C'est le même texte que celui qu'on copie à la
    main dans Suno — l'outil ne demande pas autre chose que ce qu'on lui
    demanderait soi-même. */
-function consigneMusicale(bilan) {
+function consigneMusicale(bilan, brief = {}) {
   return [
-    styleSuno(bilan),
+    styleSuno(bilan, brief),
     "",
-    `Target length: ${Math.round(bilan.totalSec)} seconds.`,
+    `Target length: ${brief.duree || Math.round(bilan.totalSec)} seconds.`,
     structureSuno(bilan),
   ].join("\n");
 }
@@ -6189,7 +6279,7 @@ function dureeConseillee(bilan) {
 /* Générer la musique et la poser dans la piste son. Une fois le fichier déposé,
    le tempo en est lu tout seul et la grille des temps apparaît : la boucle se
    referme, du montage à la musique et de la musique aux coupes. */
-async function genererMusique(bouton, secondes, chante, paroles) {
+async function genererMusique(bouton, brief, paroles) {
   const projet = projetActif();
   const bilan = projet && analyserMontage(projet);
   if (!bilan) return;
@@ -6206,11 +6296,11 @@ async function genererMusique(bouton, secondes, chante, paroles) {
       method: "POST",
       headers: { "x-coffre": code, "content-type": "application/json" },
       body: JSON.stringify({
-        consigne: consigneMusicale(bilan),
-        style: styleSuno(bilan, chante),
-        paroles: chante && paroles.trim() ? paroles.trim() : parolesAce(bilan),
-        secondes,
-        court: secondes <= 32,
+        consigne: consigneMusicale(bilan, brief),
+        style: styleSuno(bilan, brief),
+        paroles: chanteAvec(brief) && paroles.trim() ? paroles.trim() : parolesAce(bilan),
+        secondes: brief.duree,
+        court: brief.duree <= 32,
       }),
     });
     if (!reponse.ok) {
@@ -6257,40 +6347,153 @@ function ouvrirBrief() {
   if (!bilan) {
     meta.textContent = "Ajoute des plans au montage : le brief se calcule à partir de leur durée et de leur ambiance.";
   } else {
+    const brief = briefDe(projet);
+    if (!brief.duree) brief.duree = dureeConseillee(bilan);
+    if (!brief.voix) brief.voix = "instrumental";
+    const structure = structureSuno(bilan);
     const battue = bilan.tempo.temps
       ? `une coupe tous les ${bilan.tempo.temps} temps`
       : "hors de la plage habituelle, à ajuster";
-    const structure = structureSuno(bilan);
 
-    /* Le texte se réécrit quand la voix change : le bloc « STYLES » n'est pas le
-       même selon qu'on chante ou non, et le montrer périmé serait mentir. */
+    /* Une rangée de pastilles. C'est la forme qui convient à un choix qu'on
+       tâtonne : tout est visible d'un coup, rien n'est caché derrière un menu
+       déroulant, et l'on voit du même coup ce qu'on a pris et ce qu'on a laissé.
+       « unique » pour un axe qui ne souffre qu'une réponse — on ne chante pas à
+       la fois en voix féminine et en chœur —, sinon on cumule, dans la limite
+       posée. */
+    const rangee = (intitule, table, lire, ecrire, { unique = false, max = 2 } = {}) => {
+      const enveloppe = document.createElement("div");
+      enveloppe.className = "lecteur-reglage pile";
+      const texte = document.createElement("span");
+      texte.textContent = intitule;
+      const pastilles = document.createElement("div");
+      pastilles.className = "pastilles";
+
+      table.forEach(([cle, nom]) => {
+        const pastille = document.createElement("button");
+        pastille.type = "button";
+        pastille.className = "pastille";
+        pastille.textContent = nom;
+        pastille.addEventListener("click", () => {
+          const pris = lire();
+          if (unique) {
+            ecrire(cle);
+          } else if (pris.includes(cle)) {
+            ecrire(pris.filter((c) => c !== cle));
+          } else {
+            // Le plus ancien cède la place : au-delà de deux genres mêlés, le
+            // générateur ne fait plus de choix, il fait de la bouillie.
+            ecrire([...pris, cle].slice(-max));
+          }
+          accorder();
+        });
+        pastilles.append(pastille);
+      });
+
+      enveloppe.append(texte, pastilles);
+      enveloppe.__peindre = () => {
+        const pris = unique ? [lire()] : lire();
+        [...pastilles.children].forEach((el, k) => {
+          el.classList.toggle("on", pris.includes(table[k][0]));
+        });
+      };
+      reglages.push(enveloppe);
+      return enveloppe;
+    };
+
+    rangee("Voix", VOIX_MUSIQUE, () => brief.voix, (v) => { brief.voix = v; }, { unique: true });
+    rangee("Style", STYLES_MUSIQUE, () => brief.styles, (v) => { brief.styles = v; });
+    rangee("Émotion", EMOTIONS_MUSIQUE, () => brief.emotions, (v) => { brief.emotions = v; });
+
+    const tempo = document.createElement("div");
+    tempo.className = "lecteur-reglage";
+    const tempoTexte = document.createElement("span");
+    const tempoChamp = document.createElement("input");
+    tempoChamp.type = "range";
+    tempoChamp.min = "60";
+    tempoChamp.max = "200";
+    tempoChamp.step = "1";
+    tempoChamp.value = String(brief.bpm || bilan.tempo.bpm);
+    tempoChamp.addEventListener("input", () => {
+      brief.bpm = Number(tempoChamp.value);
+      accorder();
+    });
+    tempo.append(tempoTexte, tempoChamp);
+    reglages.push(tempo);
+
+    const duree = document.createElement("select");
+    for (let sec = DUREE_MUSIQUE_MIN; sec <= DUREE_MUSIQUE_MAX; sec += 30) {
+      const option = document.createElement("option");
+      option.value = String(sec);
+      option.textContent = minutage(sec);
+      if (sec === brief.duree) option.selected = true;
+      duree.append(option);
+    }
+    duree.addEventListener("change", () => { brief.duree = Number(duree.value); accorder(); });
+    const ligneDuree = document.createElement("div");
+    ligneDuree.className = "lecteur-reglage";
+    const dureeTexte = document.createElement("span");
+    dureeTexte.textContent = "Durée";
+    ligneDuree.append(dureeTexte, duree);
+    reglages.push(ligneDuree);
+
+    const histoire = document.createElement("input");
+    histoire.type = "text";
+    histoire.placeholder = "ce que la chanson doit raconter (facultatif)";
+    const ligneHistoire = document.createElement("label");
+    ligneHistoire.className = "lecteur-reglage pile";
+    const histoireTexte = document.createElement("span");
+    histoireTexte.textContent = "Histoire";
+    ligneHistoire.append(histoireTexte, histoire);
+    reglages.push(ligneHistoire);
+
+    const zone = document.createElement("textarea");
+    zone.spellcheck = false;
+    zone.placeholder = "[verse]\n…";
+    const lignerParoles = document.createElement("label");
+    lignerParoles.className = "lecteur-reglage pile";
+    const parolesTexte = document.createElement("span");
+    parolesTexte.textContent = "Paroles";
+    const ecrire = document.createElement("button");
+    ecrire.type = "button";
+    ecrire.textContent = "Écrire les paroles";
+    ecrire.addEventListener("click", () =>
+      ecrireParoles(ecrire, bilan, brief.duree, zone, histoire.value));
+    lignerParoles.append(parolesTexte, zone, ecrire);
+    reglages.push(lignerParoles);
+
+    /* Le texte se réécrit à chaque geste : montrer un brief périmé sous des
+       boutons qu'on vient de changer serait pire que ne rien montrer. */
     const peindre = () => {
-      const chante = voix.value === "chante";
+      const chante = chanteAvec(brief);
+      tempoTexte.textContent = `Tempo · ${brief.bpm || bilan.tempo.bpm} BPM`;
       meta.textContent = [
         `${bilan.plans.length} plans · ${minutage(bilan.totalSec)} · coupe médiane ${bilan.cadence.toFixed(2)} s`,
-        `Tempo proposé : ${bilan.tempo.bpm} BPM — ${battue}.`,
-        `Ambiances : ${bilan.dominantes.slice(0, 3).map((a) => MOODS_FR[a] || a).join(", ") || "aucune relevée"}` +
+        `Le montage propose ${bilan.tempo.bpm} BPM — ${battue}.`,
+        `Ambiances relevées : ${bilan.dominantes.slice(0, 3).map((a) => MOODS_FR[a] || a).join(", ") || "aucune"}` +
           `${bilan.techniques.length ? ` · ${bilan.techniques.join(", ")}` : ""}`,
-        `Structure : ${bilan.sections.length} sections.`,
         "",
-        "« Générer la musique » fabrique le morceau ici même, sur le quota gratuit d'ACE-Step. Compte une à deux minutes d'attente : la piste tombe ensuite toute seule dans la voie son, son tempo s'y lit et la grille des temps apparaît.",
-        "",
-        "La durée se choisit, jusqu'à 4:00 — c'est le plafond du modèle, pas le mien. Demande plus long que le montage si tu comptes monter sur la musique : la queue se coupe, alors qu'un morceau trop court oblige à tout reprendre.",
+        "Tout part du montage, et tout se reprend. Ce qui n'est pas choisi suit ce que l'image raconte ; ce qui l'est l'emporte.",
         "",
         chante
-          ? "Chanté : les paroles partent telles qu'elles sont écrites ci-dessous. « Écrire les paroles » les fait rédiger d'après le montage — en anglais, parce que c'est ce que les modèles de musique chantent le mieux, et de loin. Relis-les, corrige-les : elles seront chantées mot pour mot."
-          : "Instrumental : aucune voix. Le champ des paroles ne porte que des balises de structure, jamais de phrases — ACE-Step chanterait tout ce qu'il y trouverait.",
+          ? "Les paroles partent telles qu'elles sont écrites ci-dessous, mot pour mot. « Écrire les paroles » les fait rédiger d'après le montage, en anglais — c'est ce que les modèles chantent le mieux, et de loin."
+          : "Instrumental : aucune voix. Choisis-en une pour ouvrir les paroles.",
         "",
-        "À la main dans Suno, mode Custom : le premier bloc va dans « Styles », le second dans « Lyrics ». Les deux sont en anglais — Suno le comprend nettement mieux.",
+        "— CE QUI PART AU GÉNÉRATEUR —",
+        styleSuno(bilan, brief),
         "",
-        "— STYLES —",
-        styleSuno(bilan, chante),
-        "",
-        "— LYRICS —",
-        chante ? "les paroles du champ ci-dessous, telles quelles" : structure,
-        "",
-        "Le palier gratuit de Suno appose un filigrane et réserve la musique à un usage privé. ACE-Step est sous licence Apache 2.0 : ce qu'il produit se publie sans condition.",
+        "Une à deux minutes d'attente. La piste tombe ensuite dans la voie son, son tempo s'y lit, la grille apparaît — et « Monter sur la musique » peut poser le montage.",
       ].join("\n");
+    };
+
+    const accorder = () => {
+      const chante = chanteAvec(brief);
+      ligneHistoire.hidden = !chante;
+      lignerParoles.hidden = !chante;
+      reglages.forEach((r) => r.__peindre?.());
+      second.textContent = chante ? "Copier les paroles" : "Copier la structure";
+      peindre();
+      sauver();
     };
 
     const copier = (etiquette, quoi) => {
@@ -6306,77 +6509,32 @@ function ouvrirBrief() {
       return bouton;
     };
 
-    const ligne = (intitule, champ, pile = false) => {
-      const enveloppe = document.createElement("label");
-      enveloppe.className = "lecteur-reglage" + (pile ? " pile" : "");
-      const texte = document.createElement("span");
-      texte.textContent = intitule;
-      enveloppe.append(texte, champ);
-      reglages.push(enveloppe);
-      return enveloppe;
-    };
-
-    const conseillee = dureeConseillee(bilan);
-    const duree = document.createElement("select");
-    for (let sec = DUREE_MUSIQUE_MIN; sec <= DUREE_MUSIQUE_MAX; sec += 30) {
-      const option = document.createElement("option");
-      option.value = String(sec);
-      option.textContent = minutage(sec) + (sec === conseillee ? " · conseillé" : "");
-      if (sec === conseillee) option.selected = true;
-      duree.append(option);
-    }
-    ligne("Durée du morceau", duree);
-
-    const voix = document.createElement("select");
-    [["instrumental", "Instrumental"], ["chante", "Chanté, en anglais"]].forEach(([valeur, nom]) => {
-      const option = document.createElement("option");
-      option.value = valeur;
-      option.textContent = nom;
-      voix.append(option);
-    });
-    ligne("Voix", voix);
-
-    const histoire = document.createElement("input");
-    histoire.type = "text";
-    histoire.placeholder = "ce que la chanson doit raconter (facultatif)";
-    const ligneHistoire = ligne("Histoire", histoire, true);
-
-    const zone = document.createElement("textarea");
-    zone.spellcheck = false;
-    zone.placeholder = "[verse]\n…";
-    const lignerParoles = ligne("Paroles", zone, true);
-
-    const ecrire = document.createElement("button");
-    ecrire.type = "button";
-    ecrire.textContent = "Écrire les paroles";
-    ecrire.addEventListener("click", () =>
-      ecrireParoles(ecrire, bilan, Number(duree.value), zone, histoire.value));
-    lignerParoles.append(ecrire);
-
-    const premier = copier("Copier le style", () => styleSuno(bilan, voix.value === "chante"));
+    const premier = copier("Copier le style", () => styleSuno(bilan, brief));
     const second = copier("Copier la structure",
-      () => (voix.value === "chante" && zone.value.trim() ? zone.value : structure));
-
-    /* Les deux champs de la chanson n'existent que si l'on chante : les montrer
-       grisés en permanence encombrerait le panneau sans rien apprendre. */
-    const accorder = () => {
-      const chante = voix.value === "chante";
-      ligneHistoire.hidden = !chante;
-      lignerParoles.hidden = !chante;
-      second.textContent = chante ? "Copier les paroles" : "Copier la structure";
-      peindre();
-    };
-    voix.addEventListener("change", accorder);
-    accorder();
+      () => (chanteAvec(brief) && zone.value.trim() ? zone.value : structure));
 
     const generer = document.createElement("button");
     generer.type = "button";
     generer.className = "fort";
     generer.textContent = "Générer la musique";
-    generer.addEventListener("click", () =>
-      genererMusique(generer, Number(duree.value), voix.value === "chante", zone.value));
+    generer.addEventListener("click", () => genererMusique(generer, brief, zone.value));
 
-    actions.append(generer, premier, second);
+    const remettre = document.createElement("button");
+    remettre.type = "button";
+    remettre.textContent = "Repartir du montage";
+    remettre.addEventListener("click", () => {
+      brief.styles = [];
+      brief.emotions = [];
+      brief.voix = "instrumental";
+      brief.bpm = bilan.tempo.bpm;
+      brief.duree = dureeConseillee(bilan);
+      tempoChamp.value = String(brief.bpm);
+      duree.value = String(brief.duree);
+      accorder();
+    });
+
+    actions.append(generer, premier, second, remettre);
+    accorder();
   }
 
   const fermer = document.createElement("button");
