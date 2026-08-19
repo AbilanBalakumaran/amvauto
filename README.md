@@ -374,9 +374,26 @@ récupéré et rendu intact (3 244 octets attendus, 3 244 rendus), et la traduct
 de l'échec.
 
 Contre le vrai Space, sans jeton valable : la demande est acceptée, la session
-honorée, la file lue, l'erreur extraite et traduite — tout le chemin sauf la
-dernière marche. **La génération réussie sur le vrai Space n'est pas vérifiée
-ici, faute de jeton** ; elle le sera au premier essai avec un jeton personnel.
+honorée, la file lue, l'erreur extraite et traduite.
+
+Et **avec un jeton, la dernière marche est franchie**. Premier morceau rendu par
+la route : **1,2 Mo de MP3 en 320 kbit/s, 48 kHz stéréo, en 14 secondes** ; 29,91
+secondes d'audio pour 30 demandées ; décodé dans le navigateur, RMS 0,177, pic
+0,97, et l'énergie varie de 0,139 à 0,206 d'une tranche de cinq secondes à
+l'autre — c'est de la musique, pas un silence ni une tenue.
+
+La boucle entière, depuis le panneau : **10,9 secondes** du clic au morceau posé
+dans la voie son, tempo lu dans la foulée. Puis la grille des temps, une fois
+zoomé — au large elle reste cachée, un trait tous les six points étant le seuil
+en deçà duquel elle masquerait la pellicule au lieu d'aider. Mesuré à 184,2 BPM :
+35,7 px par temps pour 109,7 px/s, soit 0,3258 s — exactement 60/184,2.
+
+Une chose à savoir : **ACE-Step ne respecte pas le tempo demandé**. Le brief
+portait 120 BPM, le morceau rendu en fait 184 ; un autre, briefé à 150, en fait
+191. L'étiquette de tempo est une indication, pas un contrat. Cela ne casse rien,
+parce que l'outil ne fait pas confiance au brief : il **lit** le tempo du fichier
+rendu et cale la grille et les coupes dessus. La musique fait foi, pas la
+consigne.
 
 ### L'autre fournisseur
 
