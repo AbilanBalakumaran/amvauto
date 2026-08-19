@@ -400,6 +400,33 @@ bonnes balises, en anglais, sans `[inst]`, en **3 secondes** ; et depuis le
 panneau, le brief part avec l'animé, les humeurs, le tempo, l'histoire et le
 plan, et le texte arrive dans le champ en 3,6 s.
 
+### « Il revient dans 0:00:00 »
+
+ZeroGPU annonce `Try again in 0:00:00` quand il ne reste plus rien. Ce n'est pas
+un délai, c'est une absence de délai calculable — et traduit tel quel, le message
+invitait à réessayer en boucle.
+
+Pire : la même phrase sort **aussi** quand le jeton n'est pas reconnu, les
+requêtes partant alors en anonyme, et l'anonyme n'a pas de quota. Deux causes
+opposées derrière un texte identique : l'une se répare en trente secondes, l'autre
+demande d'attendre un jour.
+
+La route les sépare maintenant. Devant un `0s left` sans délai, elle interroge
+`whoami-v2` avec le jeton avant d'accuser le quota :
+
+- **jeton non reconnu** → « les requêtes partent en anonyme ; un espace ou un
+  retour à la ligne collé avec la clé suffit à l'invalider » ;
+- **compte reconnu** → « quota du jour épuisé pour le compte X, il se recharge
+  vingt-quatre heures après la première génération, pas à minuit ».
+
+Dans les deux cas le message rappelle que **« En apporter une » n'a aucun
+quota** : le montage automatique marche exactement pareil sur un fichier importé.
+
+C'est la troisième fois dans ce projet qu'un message traduit cache la preuve —
+après « Groq API error » et « ElevenLabs indisponible (quota) », qui annonçait un
+quota là où il manquait une clé. Une traduction qui perd le motif original
+transforme un diagnostic de dix secondes en une heure de tâtonnement.
+
 ### Le dialogue avec Gradio
 
 Un Space Gradio répond en deux temps : on dépose la demande, on écoute la file.

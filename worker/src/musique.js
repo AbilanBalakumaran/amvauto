@@ -86,11 +86,29 @@ async function suivreLaFile(hote, session, entetes) {
 /* Le quota ZeroGPU se compte en secondes de GPU par jour et par compte. Sa
    phrase est en anglais et parle de jetons : on la traduit, parce que c'est le
    message que l'utilisateur verra le plus souvent. */
-function traduireEchec(motif) {
+async function traduireEchec(motif, env) {
   if (/quota/i.test(motif)) {
     const dans = motif.match(/Try again in ([0-9:]+)/i)?.[1];
-    return "Quota GPU épuisé pour aujourd'hui" + (dans ? ` : il revient dans ${dans}.` : ".") +
-      " C'est la contrepartie du gratuit — la génération repart d'elle-même une fois le quota rendu.";
+    const reste = motif.match(/([0-9]+)s left/i)?.[1];
+
+    /* « 0s left » avec un délai nul, c'est la signature d'une requête anonyme :
+       ZeroGPU ne reconnaît pas le jeton. Un quota réellement épuisé annonce
+       toujours l'heure de sa recharge. On vérifie donc le jeton avant d'accuser
+       le quota — se tromper de cause ferait attendre un jour pour rien. */
+    if (reste === "0" && (!dans || dans === "0:00:00")) {
+      const qui = await fetch("https://huggingface.co/api/whoami-v2", {
+        headers: { authorization: `Bearer ${env.JETON_HF}` },
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      if (!qui?.name) {
+        return "Hugging Face ne reconnaît pas le jeton : les requêtes partent en anonyme, et l'anonyme n'a pas de quota. Vérifie le secret « JETON_HF » — un espace ou un retour à la ligne collé avec la clé suffit à l'invalider.";
+      }
+      /* ZeroGPU annonce « 0:00:00 » quand il ne reste rien : ce n'est pas un
+         délai, c'est une absence de délai calculable. Le dire tel quel ferait
+         réessayer en boucle. */
+      return `Quota GPU du jour épuisé pour le compte « ${qui.name} ». Il se recharge vingt-quatre heures après la première génération, pas à minuit. En attendant, « En apporter une » accepte n'importe quel fichier audio : le montage automatique marche exactement pareil dessus.`;
+    }
+    return "Quota GPU épuisé" + (dans && dans !== "0:00:00" ? ` : il revient dans ${dans}.` : " pour aujourd'hui.") +
+      " En attendant, « En apporter une » accepte n'importe quel fichier audio : le montage automatique marche exactement pareil dessus.";
   }
   if (/GPU task aborted|ZeroGPU worker error/i.test(motif)) {
     return "Le GPU partagé a lâché en cours de route. Relance : c'est presque toujours passager.";
@@ -151,7 +169,7 @@ async function parEspaceHF(env, brief) {
 
   const fin = await suivreLaFile(hote, session, entetes);
   if (!fin.success) {
-    throw new Error(traduireEchec(fin.output?.error || fin.title || "génération refusée"));
+    throw new Error(await traduireEchec(fin.output?.error || fin.title || "génération refusée", env));
   }
 
   const audio = trouverAudio(fin.output?.data);
