@@ -298,6 +298,20 @@ faudrait lui repasser les paramètres de la génération précédente, et payer 
 appel de quota par rallonge. Ce n'est pas écrit — la longueur d'un AMV ne le
 demande pas encore.
 
+### Deux chemins vers le même montage
+
+Composer la musique, ou en apporter une. Le second marchait déjà — importer un
+fichier lisait son tempo et découpait ses sections exactement comme pour une
+musique générée — mais **le choix ne se voyait nulle part**, et un bouton
+d'import perdu dans une barre ne dit pas qu'il ouvre le même chemin.
+
+La première rangée du panneau le pose donc en toutes lettres : *La composer* ou
+*En apporter une*. Le second mode efface les axes de composition — les montrer
+laisserait croire qu'ils pèsent sur une musique déjà écrite — et « Monter sur la
+musique » vit maintenant dans le panneau, à côté, actif dès qu'un tempo est lu.
+
+### Un montage doit finir où finit la musique
+
 ### Un plan de travail, pas un formulaire
 
 Le brief était entièrement déduit du montage. C'est un bon point de départ — il
@@ -599,6 +613,25 @@ outro       0        3    6,67s       16,7    acting×3
 120,0 s montés pour 120 s de musique. Jamais deux fois le même plan de suite, et
 les points d'entrée avancent dans chaque source — un rush réemployé ne rejoue
 pas les mêmes images.
+
+### Deux défauts de synchronisation
+
+Le premier découpage remplissait chaque section **au compte** : autant de cases
+que la tenue le voulait. Un rush plus court que la case ne peut pas la couvrir —
+mesuré, cinq cases de six secondes servies par des rushs de quatre laissaient dix
+secondes de retard, et **tout ce qui suivait tombait à côté de la musique**. Les
+sections se remplissent désormais au temps : on avance sur ce qui a réellement
+été posé.
+
+Le second est venu du remède. Une tenue voulue ne tombe presque jamais juste sur
+la durée d'une section : trois plans de six secondes dans un passage de vingt en
+laissaient un de huit dixièmes à la fin — un éclair au milieu du silence. La
+tenue est maintenant répartie en parts égales, et le reliquat éventuel revient au
+dernier plan si sa source le permet.
+
+Mesuré après les deux : 120,0 s montés pour 120 s de musique avec des rushs
+longs, 1:30 pour 1:30 avec des rushs de quatre secondes seulement — dans ce cas
+au prix de coupes plus nombreuses, ce qui vaut mieux qu'un trou.
 
 ### Ce que ça ne fait pas
 

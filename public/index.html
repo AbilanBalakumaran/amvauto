@@ -1445,7 +1445,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 10:25";
+const VERSION_PAGE = "2026-08-19 10:55";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5884,26 +5884,54 @@ function construireMontage(projet) {
 
   sections.forEach((section) => {
     const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
-    /* On répartit la section en cases égales plutôt que d'en découper une de
-       travers à la fin : mieux vaut des plans un peu plus longs que prévu
-       qu'un dernier plan tronqué à un dixième de seconde. */
-    const cases = Math.max(1, Math.round((section.fin - section.debut) / tenue));
-    const pas = (section.fin - section.debut) / cases;
+    /* On remplit la section au temps, pas au compte. Un rush plus court que la
+       case ne peut pas la couvrir — mesuré : cinq cases de six secondes servies
+       par des rushs de quatre laissaient dix secondes de retard, et tout ce qui
+       suivait tombait à côté de la musique. En avançant sur ce qui a vraiment
+       été posé, la section se termine où elle doit. */
+    /* La tenue voulue ne tombe presque jamais juste sur la durée de la section.
+       On la répartit plutôt que d'ajouter une miette à la fin : trois plans de
+       six secondes et un de huit dixièmes, dans un passage calme, c'est un
+       éclair au milieu du silence. */
+    const span = section.fin - section.debut;
+    const cases = Math.max(1, Math.round(span / tenue));
+    const pas = span / cases;
 
-    for (let i = 0; i < cases; i += 1) {
+    let curseur = section.debut;
+    let garde = 0;
+    while (section.fin - curseur > PLAN_MINI && garde < 4000) {
+      garde += 1;
+      const reste = section.fin - curseur;
+      const vise = Math.min(pas, reste);
       const rang = montage.length;
+
       let choix = null;
       let meilleure = Infinity;
       for (const plan of sources) {
-        const note = noterCandidat(plan, section, vus, rang);
+        // Un rush trop court pour la case n'est pas disqualifié — il n'y en
+        // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
+        const court = dureeSource(plan) < vise ? 3 : 0;
+        const note = noterCandidat(plan, section, vus, rang) + court;
         if (note < meilleure) { meilleure = note; choix = plan; }
       }
-      if (!choix) return;
-      const bornes = fenetreDans(choix, pas);
-      if (!bornes) continue;
+      if (!choix) break;
+
+      const bornes = fenetreDans(choix, vise);
+      if (!bornes) break;
       montage.push({ ...choix, ...bornes, __pris: undefined });
       choix.__pris = (choix.__pris || 0) + 1;
       vus.set(choix.id, rang);
+      curseur += bornes.sortie - bornes.entree;
+    }
+
+    /* Ce qui reste après la dernière case revient au dernier plan, si sa source
+       le permet. Sinon la section se termine un peu court, et c'est le prix
+       d'un rush trop bref — mieux vaut ça qu'une image fixe. */
+    const dernier = montage[montage.length - 1];
+    const manque = section.fin - curseur;
+    if (dernier && manque > 0.01) {
+      const place = Math.min(manque, dureeSource(dernier) - dernier.sortie);
+      if (place > 0) dernier.sortie = Math.round((dernier.sortie + place) * 1000) / 1000;
     }
   });
 
@@ -6063,6 +6091,11 @@ const minutage = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padS
    Chaque entrée porte son étiquette en français et ce qui part réellement au
    générateur, en anglais — les modèles de musique comprennent très mal le
    français, et l'utilisateur n'a pas à connaître leur jargon. */
+const SOURCES_MUSIQUE = [
+  ["composer", "La composer"],
+  ["fichier", "En apporter une"],
+];
+
 const VOIX_MUSIQUE = [
   ["instrumental", "Instrumental", "instrumental, no vocals"],
   ["feminine", "Voix féminine", "female vocals, clear lead voice"],
@@ -6397,9 +6430,37 @@ function ouvrirBrief() {
           el.classList.toggle("on", pris.includes(table[k][0]));
         });
       };
+      enveloppe.__axe = intitule === "Musique" ? "source" : "axe";
       reglages.push(enveloppe);
       return enveloppe;
     };
+
+    /* Deux chemins mènent à un montage automatique, et jusqu'ici un seul se
+       voyait. Composer la musique, ou en apporter une : dans les deux cas
+       l'outil en lit le tempo et les sections, et sait monter dessus. Le choix
+       ouvre le panneau, parce que c'est la première décision. */
+    rangee("Musique", SOURCES_MUSIQUE, () => brief.source || "composer",
+      (v) => { brief.source = v; }, { unique: true });
+
+    const importer = document.createElement("button");
+    importer.type = "button";
+    importer.textContent = "Choisir un fichier…";
+    const champFichier = document.createElement("input");
+    champFichier.type = "file";
+    champFichier.accept = "audio/*";
+    champFichier.hidden = true;
+    champFichier.addEventListener("change", () => {
+      const fichier = champFichier.files?.[0];
+      if (fichier) { chargerSon(projet, fichier); fermerFeuille(); }
+    });
+    importer.addEventListener("click", () => champFichier.click());
+    const ligneFichier = document.createElement("div");
+    ligneFichier.className = "lecteur-reglage pile";
+    const fichierTexte = document.createElement("span");
+    fichierTexte.textContent = "Fichier";
+    ligneFichier.append(fichierTexte, importer, champFichier);
+    ligneFichier.__axe = "fichier";
+    reglages.push(ligneFichier);
 
     rangee("Voix", VOIX_MUSIQUE, () => brief.voix, (v) => { brief.voix = v; }, { unique: true });
     rangee("Style", STYLES_MUSIQUE, () => brief.styles, (v) => { brief.styles = v; });
@@ -6465,7 +6526,8 @@ function ouvrirBrief() {
     /* Le texte se réécrit à chaque geste : montrer un brief périmé sous des
        boutons qu'on vient de changer serait pire que ne rien montrer. */
     const peindre = () => {
-      const chante = chanteAvec(brief);
+      const composer = (brief.source || "composer") === "composer";
+      const chante = composer && chanteAvec(brief);
       tempoTexte.textContent = `Tempo · ${brief.bpm || bilan.tempo.bpm} BPM`;
       meta.textContent = [
         `${bilan.plans.length} plans · ${minutage(bilan.totalSec)} · coupe médiane ${bilan.cadence.toFixed(2)} s`,
@@ -6479,19 +6541,42 @@ function ouvrirBrief() {
           ? "Les paroles partent telles qu'elles sont écrites ci-dessous, mot pour mot. « Écrire les paroles » les fait rédiger d'après le montage, en anglais — c'est ce que les modèles chantent le mieux, et de loin."
           : "Instrumental : aucune voix. Choisis-en une pour ouvrir les paroles.",
         "",
-        "— CE QUI PART AU GÉNÉRATEUR —",
-        styleSuno(bilan, brief),
+        ...(composer ? [
+          "— CE QUI PART AU GÉNÉRATEUR —",
+          styleSuno(bilan, brief),
+          "",
+          "Une à deux minutes d'attente. La piste tombe ensuite dans la voie son.",
+        ] : [
+          "Apporte le morceau que tu veux : l'outil en lit le tempo et y découpe les sections exactement comme pour une musique qu'il aurait faite lui-même. Rien d'autre ne change.",
+        ]),
         "",
-        "Une à deux minutes d'attente. La piste tombe ensuite dans la voie son, son tempo s'y lit, la grille apparaît — et « Monter sur la musique » peut poser le montage.",
+        projet.rythme?.bpm
+          ? `Musique en place : ${Math.round(projet.rythme.bpm)} BPM, ${projet.rythme.sections?.length || 1} section${(projet.rythme.sections?.length || 1) > 1 ? "s" : ""}. « Monter sur la musique » pose le montage.`
+          : "Dès qu'une musique est là, son tempo se lit et « Monter sur la musique » s'active.",
       ].join("\n");
     };
 
     const accorder = () => {
-      const chante = chanteAvec(brief);
-      ligneHistoire.hidden = !chante;
-      lignerParoles.hidden = !chante;
+      const composer = (brief.source || "composer") === "composer";
+      const chante = composer && chanteAvec(brief);
+      /* En mode fichier, les axes de composition n'ont plus d'objet : les
+         montrer laisserait croire qu'ils pèsent sur une musique déjà écrite. */
+      reglages.forEach((r) => {
+        if (r.__axe === "source") return;
+        if (r.__axe === "fichier") { r.hidden = composer; return; }
+        r.hidden = !composer;
+      });
+      if (composer) {
+        ligneHistoire.hidden = !chante;
+        lignerParoles.hidden = !chante;
+      }
       reglages.forEach((r) => r.__peindre?.());
+      generer.hidden = !composer;
       second.textContent = chante ? "Copier les paroles" : "Copier la structure";
+      premier.hidden = !composer;
+      second.hidden = !composer;
+      remettre.hidden = !composer;
+      monter.disabled = !projet.rythme?.bpm;
       peindre();
       sauver();
     };
@@ -6533,7 +6618,13 @@ function ouvrirBrief() {
       accorder();
     });
 
-    actions.append(generer, premier, second, remettre);
+    const monter = document.createElement("button");
+    monter.type = "button";
+    monter.className = "fort";
+    monter.textContent = "Monter sur la musique";
+    monter.addEventListener("click", () => { fermerFeuille(); monterSurLaMusique(null); });
+
+    actions.append(generer, monter, premier, second, remettre);
     accorder();
   }
 
