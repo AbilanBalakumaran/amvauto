@@ -1458,7 +1458,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 13:20";
+const VERSION_PAGE = "2026-08-19 13:37";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6733,6 +6733,7 @@ async function genererMusique(bouton, brief, paroles) {
         style: styleSuno(bilan, brief),
         paroles: chanteAvec(brief) && paroles.trim() ? paroles.trim() : parolesAce(bilan),
         secondes: brief.duree,
+        etapes: brief.etapes || undefined,
         court: brief.duree <= 32,
         espace: espacePerso() || undefined,
       }),
@@ -7127,6 +7128,13 @@ function ouvrirBrief() {
     dureeTexte.textContent = "Durée";
     ligneDuree.append(dureeTexte, duree);
     reglages.push(ligneDuree);
+
+    /* Le quota se dépense en temps de GPU, et le temps de GPU se règle : moins
+       d'itérations, moins de calcul, plus d'essais dans la journée. Un brouillon
+       ne sert pas à écouter le morceau final, il sert à savoir si la direction
+       est la bonne — et c'est ce qu'on fait dix fois avant de garder une prise. */
+    rangee("Rendu", [["16", "Brouillon · deux fois plus d'essais"], ["27", "Complet"]],
+      () => String(brief.etapes || 27), (v) => { brief.etapes = Number(v); }, { unique: true });
 
     /* Le quota de ZeroGPU est le seul vrai plafond de la génération. Qui fait
        tourner ACE-Step ailleurs — Kaggle, Colab, sa propre machine — n'en a

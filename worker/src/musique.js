@@ -170,7 +170,12 @@ async function surUnEspace(env, brief, poste) {
   const session = crypto.randomUUID().replace(/-/g, "");
 
   const secondes = Math.min(DUREE_MAX, Math.max(DUREE_MIN, Math.round(brief.secondes) || 60));
-  const etapes = Math.min(200, Math.max(1, Number(env.MUSIQUE_ETAPES) || ETAPES_DEFAUT));
+  /* Le nombre d'itérations décide du temps de GPU, donc du quota consommé —
+     ZeroGPU facture la durée réelle, pas la réservation. Un brouillon à seize
+     pas coûte environ quarante pour cent de moins qu'un rendu à vingt-sept, ce
+     qui fait presque deux fois plus d'essais dans la même journée. */
+  const etapes = Math.min(60, Math.max(8,
+    Number(brief.etapes) || Number(env.MUSIQUE_ETAPES) || ETAPES_DEFAUT));
   const style = String(brief.style || brief.consigne).slice(0, 1000);
   const paroles = String(brief.paroles || "[inst]").slice(0, 2000);
 
