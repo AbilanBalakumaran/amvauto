@@ -675,6 +675,51 @@ précédente, c'était lui demander de faire à la main ce qu'on venait de lui
 proposer d'automatiser. Le panneau de composition marche donc désormais sans un
 seul plan : faute d'image à interroger, tout devient un choix, et il le dit.
 
+### Le montage arrive d'abord, l'IA affine ensuite
+
+Lire quarante plans prend près de trois minutes — quatre secondes chacun pour
+tenir le quota. Faire attendre devant un écran vide pendant ce temps-là est
+intenable, et c'était pourtant l'enchaînement : recherche, mesure, lecture,
+accord, puis enfin le montage.
+
+L'ordre est inversé. **Le premier montage est posé dès que huit durées sont
+connues** — mesuré à **deux dixièmes de seconde**, soixante-quinze coupes — et
+l'on peut déjà écouter. La lecture des plans et l'accord aux paroles tournent
+ensuite, et un second montage remplace le premier quand ils ont fini.
+
+La lecture enchaînée se limite en outre aux **seize plans les mieux notés** : un
+montage n'a pas besoin de quarante lectures pour être juste, les autres gardent
+leurs étiquettes.
+
+### Arrêter
+
+Une automatisation de trois minutes qu'on ne peut pas interrompre, c'est devoir
+fermer l'application. « Automatiser l'AMV » devient **« Arrêter »**, en rouge,
+pendant tout le processus. Le drapeau est lu entre chaque étape et à chaque
+plan ; le montage déjà posé reste en place.
+
+Vérifié : lecture arrêtée net au clic, aucune requête supplémentaire dans les
+deux secondes et demie qui suivent.
+
+### Sans musique, rien ne démarre
+
+C'est le tempo qui donne la grille des coupes, et les sections qui décident
+quels plans vont où : un montage automatique sans musique n'a aucun sens. Le
+bouton qui ouvre l'étape du montage reste donc **grisé** tant qu'aucun tempo
+n'est lu, et le lancement le vérifie une seconde fois.
+
+### Le second montage ne se construit pas sur le premier
+
+Défaut trouvé par les tests en inversant l'ordre. Le montage repartait de
+`projet.plans` — c'est-à-dire, à la seconde passe, des blocs déjà posés. Chaque
+rush s'y comptait autant de fois qu'il y avait été employé, si bien qu'en
+chronologie on obtenait dix blocs du même épisode à la suite au lieu de
+`1 → 2 → 3 → 5 → 7 → 9`.
+
+La liste des sources est désormais fixée avant le premier montage, dédoublonnée,
+et c'est elle qu'on remonte — et qu'on donne à lire, plutôt que de faire soixante
+appels pour six réponses utiles.
+
 ### « Dans l'ordre », et ce qu'on y gagne
 
 Le montage libre laisse la musique décider : à chaque case, le rush qui lui va le
