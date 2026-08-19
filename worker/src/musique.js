@@ -15,7 +15,10 @@
      est sous licence Apache 2.0, donc la musique produite est utilisable
      partout, publication comprise. C'est le seul chemin à la fois gratuit et
      automatique que j'aie trouvé qui tienne.
-   — Lyria, par l'API Gemini. Payant, à la seconde. Aucun palier gratuit.
+   — Lyria, par l'API Gemini. Payant, à la seconde, aucun palier gratuit — et
+     pour cette raison il faut le demander explicitement par « MUSIQUE_LYRIA ».
+     La même clé Gemini sert à lire les rushs, et facturer un morceau parce
+     qu'un jeton gratuit a échoué serait une très mauvaise surprise.
    — Démonstration : un fichier connu, pour éprouver la chaîne sans compte. */
 
 import { codeValide } from "./coffre.js";
@@ -235,7 +238,7 @@ export async function genererMusique(request, url, env) {
 
   const fournisseur = env.MUSIQUE_DEMO ? parDemonstration
     : env.JETON_HF ? parEspaceHF
-    : env.GEMINI_API_KEY ? parLyria
+    : env.MUSIQUE_LYRIA && env.GEMINI_API_KEY ? parLyria
     : null;
   if (!fournisseur) {
     return new Response(JSON.stringify({

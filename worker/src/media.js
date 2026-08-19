@@ -10,7 +10,7 @@
 // plus de règle de lecture mobile, plus de toile teintée — on peut même en
 // relire les images.
 
-const HOTES = new Set([
+export const HOTES = new Set([
   "www.sakugabooru.com",
   "sakugabooru.com",
   "v.animethemes.moe",

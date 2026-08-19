@@ -1445,7 +1445,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 10:55";
+const VERSION_PAGE = "2026-08-19 11:36";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1549,6 +1549,7 @@ const TRAITS = {
   plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"/>',
   son: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+  oeil: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.6"/>',
   pellicule: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14"/>',
   couper: '<circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M7.8 16.2L18 5M16.2 16.2L6 5"/>',
   deplacer: '<path d="M7 9L4 12l3 3M17 9l3 3-3 3"/><path d="M4 12h16"/><path d="M12 5v14" stroke-dasharray="2 2.5"/>',
@@ -4294,7 +4295,15 @@ function boutonSon(projet) {
   monter.disabled = !projet.rythme?.bpm;
   monter.addEventListener("click", () => monterSurLaMusique(monter));
 
-  barre.append(bouton, champ, brief, monter);
+  const lire = document.createElement("button");
+  lire.type = "button";
+  lire.className = "son-retirer";
+  lire.innerHTML = icone("oeil");
+  lire.title = "Faire lire les plans";
+  lire.setAttribute("aria-label", "Faire lire les plans");
+  lire.addEventListener("click", () => lirePlans(lire));
+
+  barre.append(bouton, champ, brief, lire, monter);
 
   if (projet.audio) {
     const retirer = document.createElement("button");
@@ -5856,12 +5865,25 @@ function noterCandidat(plan, section, vus, rang) {
 /* La case suivante à remplir dans une source : on avance dans le rush à chaque
    réemploi, pour ne pas remontrer les mêmes images. Quand on arrive au bout, on
    revient au début. */
-function fenetreDans(plan, duree) {
+function fenetreDans(plan, duree, viserLePic = false) {
   const source = dureeSource(plan);
   if (!(source > 0)) return null;
   const tenue = Math.min(duree, Math.max(PLAN_MINI, source));
   if (source < PLAN_MINI) return null;
   const pris = plan.__pris || 0;
+
+  /* Le pic est l'instant que la lecture a repéré comme le plus fort — l'impact,
+     le regard, la bascule. Un plan de deux secondes taillé au hasard dans dix le
+     manque presque toujours ; taillé autour de lui, c'est exactement ce qu'un
+     monteur serait allé chercher. On le réserve aux passages qui frappent, et à
+     un seul emploi : le montrer deux fois lui ôterait ce qui en fait un pic. */
+  const pic = plan.lecture?.pic;
+  if (viserLePic && typeof pic === "number" && pic > 0 && pic < source) {
+    plan.__picVu = true;
+    const entree = Math.max(0, Math.min(pic - tenue / 2, source - tenue));
+    return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
+  }
+
   let entree = pris * tenue;
   if (entree + tenue > source) entree = (entree % Math.max(tenue, source - tenue)) % Math.max(0.01, source - tenue);
   entree = Math.max(0, Math.min(entree, source - tenue));
@@ -5878,7 +5900,7 @@ function construireMontage(projet) {
     ? rythme.sections
     : [{ debut: 0, fin: rythme.duree || 0, energie: 2, nom: "montee" }];
 
-  sources.forEach((plan) => { plan.__pris = 0; });
+  sources.forEach((plan) => { plan.__pris = 0; delete plan.__picVu; });
   const vus = new Map();
   const montage = [];
 
@@ -5916,7 +5938,7 @@ function construireMontage(projet) {
       }
       if (!choix) break;
 
-      const bornes = fenetreDans(choix, vise);
+      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu);
       if (!bornes) break;
       montage.push({ ...choix, ...bornes, __pris: undefined });
       choix.__pris = (choix.__pris || 0) + 1;
@@ -5935,9 +5957,84 @@ function construireMontage(projet) {
     }
   });
 
-  sources.forEach((plan) => { delete plan.__pris; });
-  montage.forEach((plan) => { delete plan.__pris; });
+  sources.forEach((plan) => { delete plan.__pris; delete plan.__picVu; });
+  montage.forEach((plan) => { delete plan.__pris; delete plan.__picVu; });
   return montage.length ? montage : null;
+}
+
+/* Faire lire les plans.
+
+   Le Worker va chercher chaque vidéo lui-même et la donne à lire : le téléphone
+   n'envoie pas les mégaoctets, ce qui sur un lien mobile serait de loin la
+   partie la plus lente. Le résultat est gardé côté serveur par identifiant de
+   rush — un plan déjà lu, par soi ou par n'importe qui, revient en un instant et
+   ne coûte rien.
+
+   La lecture avance plan par plan, avec un temps mort entre deux appels réels.
+   Le palier gratuit tient une quinzaine de requêtes par minute, et les dépasser
+   ne rendrait pas la lecture plus rapide, seulement refusée. */
+const PAUSE_LECTURE = 4200;
+
+async function lirePlans(bouton) {
+  const projet = projetActif();
+  if (!projet) return;
+  const code = coffre.code;
+  if (!code) {
+    alert("Active d'abord la sauvegarde en ligne dans Réglages : son code sert de laissez-passer.");
+    return;
+  }
+  const arendre = projet.plans.filter((plan) => !plan.lecture && plan.video && !plan.local);
+  const aLire = [...new Map(arendre.map((plan) => [plan.id, plan])).values()];
+  if (!aLire.length) {
+    alert("Tous les plans sont déjà lus.");
+    return;
+  }
+
+  const avant = bouton.textContent;
+  bouton.disabled = true;
+  let faits = 0;
+  let echecs = 0;
+  try {
+    for (const plan of aLire) {
+      bouton.textContent = `Lecture ${faits + 1}/${aLire.length}…`;
+      let fraiche = false;
+      try {
+        const reponse = await fetch("/api/scene", {
+          method: "POST",
+          headers: { "x-coffre": code, "content-type": "application/json" },
+          body: JSON.stringify({ id: String(plan.id), video: plan.video }),
+        });
+        const contenu = await reponse.json();
+        if (!reponse.ok) throw new Error(contenu?.erreur || `le serveur a répondu ${reponse.status}`);
+        fraiche = reponse.headers.get("x-lecture") !== "cache";
+        // La fiche va sur tous les blocs du même rush : un plan coupé en trois
+        // reste un seul plan, et se relire trois fois serait du gâchis.
+        projet.plans.forEach((autre) => {
+          if (String(autre.id) === String(plan.id)) autre.lecture = contenu;
+        });
+        faits += 1;
+      } catch (erreur) {
+        echecs += 1;
+        if (echecs === 1) console.warn("lecture refusée :", erreur.message);
+        if (/[Pp]lafond|quota/.test(erreur.message)) {
+          alert(erreur.message);
+          break;
+        }
+      }
+      sauver();
+      if (fraiche && plan !== aLire[aLire.length - 1]) {
+        await new Promise((suite) => setTimeout(suite, PAUSE_LECTURE));
+      }
+    }
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = avant;
+    enregistrer(projet);
+    rendreProjet();
+  }
+  alert(`${faits} plan${faits > 1 ? "s" : ""} lu${faits > 1 ? "s" : ""}` +
+    (echecs ? `, ${echecs} refusé${echecs > 1 ? "s" : ""}` : "") +
+    ".\n\nLe montage automatique s'en sert désormais : l'énergie vient de l'image, et les coupes des passages forts tombent sur le moment repéré.");
 }
 
 /* Poser le montage proposé. On passe par « enregistrer », donc le bouton
@@ -6001,6 +6098,10 @@ const COULEURS = {
 };
 
 function energieDuPlan(plan) {
+  /* Une lecture du plan vaut mieux que ses étiquettes : elle vient de ce qui est
+     à l'écran, pas de ce que quelqu'un a tapé sur un site de partage. */
+  const lu = plan.lecture?.energie;
+  if (typeof lu === "number") return Math.max(0, Math.min(3, lu));
   const ambiances = Array.isArray(plan.moods) ? plan.moods : [];
   if (!ambiances.length) return plan.technique ? 2 : 1;
   const pics = ambiances.map((a) => ENERGIE[a] ?? 1);

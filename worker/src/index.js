@@ -7,6 +7,7 @@ import { coffre } from "./coffre.js";
 import { genererMusique } from "./musique.js";
 import { relayerMedia } from "./media.js";
 import { ecrireParoles } from "./paroles.js";
+import { lireScene } from "./scene.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { rushes, searchSeries } from "./sakuga.js";
 import { MOODS, moodsOf, qualityFlags, rank } from "./scoring.js";
@@ -272,6 +273,7 @@ export default {
         if (url.pathname === "/api/coffre") return await coffre(request, url, env);
         if (url.pathname === "/api/musique") return await genererMusique(request, url, env);
         if (url.pathname === "/api/paroles") return await ecrireParoles(request, url, env);
+        if (url.pathname === "/api/scene") return await lireScene(request, url, env);
         if (url.pathname === "/api/version") {
           // Jamais en cache : la page compare cette réponse à son propre
           // horodatage. Une copie gardée au bord ferait croire à une mise à

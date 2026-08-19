@@ -633,13 +633,81 @@ Mesuré après les deux : 120,0 s montés pour 120 s de musique avec des rushs
 longs, 1:30 pour 1:30 avec des rushs de quatre secondes seulement — dans ce cas
 au prix de coupes plus nombreuses, ce qui vaut mieux qu'un trou.
 
+### Lire les plans
+
+Il était écrit ici que l'outil ne regarde pas l'image. **Ce n'est plus vrai.**
+
+Une route `/api/scene` donne chaque rush à lire à Gemini, qui sait prendre une
+vidéo en entrée. Elle rend ce qu'aucune étiquette ne contenait :
+
+```
+{
+  "resume": "Chainsaw Man et Reze s'affrontent sur un toit nocturne
+             avant d'être enlacés par des chaînes et de basculer dans le vide.",
+  "motscles": ["chainsaw","chains","rooftop","night","duel","falling","binding"],
+  "energie": 2,
+  "pic": 51,
+  "emotion": "intensity"
+}
+```
+
+Sakugabooru, lui, en disait : `effets, combat, vitesse, hype, acting`.
+
+**Le `pic` est ce qui change tout.** C'est la seconde que la lecture repère
+comme la plus forte — l'impact, le regard, la bascule. Un plan de deux secondes
+taillé au hasard dans dix la manque presque toujours ; taillé autour d'elle,
+c'est exactement ce qu'un monteur serait allé chercher. Le montage la réserve
+aux passages qui frappent, et à un seul emploi : la montrer deux fois lui ôterait
+ce qui en fait un pic.
+
+Mesuré, sur des pics plantés à 15,5 s et 16,5 s dans des sources de vingt
+secondes :
+
+| | Premier emploi du plan de combat |
+| --- | --- |
+| sans lecture | 0 s → 0,8 s |
+| **avec lecture** | **15,1 s → 15,9 s** — centre 15,50 s |
+
+L'énergie aussi vient désormais de l'image plutôt que des mots-clés : elle est
+lue sur ce qui bouge, pas sur ce que quelqu'un a tapé sur un site de partage.
+
+### Ce que la lecture coûte, et ce qu'elle ne coûte pas
+
+**Un plan ne se lit qu'une fois.** Le résultat est rangé dans le KV par
+identifiant de rush, sans expiration — ce qu'un plan montre ne changera pas. La
+seconde demande revient en **0,55 s** sans toucher au quota, quel que soit le
+montage qui l'emploie, et pour tout le monde.
+
+Le Worker va chercher la vidéo lui-même : le téléphone n'envoie pas les
+mégaoctets, ce qui sur un lien mobile serait de loin la partie la plus lente.
+
+Deux chemins selon le poids, parce que beaucoup de rushs sakuga dépassent
+largement la limite de l'envoi en ligne :
+
+| Poids | Chemin | Mesuré |
+| --- | --- | --- |
+| ≤ 18 Mo | dans la requête | 6,5 Mo en **10,3 s** |
+| > 18 Mo | API Files, avec attente de traitement | 34,8 Mo en **18,7 s** |
+
+Les identifiants de modèle sont essayés dans l'ordre, et un modèle saturé se
+contourne en changeant de modèle — le second essai l'a prouvé en direct, Gemini
+ayant répondu « high demand » sur le premier. Un quota dépassé ou une clé
+refusée, en revanche, ne se contourne pas : insister ne ferait que brûler ce qui
+reste.
+
+**Une clé Gemini ne déclenche plus Lyria.** La même clé sert maintenant à lire
+les rushs, et facturer une génération musicale parce qu'un jeton gratuit a
+échoué serait une très mauvaise surprise : Lyria demande désormais un
+`MUSIQUE_LYRIA` explicite.
+
 ### Ce que ça ne fait pas
 
-**L'outil ne regarde pas l'image.** Il ne sait pas qu'un plan montre une main qui
-tremble ; il sait qu'il est étiqueté « acting ». L'accord se fait sur les
-étiquettes et sur l'énergie, pas sur le sens. C'est déjà beaucoup — un montage
-qui respire au bon endroit et coupe sur le temps —, mais ce n'est pas un regard,
-et il ne faut pas le vendre comme tel.
+**Les paroles ne pilotent pas encore le choix des plans.** La lecture donne
+pourtant de quoi le faire — un résumé, des mots-clés, une émotion — et c'est la
+prochaine marche : rapprocher un vers d'une scène décrite.
+
+**Sans lecture, l'outil reste aveugle.** Tant qu'on n'a pas appuyé sur l'œil, il
+s'accorde sur les étiquettes de Sakugabooru et coupe au début des plans.
 
 Il choisit parmi les rushs **déjà posés** dans le montage : il n'en cherche pas
 de nouveaux. La sélection reste une décision humaine.
