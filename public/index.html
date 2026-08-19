@@ -3130,6 +3130,19 @@ function dessinerMoniteur() {
     derniereImage.plan = plan?.id || null;
   } else if (derniereImage.plan && derniereImage.plan === plan?.id && derniereImage.toile.width) {
     source = derniereImage.toile;
+  } else if (derniereImage.toile.width
+             && performance.now() - derniereImage.quand < TENUE_TRANSITION) {
+    /* Le plan a changé et le nouveau n'a pas encore d'image : on tient la
+       dernière décodée, quel que soit son plan d'origine.
+
+       Le principe « une image fausse est pire que pas d'image » vaut pour le
+       contenu, pas pour une transition. Un montage à une coupe par seconde
+       demande un fichier différent chaque seconde, et sur un lien mobile
+       l'arrivée n'est pas toujours à l'heure : trouer l'aperçu de noir à chaque
+       retard le rend illisible, alors qu'une image tenue une demi-seconde se
+       lit comme une coupe un peu lente. Au-delà, le noir redevient honnête —
+       il dit qu'il manque quelque chose. */
+    source = derniereImage.toile;
   } else if (plan) {
     /* Aucune image du lecteur : on puise dans la réserve du plan, à la position
        de la tête. La vignette de la source ne vient qu'en dernier, et seulement
@@ -3206,6 +3219,9 @@ function dessinerMoniteur() {
   }
 }
 
+// Combien de temps une image peut survivre à son plan, le temps que le suivant
+// arrive. Au-delà, ce n'est plus une transition, c'est un mensonge.
+const TENUE_TRANSITION = 700;
 const derniereImage = { plan: null, quand: 0, toile: document.createElement("canvas") };
 
 /* --- pellicule ---------------------------------------------------------
@@ -4652,6 +4668,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   video.addEventListener("canplay", demarrer, { once: true });
 
   preparerSuivant(index + 1);
+  prioriserImports(index);
   majTransport();
 }
 
@@ -5015,6 +5032,8 @@ const arretsImport = new Map();
    rien en débit, cela ne fait que retarder le premier fichier — celui sur lequel
    on travaille. Le réglage reste ici pour être révisé si le transport change. */
 const IMPORTS_PARALLELES = 1;
+// Combien de plans à venir la file remonte devant les autres.
+const PORTEE_IMPORT = 8;
 let importsEnCours = 0;
 let basePromise = null;
 
@@ -5240,6 +5259,33 @@ function apresImport(plan) {
   if (!importsEnCours && !fileImport.length) {
     for (const autre of projetActif()?.plans || []) prechaufferPellicule(autre);
   }
+}
+
+/* La file suit la tête de lecture, elle ne suit pas l'ordre du montage.
+
+   Un AMV sans répétition, c'est deux cents fichiers différents à rapatrier ; en
+   4G, la lecture rattrape toujours le téléchargement. Quand elle avance, on
+   remonte en tête de file les plans qui arrivent — le reste attendra. Sans ça,
+   la file reste bloquée sur un plan lointain pendant que l'écran, lui, a besoin
+   du suivant tout de suite : c'est là que le noir apparaît. */
+function prioriserImports(index) {
+  const plans = projetActif()?.plans;
+  if (!plans || fileImport.length < 2) return;
+  const urgents = new Map();
+  for (let k = index; k < Math.min(plans.length, index + PORTEE_IMPORT); k += 1) {
+    const adresse = mediaDe(plans[k]);
+    if (adresse && !urgents.has(adresse)) urgents.set(adresse, k);
+  }
+  if (!urgents.size) return;
+  const rang = (plan) => {
+    const place = urgents.get(mediaDe(plan));
+    return place === undefined ? Infinity : place;
+  };
+  // Tri stable : ce qui n'est pas urgent garde son ordre d'origine.
+  fileImport
+    .map((plan, position) => ({ plan, position, rang: rang(plan) }))
+    .sort((a, b) => a.rang - b.rang || a.position - b.position)
+    .forEach((entree, position) => { fileImport[position] = entree.plan; });
 }
 
 // Tous les plans du projet sont importés, le plan courant d'abord.
@@ -6061,6 +6107,11 @@ function noterCandidat(plan, section, vus, rang, accord, precedent) {
      première si usés que la seconde se remplissait de plans calmes. Éviter la
      répétition ne doit jamais valoir plus que tomber juste — c'est le rôle de
      la fraîcheur, qui ne regarde que les derniers plans posés. */
+  /* Un plan déjà employé passe après tous ceux qui ne l'ont jamais été. La
+     pénalité est plus grande que la somme de tout le reste : tant qu'il reste
+     une scène neuve, c'est elle qui sort. Une même scène deux fois dans un AMV
+     se remarque plus que n'importe quel défaut d'accord. */
+  const deja = (plan.__pris || 0) > 0 ? 100 : 0;
   const usure = Math.min(4, plan.__pris || 0) * 0.5;
 
   /* L'accord aux paroles, quand il existe. Il pèse assez pour l'emporter sur un
@@ -6071,7 +6122,7 @@ function noterCandidat(plan, section, vus, rang, accord, precedent) {
   const place = accord ? accord.indexOf(String(plan.id)) : -1;
   const parole = place < 0 ? 0 : -8 + place * 1.5;
 
-  return ecart * 6 + fraicheur * 2 + usure + parole
+  return deja + ecart * 6 + fraicheur * 2 + usure + parole
     + accordDuMouvement(precedent, plan)
     + grainDeSable(plan.id, rang)
     - (plan.score || 0) / 100;
@@ -6264,13 +6315,17 @@ function exigerCoffre(quoi) {
    il en faut assez pour que le montage ne tourne pas en rond : compter un rush
    par tranche de cinq secondes donne une variété honnête sans faire exploser ni
    l'attente ni la mémoire. */
-const RUSHS_MAX = 60;
+const RUSHS_MAX = 240;
 
-async function chercherRushs(animes, secondes) {
-  const parAnime = Math.max(8, Math.ceil(secondes / 5 / Math.max(1, animes.length)));
+async function chercherRushs(animes, secondes, cases = 0) {
+  /* Autant de sources que de cases, quand on les connaît : c'est la seule façon
+     qu'une scène n'apparaisse jamais deux fois. À défaut, une par tranche de
+     cinq secondes, ce qui suffisait tant qu'on acceptait les redites. */
+  const voulues = Math.max(12, cases || Math.ceil(secondes / 5));
+  const parAnime = Math.ceil(voulues / Math.max(1, animes.length));
   const trouves = [];
   for (const anime of animes) {
-    const cible = `/api/rushes?anime=${encodeURIComponent(anime)}&top=${Math.min(60, parAnime)}&pool=600`;
+    const cible = `/api/rushes?anime=${encodeURIComponent(anime)}&top=${Math.min(200, parAnime)}&pool=2000`;
     try {
       const reponse = await fetch(cible);
       const contenu = await reponse.json();
@@ -6417,6 +6472,22 @@ async function accorderAuxParoles(projet, silencieux = false) {
     if (!silencieux) alert(`Accord impossible : ${erreur.message}`);
     return false;
   }
+}
+
+/* Combien de blocs le montage va poser. On le sait avant de monter : la grille
+   et les sections suffisent, et c'est ce nombre-là qu'il faut de sources pour
+   qu'aucune scène ne revienne. */
+function casesAttendues(projet) {
+  const rythme = projet.rythme;
+  if (!rythme?.bpm) return 0;
+  const periode = 60 / rythme.bpm;
+  const sections = rythme.sections?.length
+    ? rythme.sections
+    : [{ debut: 0, fin: rythme.duree || 0, energie: 2 }];
+  return sections.reduce((total, section) => {
+    const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
+    return total + Math.max(1, Math.round((section.fin - section.debut) / tenue));
+  }, 0);
 }
 
 /* Poser le montage proposé. On passe par « enregistrer », donc le bouton
@@ -7123,7 +7194,7 @@ async function automatiserAmv(bouton) {
 
     if (animes.length) {
       dire("Recherche des plans…");
-      const trouves = await chercherRushs(animes, projet.rythme.duree || 120);
+      const trouves = await chercherRushs(animes, projet.rythme.duree || 120, casesAttendues(projet));
       const connus = new Set(projet.plans.map((p) => String(p.id)));
       trouves.filter((r) => !connus.has(String(r.id))).forEach((rush) => {
         const plan = { ...rush, duree: null, entree: 0, sortie: null };

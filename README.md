@@ -1016,6 +1016,70 @@ le disait pas. Et les identifiants rendus par le modèle ne sont pas crus sur
 parole — ce qui ne correspond à aucun plan connu est écarté à l'arrivée plutôt
 que de faire échouer le montage plus loin.
 
+### Une scène ne doit jamais revenir
+
+Le montage acceptait de reprendre une source déjà employée dès que la note le
+justifiait : sur un morceau de cinq minutes, la même scène pouvait revenir sept
+ou huit fois. Le coût est fait pour être écrasant — cent points de pénalité, là
+où l'écart d'énergie en vaut six — de sorte qu'aucune autre préférence ne puisse
+le racheter. Ce n'est pas une interdiction, c'est un dernier recours : quand les
+sources manquent, il vaut mieux répéter que laisser un trou.
+
+Il fallait aussi de quoi tenir. Une piste de quatre minutes découpée en coupes
+courtes réclame deux cents scènes distinctes, et la recherche s'arrêtait à
+soixante. `casesAttendues` compte les coupes que le montage va poser, avant de
+chercher, et la recherche vise ce nombre — plafond porté à 240.
+
+```
+— de quoi tenir : 90 sources, 75 coupes
+  sources employées : 75 ; emplois par source : min 1, max 1
+  ✔ aucune scène deux fois
+
+— pas assez : 20 sources, 75 coupes
+  emplois par source : min 3, max 4
+  ✔ dégradation propre
+```
+
+Quand il y a de quoi, personne ne repasse. Quand il n'y a pas de quoi, la charge
+se répartit à une unité près au lieu de s'entasser sur les mêmes.
+
+### Le noir entre deux plans
+
+L'unicité a un prix, et il se voit tout de suite : deux cents fichiers
+différents à rapatrier au lieu de vingt relus. En 4G, la lecture rattrape le
+téléchargement, et l'écran devient noir le temps que le plan suivant arrive.
+
+Deux corrections, mesurées séparément.
+
+**Tenir la dernière image.** Le moniteur peignait du noir dès que le plan
+courant n'avait pas d'image à donner. Il tient désormais la dernière image
+décodée pendant 700 ms — quel que soit le plan dont elle vient. Au-delà, le noir
+redevient honnête : il dit qu'il manque quelque chose.
+
+Éprouvé sur un montage de deux plans dont le second ne répond pas — ni en direct
+ni par le relais du Worker, sans quoi le fichier finit par arriver et le trou ne
+se produit jamais :
+
+| | luminance du moniteur |
+| --- | --- |
+| avant, à la bascule | **0,1** — noir |
+| après, à la bascule | **201,9** — l'image tenue |
+| après, 1 s plus tard | 0,1 — la tenue est bornée |
+
+**Télécharger dans l'ordre où l'on regarde.** La file suivait l'ordre du
+montage, pas la tête de lecture. Poser la tête au milieu de la piste laissait la
+file finir tranquillement les plans du début, et les plans dont l'écran avait
+besoin tout de suite passaient derniers. `prioriserImports` remonte en tête les
+huit plans à venir à chaque changement de plan ; le tri est stable, donc le
+reste garde son ordre.
+
+Dix plans, un fichier par seconde, saut au huitième :
+
+```
+sans          après le saut : 3 4 5 6      ← la file continue son chemin
+avec          après le saut : 7 8 9 3      ← elle se retourne vers l'écran
+```
+
 ### Ce que ça ne fait pas
 
 **Sans lecture, l'outil reste aveugle.** Tant qu'on n'a pas appuyé sur l'œil, il
