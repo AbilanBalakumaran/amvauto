@@ -6432,6 +6432,105 @@ async function analyserRythme(donnees) {
 // Combien de temps tient un plan, selon l'intensité de la section.
 const TEMPS_PAR_PLAN = { 3: 2, 2: 4, 1: 8, 0: 16 };
 
+/* Aucune coupe ne dépasse quatre secondes.
+
+   Un passage calme appelait des plans de huit ou seize secondes. À l'écoute
+   c'est juste — la musique respire — mais à l'œil c'est un arrêt sur image : on
+   regarde le même plan pendant un quart de la section. Une page de manga ne
+   tient pas une case seize secondes ; elle en pose plusieurs, et l'œil circule.
+   La section garde donc sa durée, mais elle est servie par plus de cases. */
+const TENUE_MAX = 4;
+
+/* Et aucun épisode ne dépasse quinze secondes sur l'ensemble de l'AMV.
+
+   L'unicité des scènes ne suffisait pas : vingt scènes distinctes tirées du même
+   épisode racontent quand même le même épisode. Le budget porte donc sur
+   l'épisode, pas sur la scène — passé quinze secondes, ses plans passent derrière
+   tous les autres. C'est une préférence très forte, pas une interdiction : quand
+   un animé n'offre pas assez d'épisodes, mieux vaut dépasser que laisser un trou.
+
+   Quinze secondes sur un AMV de deux minutes et demie, cela fait au moins dix
+   épisodes différents — de quoi parcourir une série au lieu d'en illustrer un
+   passage. */
+const BUDGET_EPISODE = 15;
+
+const cleEpisode = (plan) =>
+  `${(plan.anime || plan.ref || "?").toLowerCase()}#${plan.episode ?? "?"}`;
+
+/* La grammaire du montage : ce qui appelle quoi.
+
+   Une ambiance ne dit pas ce qui se passe — « combat » recouvre l'élan, l'impact
+   et la fumée qui retombe. Ce sont pourtant trois moments différents, et c'est
+   leur ordre qui fait qu'une suite de plans se lit au lieu de défiler.
+
+   Quatre familles, tirées des étiquettes de Sakugabooru :
+
+     élan    on court, on vole, on charge — quelque chose va arriver
+     choc    l'impact, le coup, l'explosion
+     suite   les débris, la fumée, les étincelles — ce qui retombe
+     calme   un visage, un mot, un pas
+
+   Un enchaînement se lit quand il avance : élan → choc → suite → calme → élan.
+   Reculer — un impact suivi d'une course d'approche — se lit à l'envers. */
+const FAMILLES = {
+  elan: ["running", "chase", "smears", "flying", "sliding", "motorcycles", "vehicle", "falling", "sports"],
+  choc: ["impact_frames", "explosions", "fighting", "beams", "shooting", "weapons", "swords", "martial_arts"],
+  suite: ["debris", "smoke", "sparks", "fire", "liquid", "wind", "ice", "lightning", "effects"],
+  calme: ["character_acting", "dialogue", "hair", "fabric", "walk_cycle", "crying", "eating", "smoking"],
+};
+const SUIVANTE = { elan: "choc", choc: "suite", suite: "calme", calme: "elan" };
+// Faute d'étiquettes — un projet monté avant que le serveur ne les transmette —
+// l'ambiance donne une famille approchante. Moins fin, mais jamais aveugle.
+const FAMILLE_AMBIANCE = { vitesse: "elan", combat: "choc", effets: "suite", acting: "calme", hype: "elan" };
+
+function familleDe(plan) {
+  if (plan.__famille !== undefined) return plan.__famille;
+  let trouvee = null;
+  let mieux = 0;
+  const tags = new Set(plan.tags || []);
+  if (tags.size) {
+    for (const [nom, mots] of Object.entries(FAMILLES)) {
+      const poids = mots.reduce((somme, mot) => somme + (tags.has(mot) ? 1 : 0), 0);
+      if (poids > mieux) { mieux = poids; trouvee = nom; }
+    }
+  }
+  if (!trouvee) trouvee = FAMILLE_AMBIANCE[plan.moods?.[0]] || null;
+  plan.__famille = trouvee;
+  return trouvee;
+}
+
+/* Ce que vaut cet enchaînement-ci. Négatif = souhaitable.
+
+   Le poids reste modeste — de l'ordre d'un demi-écart d'énergie. La grammaire
+   propose une lecture, elle ne commande pas le montage : un plan qui tombe juste
+   sur la musique et sur les paroles doit rester devant un plan qui n'a pour lui
+   que d'être le bon maillon. */
+function enchainement(precedent, plan, serie = 0) {
+  const avant = precedent && familleDe(precedent);
+  const apres = familleDe(plan);
+  if (!avant || !apres) return 0;
+  if (SUIVANTE[avant] === apres) return -3;      // la suite naturelle
+  if (SUIVANTE[apres] === avant) return 2;       // à rebours : on se lit mal
+  if (avant !== apres) return 0;
+
+  /* Rester dans la même famille coûte de plus en plus cher.
+
+     Un poids fixe ne suffisait pas : mesuré sur un morceau à douze sections,
+     89 % des enchaînements se faisaient sur place. La raison tient à l'accord
+     d'énergie — dans un drop, seuls l'élan et le choc sont au bon niveau, et
+     passer à la fumée qui retombe coûte un cran d'énergie, soit six points, là
+     où la grammaire n'en offrait que quatre. Le montage restait donc sur le
+     choc, indéfiniment.
+
+     La pénalité croît donc avec la série : au troisième plan de suite dans la
+     même famille elle atteint le cran d'énergie, et un plan d'une autre famille
+     redevient le meilleur choix.
+
+     Deux ou trois chocs d'affilée restent donc possibles — c'est une phrase
+     d'action —, huit ne le sont plus. */
+  return Math.min(10, 1 + serie * 2.5);
+}
+
 /* Ce qui distingue deux candidats pour une même case. L'accord d'énergie pèse
    le plus : c'est lui qu'on entend. Vient ensuite la variété — revoir le même
    plan trois fois de suite tue un AMV plus sûrement qu'un mauvais choix —, puis
@@ -6470,7 +6569,7 @@ function grainDeSable(id, rang) {
   return (a % 100) / 400;
 }
 
-function noterCandidat(plan, section, vus, rang, accord, precedent) {
+function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0) {
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
   const derniereFois = vus.get(plan.id);
   const fraicheur = derniereFois === undefined ? 0 : Math.max(0, 6 - (rang - derniereFois));
@@ -6494,8 +6593,33 @@ function noterCandidat(plan, section, vus, rang, accord, precedent) {
   const place = accord ? accord.indexOf(String(plan.id)) : -1;
   const parole = place < 0 ? 0 : -8 + place * 1.5;
 
-  return deja + ecart * 6 + fraicheur * 2 + usure + parole
+  /* L'épisode a-t-il épuisé son budget ? La pénalité est du même ordre que la
+     redite d'une scène : très au-dessus de tout le reste, pour qu'aucun autre
+     critère ne puisse la racheter — mais franchissable quand il ne reste que
+     ça. */
+  /* Franchi, le plafond ne se transforme pas en classement par épisode.
+
+     La première version ajoutait le dépassement à la pénalité : le montage
+     servait alors les épisodes au tour de rôle, du moins servi au plus servi, et
+     ce classement écrasait tout le reste — mesuré sur un projet de six sources,
+     la seconde montée se remplissait de plans d'acting parce que leur épisode
+     était en retard. Une fois tout le monde au-dessus du plafond, la pénalité
+     est la même pour tous : elle s'annule, et ce sont l'énergie et la fraîcheur
+     qui reprennent la main, comme il se doit. */
+  const tenu = budgets?.get(cleEpisode(plan)) || 0;
+  const episode = tenu >= BUDGET_EPISODE ? 60 : 0;
+
+  /* Deux coupes de suite tirées du même épisode, ce sont deux scènes voisines
+     collées bout à bout : à l'écran, l'épisode occupe alors huit secondes d'un
+     coup, et la règle des quatre secondes se contourne toute seule. La pénalité
+     passe au-dessus de l'écart d'énergie maximal, et reste sous celle d'une
+     scène déjà vue : quand il n'y a plus que ça, on préfère encore un épisode
+     qui s'attarde à une scène qui se répète. */
+  const colle = precedent && cleEpisode(precedent) === cleEpisode(plan) ? 30 : 0;
+
+  return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole
     + accordDuMouvement(precedent, plan)
+    + enchainement(precedent, plan, serie)
     + grainDeSable(plan.id, rang)
     - (plan.score || 0) / 100;
 }
@@ -6592,8 +6716,13 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
     ? rythme.sections
     : [{ debut: 0, fin: rythme.duree || 0, energie: 2, nom: "montee" }];
 
-  sources.forEach((plan) => { plan.__pris = 0; delete plan.__picVu; delete plan.__morceaux; });
+  sources.forEach((plan) => { plan.__pris = 0; delete plan.__picVu; delete plan.__morceaux; delete plan.__famille; });
   const vus = new Map();
+  // La famille du dernier plan posé, et depuis combien de plans elle dure.
+  let familleCourante = null;
+  let serie = 0;
+  // Le temps déjà accordé à chaque épisode, sur l'ensemble de l'AMV.
+  const budgets = new Map();
   const montage = [];
 
   sections.forEach((section, rangSection) => {
@@ -6617,14 +6746,28 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
     while (section.fin - curseur > PLAN_MINI && garde < 4000) {
       garde += 1;
       const reste = section.fin - curseur;
-      const vise = Math.min(pas, reste);
+      // Le plafond par coupe s'applique ici : la section garde sa durée, elle
+      // est simplement servie par plus de cases.
+      const vise = Math.min(pas, reste, TENUE_MAX);
       const rang = montage.length;
 
       const precedent = montage[montage.length - 1];
       let choix = null;
       if (chrono) {
-        choix = suite[rangSuite % suite.length];
-        rangSuite += 1;
+        /* Même en chronologie, un épisode ne s'étale pas : passé son budget, on
+           avance dans la série au lieu de s'attarder. C'est d'ailleurs ce qu'un
+           AMV chronologique veut dire — parcourir, pas illustrer. */
+        for (let saut = 0; saut < suite.length; saut += 1) {
+          const candidat = suite[(rangSuite + saut) % suite.length];
+          if ((budgets.get(cleEpisode(candidat)) || 0) < BUDGET_EPISODE) {
+            choix = candidat;
+            rangSuite += saut + 1;
+            break;
+          }
+        }
+        // Tous au-dessus du budget : on reprend le tour normal plutôt que de
+        // s'arrêter — un montage court serait pire qu'un épisode un peu long.
+        if (!choix) { choix = suite[rangSuite % suite.length]; rangSuite += 1; }
       } else {
         let meilleure = Infinity;
         for (const plan of sources) {
@@ -6635,7 +6778,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
           // Un rush trop court pour la case n'est pas disqualifié — il n'y en
           // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
           const court = dureeSource(plan) < vise ? 3 : 0;
-          const note = noterCandidat(plan, section, vus, rang, accord, precedent) + court;
+          const note = noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie) + court;
           if (note < meilleure) { meilleure = note; choix = plan; }
         }
       }
@@ -6643,25 +6786,42 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
 
       const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu);
       if (!bornes) break;
-      montage.push({ ...choix, ...bornes, __pris: undefined });
+      // Combien de plans d'affilée dans la même famille : c'est ce qui rend le
+      // sur-place de plus en plus coûteux.
+      const famille = familleDe(choix);
+      serie = famille && famille === familleCourante ? serie + 1 : 0;
+      familleCourante = famille;
+
+      const pose = bornes.sortie - bornes.entree;
+      montage.push({ ...choix, ...bornes, __pris: undefined, __famille: undefined });
       choix.__pris = (choix.__pris || 0) + 1;
       vus.set(choix.id, rang);
-      curseur += bornes.sortie - bornes.entree;
+      const cle = cleEpisode(choix);
+      budgets.set(cle, (budgets.get(cle) || 0) + pose);
+      curseur += pose;
     }
 
     /* Ce qui reste après la dernière case revient au dernier plan, si sa source
        le permet. Sinon la section se termine un peu court, et c'est le prix
        d'un rush trop bref — mieux vaut ça qu'une image fixe. */
+    /* Ce qui reste après la dernière case revient au dernier plan — sans jamais
+       lui faire dépasser le plafond de quatre secondes, sinon la règle se
+       perdrait exactement là où les restes s'accumulent, une fois par section. */
     const dernier = montage[montage.length - 1];
     const manque = section.fin - curseur;
     if (dernier && manque > 0.01) {
-      const place = Math.min(manque, dureeSource(dernier) - dernier.sortie);
-      if (place > 0) dernier.sortie = Math.round((dernier.sortie + place) * 1000) / 1000;
+      const marge = TENUE_MAX - (dernier.sortie - dernier.entree);
+      const place = Math.min(manque, marge, dureeSource(dernier) - dernier.sortie);
+      if (place > 0) {
+        dernier.sortie = Math.round((dernier.sortie + place) * 1000) / 1000;
+        const cle = cleEpisode(dernier);
+        budgets.set(cle, (budgets.get(cle) || 0) + place);
+      }
     }
   });
 
-  sources.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; });
-  montage.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; });
+  sources.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; delete plan.__famille; });
+  montage.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; delete plan.__famille; });
   return montage.length ? montage : null;
 }
 
@@ -6905,7 +7065,10 @@ function casesAttendues(projet) {
     ? rythme.sections
     : [{ debut: 0, fin: rythme.duree || 0, energie: 2 }];
   return sections.reduce((total, section) => {
-    const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
+    // Le même plafond qu'au montage : sans lui, un passage calme comptait une
+    // case là où il en faudra quatre, et la recherche rapportait quatre fois
+    // trop peu de sources pour que chacune ne serve qu'une fois.
+    const tenue = Math.min(TENUE_MAX, (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode);
     return total + Math.max(1, Math.round((section.fin - section.debut) / tenue));
   }, 0);
 }

@@ -1164,6 +1164,87 @@ vignette de la source sont écartées. Elles restent en place à l'arrêt et pen
 un déplacement, où elles servent à se repérer et où personne n'attend une image
 animée.
 
+### Quatre secondes par coupe, quinze par épisode
+
+Deux plafonds, demandés et tenus.
+
+**Quatre secondes par coupe.** Un passage calme appelait des plans de huit ou
+seize secondes. À l'écoute c'est juste — la musique respire — mais à l'œil c'est
+un arrêt sur image : on regarde le même plan pendant un quart de la section. Une
+page de manga ne tient pas une case seize secondes ; elle en pose plusieurs, et
+l'œil circule. La section garde sa durée, elle est simplement servie par plus de
+cases. Le reste de fin de section est borné par le même plafond, sinon la règle
+se perdrait exactement là où les restes s'accumulent.
+
+**Quinze secondes par épisode**, sur tout l'AMV. L'unicité des scènes ne
+suffisait pas : vingt scènes distinctes tirées du même épisode racontent quand
+même le même épisode. Et **jamais deux coupes de suite du même épisode** —
+sinon la règle des quatre secondes se contourne toute seule en collant deux
+scènes voisines.
+
+Mesuré sur un AMV de 2:23 en douze sections, vingt épisodes disponibles :
+
+```
+106 coupes · 142,8 s montés pour 143 s de musique
+coupe la plus longue : 4,0 s            ✔
+20 épisodes employés, le plus présent : 10,9 s   ✔
+jamais deux coupes de suite du même épisode      ✔
+```
+
+Un piège de conception, trouvé en mesurant. La première version ajoutait le
+dépassement à la pénalité — `60 + (tenu - plafond)` — pour départager les
+épisodes une fois tous au-dessus. Ce départage se transformait en **classement
+par épisode**, qui écrasait tout le reste : sur un projet de six sources, la
+seconde montée se remplissait de plans d'acting parce que leur épisode était en
+retard. Une pénalité plate, identique pour tous les épisodes au-dessus du
+plafond, s'annule d'elle-même et rend la main à l'énergie et à la fraîcheur.
+
+### La grammaire du montage : ce qui appelle quoi
+
+Une ambiance ne dit pas ce qui se passe. « Combat » recouvre l'élan, l'impact et
+la fumée qui retombe — trois moments différents, et c'est leur ordre qui fait
+qu'une suite de plans **se lit** au lieu de défiler.
+
+Quatre familles, tirées des étiquettes de Sakugabooru que le Worker transmet
+désormais avec chaque rush :
+
+| famille | ce qu'on y range | ce qu'elle appelle |
+| --- | --- | --- |
+| élan | running, chase, smears, flying, falling | le choc |
+| choc | impact_frames, explosions, fighting, beams, swords | ce qui retombe |
+| suite | debris, smoke, sparks, fire, lightning | le calme |
+| calme | character_acting, dialogue, walk_cycle, crying | l'élan |
+
+Le poids reste modeste — de l'ordre d'un demi-écart d'énergie. La grammaire
+propose une lecture, elle ne commande pas : un plan qui tombe juste sur la
+musique et sur les paroles reste devant un plan qui n'a pour lui que d'être le
+bon maillon.
+
+Un poids fixe ne suffisait pourtant pas. Première mesure : **89 % des
+enchaînements se faisaient sur place**. La raison tient à l'accord d'énergie —
+dans un drop, seuls l'élan et le choc sont au bon niveau, et passer à la fumée
+qui retombe coûte un cran d'énergie, soit six points, là où la grammaire n'en
+offrait que quatre. Le montage restait sur le choc, indéfiniment.
+
+La pénalité croît donc avec la série : au troisième plan d'affilée dans la même
+famille, elle atteint le cran d'énergie, et une autre famille redevient le
+meilleur choix. Deux ou trois chocs de suite restent possibles — c'est une
+phrase d'action — huit ne le sont plus.
+
+```
+                        avant        après
+enchaînement qui avance    9 %         23 %
+sur place                 89 %         45 %
+série la plus longue        —            5 plans
+écart d'énergie moyen       —          0,33 cran
+```
+
+L'accord d'énergie n'a pas été sacrifié : un tiers de cran d'écart moyen, c'est
+la précision qu'on avait avant la grammaire.
+
+Sans étiquettes — un projet monté avant que le serveur ne les transmette —
+l'ambiance donne une famille approchante. Moins fin, jamais aveugle.
+
 ### Ce que ça ne fait pas
 
 **Sans lecture, l'outil reste aveugle.** Tant qu'on n'a pas appuyé sur l'œil, il

@@ -11,7 +11,7 @@ import { accorderParoles } from "./accord.js";
 import { lireScene } from "./scene.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { copyrightTags, rushes, rushesPartout, searchSeries, serieDe } from "./sakuga.js";
-import { MOODS, TAG_PHARE, moodsOf, qualityFlags, rank } from "./scoring.js";
+import { MOODS, TAGS_MONTAGE, TAG_PHARE, moodsOf, qualityFlags, rank } from "./scoring.js";
 import { findCurated, suggest } from "./series.js";
 import { VERSION } from "./version.js";
 
@@ -42,6 +42,9 @@ function serialize({ post, score }) {
     score,
     votes: post.score,
     moods,
+    // Ce que le plan montre, en mots que le montage sait enchaîner : un élan
+    // n'appelle pas la même suite qu'un impact.
+    tags: post.tags.filter((tag) => TAGS_MONTAGE.has(tag)),
     technique: techniqueOf(post.tags),
     flags: qualityFlags(post),
     artists: post.artists.map((a) => a.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())),

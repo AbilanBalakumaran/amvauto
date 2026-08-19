@@ -38,6 +38,32 @@ export const TAG_PHARE = {
   hype: "henshin",
 };
 
+/* Les étiquettes que le montage sait lire.
+
+   Sans lecture par l'IA — quota épuisé, ou choix de rapidité — le montage n'a
+   que les ambiances, et une ambiance ne dit pas ce qui se passe : « combat »
+   recouvre aussi bien l'élan que l'impact et la fumée qui retombe. Or c'est
+   justement cet enchaînement qui fait qu'un AMV se lit comme une page de manga.
+
+   On transmet donc les étiquettes brutes utiles, et rien d'autre : une
+   quarantaine de mots au lieu des trente que porte un post, pour ne pas
+   alourdir chaque rush d'un vocabulaire dont la page ne fera rien. */
+export const TAGS_MONTAGE = new Set([
+  // l'élan
+  "running", "chase", "smears", "flying", "sliding", "motorcycles", "vehicle",
+  "falling", "sports", "rotation",
+  // le choc
+  "impact_frames", "explosions", "fighting", "beams", "shooting", "weapons",
+  "swords", "martial_arts", "creatures",
+  // ce qui retombe
+  "debris", "smoke", "sparks", "fire", "liquid", "wind", "ice", "lightning", "effects",
+  // le calme
+  "character_acting", "dialogue", "hair", "fabric", "walk_cycle", "crying",
+  "eating", "smoking", "background_animation",
+  // la bascule
+  "henshin", "morphing", "dancing", "performance",
+]);
+
 // Ce qui aide ou gêne au montage, indépendamment de l'ambiance.
 const BONUS_TAGS = { background_animation: 6, impact_frames: 5, effects: 4, smears: 3, debris: 2 };
 const MALUS_TAGS = { cgi: -8, artist_unknown: -1, web: -2, "3d_background": -4 };
