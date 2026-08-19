@@ -1079,6 +1079,29 @@ projet vivant ; l'historique l'affiche avec ses cinq plans, son tempo et sa date
 « Rouvrir » le rend à la barre, le rend actif, et rien n'a bougé — plans, tempo
 et drapeau d'archive compris.
 
+## Importer un MP3 sur iPhone
+
+`accept="audio/*"` suffit partout sauf là où ça compte. Sur iPhone, ce type
+générique fait ouvrir la **bibliothèque Musique** — dont les morceaux achetés
+sont protégés et refusent d'être choisis — au lieu de l'application Fichiers, où
+vit le MP3 qu'on vient de télécharger. Résultat : un sélecteur qui s'ouvre, et
+aucun fichier sélectionnable.
+
+Énumérer les extensions avant le type générique fait basculer le sélecteur sur
+les documents :
+
+```
+.mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.opus,.aif,.aiff,.webm,audio/*
+```
+
+Le message d'échec le dit aussi, maintenant : un morceau de la bibliothèque
+Musique est protégé, et **aucune** application ne peut l'ouvrir — il faut passer
+par un fichier téléchargé.
+
+Le reste de la chaîne n'était pas en cause. Vérifié avec un vrai MP3 de 1,2 Mo :
+importé, durée lue à 29,91 s, tempo à **162,4 BPM**, deux sections découpées,
+sans une erreur.
+
 ## Sauvegarder un montage
 
 Ce qu'un montage a d'irremplaçable tient dans presque rien. Mesuré : un plan

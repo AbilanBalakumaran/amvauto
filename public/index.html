@@ -1462,7 +1462,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 15:47";
+const VERSION_PAGE = "2026-08-19 16:28";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4413,6 +4413,15 @@ function brancherPincement(cadre) {
 }
 
 /* --- bande son -------------------------------------------------------- */
+/* Les extensions d'abord, le type générique ensuite.
+
+   « audio/* » seul suffit partout sauf là où ça compte : sur iPhone, il ouvre
+   la bibliothèque Musique — dont les morceaux achetés sont protégés et refusent
+   d'être choisis — au lieu de l'application Fichiers. Énumérer les extensions
+   fait basculer le sélecteur sur les documents, où vit le MP3 qu'on vient de
+   télécharger. */
+const FORMATS_SON = ".mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.opus,.aif,.aiff,.webm,audio/*";
+
 function boutonSon(projet) {
   const barre = document.createElement("div");
   barre.className = "son-barre";
@@ -4428,7 +4437,7 @@ function boutonSon(projet) {
 
   const champ = document.createElement("input");
   champ.type = "file";
-  champ.accept = "audio/*";
+  champ.accept = FORMATS_SON;
   champ.hidden = true;
   champ.addEventListener("change", () => {
     const fichier = champ.files?.[0];
@@ -4516,7 +4525,7 @@ function chargerSon(projet, fichier) {
   }, { once: true });
   son.addEventListener("error", () => {
     URL.revokeObjectURL(url);
-    alert("Ce fichier audio n'a pas pu être lu.");
+    alert(`« ${fichier.name} » n'a pas pu être lu.\n\nSi c'est un morceau de la bibliothèque Musique, il est protégé et aucune application ne peut l'ouvrir : passe par un fichier téléchargé, dans Fichiers.`);
   }, { once: true });
 }
 
@@ -7214,7 +7223,7 @@ function ouvrirBrief() {
     importer.textContent = "Choisir un fichier…";
     const champFichier = document.createElement("input");
     champFichier.type = "file";
-    champFichier.accept = "audio/*";
+    champFichier.accept = FORMATS_SON;
     champFichier.hidden = true;
     champFichier.addEventListener("change", () => {
       const fichier = champFichier.files?.[0];
