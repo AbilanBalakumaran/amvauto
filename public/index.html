@@ -1462,7 +1462,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 16:39";
+const VERSION_PAGE = "2026-08-19 16:54";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6944,12 +6944,54 @@ function ouvrirAssistant(etape = "musique") {
   champ.addEventListener("input", () => {
     amv.animes = champ.value.split(",").map((x) => x.trim()).filter(Boolean);
     peindre();
+    proposer();
   });
   const ligneAnimes = document.createElement("label");
   ligneAnimes.className = "lecteur-reglage pile";
   const animesTexte = document.createElement("span");
-  ligneAnimes.append(animesTexte, champ);
+
+  /* Un champ vide sous un exemple en gris se prend pour un champ rempli — c'est
+     arrivé. Des propositions qu'on tape valent mieux qu'un texte d'aide : elles
+     remplissent, et elles montrent du même coup ce que l'outil sait trouver. */
+  const propositions = document.createElement("div");
+  propositions.className = "pastilles";
+  const proposer = async () => {
+    /* Le terme cherché est ce qu'on est en train de taper — donc rien, quand le
+       dernier morceau est un titre déjà choisi. Sans cette nuance, taper une
+       proposition faisait chercher ce titre-là, qui se retrouvait aussitôt
+       écarté comme déjà pris : la liste se vidait au premier choix. */
+    const morceau = champ.value.split(",").pop().trim();
+    const dejaPris = amv.animes.some((titre) => titre.toLowerCase() === morceau.toLowerCase());
+    const dernier = dejaPris ? "" : morceau;
+    try {
+      const reponse = await fetch(`/api/suggest?q=${encodeURIComponent(dernier)}`);
+      const { series } = await reponse.json();
+      const deja = new Set(amv.animes.map((x) => x.toLowerCase()));
+      propositions.replaceChildren(...(series || [])
+        .filter((serie) => !deja.has(serie.display.toLowerCase()))
+        .slice(0, 6)
+        .map((serie) => {
+          const pastille = document.createElement("button");
+          pastille.type = "button";
+          pastille.className = "pastille";
+          pastille.textContent = serie.display;
+          pastille.addEventListener("click", (evt) => {
+            evt.preventDefault();
+            /* En « un seul animé », la proposition remplace ; en mixte, elle
+               s'ajoute — c'est tout l'objet du mode. */
+            amv.animes = amv.portee === "unique" ? [serie.display] : [...amv.animes, serie.display];
+            champ.value = amv.animes.join(", ");
+            accorder();
+            proposer();
+          });
+          return pastille;
+        }));
+    } catch { propositions.replaceChildren(); }
+  };
+
+  ligneAnimes.append(animesTexte, champ, propositions);
   reglages.push(ligneAnimes);
+  proposer();
 
   const actions = document.createElement("div");
   actions.className = "lecteur-actions";
@@ -7071,6 +7113,14 @@ async function automatiserAmv(bouton) {
       ? (amv.portee === "unique" ? amv.animes.slice(0, 1) : amv.animes)
       : [...new Set(projet.plans.map((p) => p.anime).filter(Boolean))];
 
+    /* Sans animé et sans plan, il n'y a rien à monter — et le dire avant de
+       chercher évite d'attendre pour rien. L'exemple en gris du champ n'est pas
+       une valeur : c'est précisément la confusion qu'il fallait lever. */
+    if (!animes.length) {
+      alert("Aucun animé indiqué. Le champ affiche un exemple en gris, mais il est vide : écris un titre, ou tape une des propositions juste en dessous.");
+      return;
+    }
+
     if (animes.length) {
       dire("Recherche des plans…");
       const trouves = await chercherRushs(animes, projet.rythme.duree || 120);
@@ -7085,7 +7135,7 @@ async function automatiserAmv(bouton) {
     }
     if (automate.arret) return;
     if (!projet.plans.length) {
-      alert("Aucun plan trouvé. Vérifie le nom de l'animé.");
+      alert(`Aucun plan trouvé pour « ${animes.join(", ")} ».\n\nVérifie l'orthographe, ou tape une des propositions sous le champ : ce sont les séries que l'outil sait trouver à coup sûr.`);
       return;
     }
 

@@ -1079,6 +1079,31 @@ projet vivant ; l'historique l'affiche avec ses cinq plans, son tempo et sa date
 « Rouvrir » le rend à la barre, le rend actif, et rien n'a bougé — plans, tempo
 et drapeau d'archive compris.
 
+## Un champ vide qui se prend pour un champ rempli
+
+Le champ des animés affichait `Chainsaw Man, Jujutsu Kaisen, Demon Slayer…` en
+gris. C'est un exemple, pas une valeur — mais rien ne le disait, et le
+lancement partait chercher des plans pour personne avant de rendre « Aucun plan
+trouvé. Vérifie le nom de l'animé », ce qui accusait l'orthographe d'un titre
+qui n'existait pas.
+
+Deux corrections, et la seconde vaut mieux que la première :
+
+- **Le lancement refuse tôt**, avant toute recherche, et dit exactement ce qui
+  manque : « le champ affiche un exemple en gris, mais il est vide ».
+- **Des propositions à taper** sous le champ, tirées de `/api/suggest`. Elles
+  remplissent, et montrent du même coup ce que l'outil sait trouver à coup sûr.
+  En « un seul animé » la proposition remplace ; en mixte elle s'ajoute — c'est
+  tout l'objet du mode.
+
+Un défaut trouvé en les éprouvant : après une tape, la liste se vidait. Le terme
+cherché était le dernier morceau du champ, c'est-à-dire le titre qu'on venait de
+choisir — aussitôt écarté comme déjà pris. Le terme est maintenant vide quand ce
+morceau correspond à un titre déjà retenu.
+
+Vérifié : deux tapes en mixte donnent `Chainsaw Man, Jujutsu Kaisen` avec six
+nouvelles propositions derrière ; une tape en « un seul animé » remplace.
+
 ## Importer ne doit pas faire sortir du parcours
 
 Choisir un fichier fermait le panneau. On se retrouvait devant le montage, sans
