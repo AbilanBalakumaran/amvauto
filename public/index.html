@@ -1462,7 +1462,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 16:28";
+const VERSION_PAGE = "2026-08-19 16:39";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7225,9 +7225,23 @@ function ouvrirBrief() {
     champFichier.type = "file";
     champFichier.accept = FORMATS_SON;
     champFichier.hidden = true;
-    champFichier.addEventListener("change", () => {
+    /* Importer fermait le panneau, et l'on se retrouvait devant le montage sans
+       savoir qu'il fallait rouvrir pour continuer. On reste : le fichier se
+       charge, son tempo se lit — quelques secondes pour un morceau entier —, et
+       l'étape suivante s'ouvre d'elle-même. */
+    champFichier.addEventListener("change", async () => {
       const fichier = champFichier.files?.[0];
-      if (fichier) { chargerSon(projet, fichier); fermerFeuille(); }
+      if (!fichier) return;
+      importer.disabled = true;
+      importer.textContent = "Lecture du tempo…";
+      chargerSon(projet, fichier);
+      for (let attente = 0; attente < 120; attente += 1) {
+        if (projet.rythme?.bpm) { ouvrirAssistant("montage"); return; }
+        await new Promise((suite) => setTimeout(suite, 250));
+      }
+      importer.disabled = false;
+      importer.textContent = "Choisir un fichier…";
+      alert("Le tempo de ce morceau n'a pas pu être lu. Le montage automatique a besoin d'une grille : essaie un autre fichier, ou une version non protégée de celui-ci.");
     });
     importer.addEventListener("click", () => champFichier.click());
     const ligneFichier = document.createElement("div");

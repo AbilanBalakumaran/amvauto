@@ -1079,6 +1079,21 @@ projet vivant ; l'historique l'affiche avec ses cinq plans, son tempo et sa date
 « Rouvrir » le rend à la barre, le rend actif, et rien n'a bougé — plans, tempo
 et drapeau d'archive compris.
 
+## Importer ne doit pas faire sortir du parcours
+
+Choisir un fichier fermait le panneau. On se retrouvait devant le montage, sans
+rien qui dise qu'il fallait rouvrir « Créer un AMV » pour continuer — l'assistant
+posait un ordre, et la première étape en éjectait.
+
+On reste désormais dedans : le bouton passe à **« Lecture du tempo… »**, le
+fichier se charge, son tempo se lit, et l'étape du montage s'ouvre d'elle-même.
+Si le tempo ne se lit pas en trente secondes, le panneau le dit et rend la main
+plutôt que de laisser tourner.
+
+Vérifié : import d'un MP3 depuis l'étape « En apporter une », et le panneau
+bascule seul sur « Montage automatique » avec **162,4 BPM** relevés et
+« Automatiser l'AMV » prêt.
+
 ## Importer un MP3 sur iPhone
 
 `accept="audio/*"` suffit partout sauf là où ça compte. Sur iPhone, ce type
