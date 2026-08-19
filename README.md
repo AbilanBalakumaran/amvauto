@@ -492,6 +492,87 @@ Une réserve écrite dans le panneau : le palier gratuit de Suno appose un
 filigrane et réserve la musique à un usage privé. ACE-Step, sous Apache 2.0, ne
 pose aucune de ces deux conditions.
 
+## Monter sur la musique
+
+Le travail dans l'autre sens : au lieu de déduire une musique du montage,
+déduire le montage de la musique. Un bouton dans la barre du son, actif dès
+qu'une piste a livré son tempo.
+
+### Les sections
+
+Les ruptures étaient calculées depuis longtemps et **personne ne les lisait**.
+Elles disent qu'il se passe quelque chose ; elles ne disent pas quoi. Ce qui
+sert au montage, c'est le morceau entre deux ruptures — sa durée et son
+intensité, rapportée au plus fort passage du morceau. En valeur absolue elle ne
+voudrait rien dire : un morceau doux n'a pas de drop à 0 dB, il a un drop
+relatif au reste.
+
+Éprouvé sur une piste dont la structure est connue d'avance — cinq paliers aux
+instants 20, 50, 70 et 100 s. Trois défauts trouvés, chacun mesuré :
+
+| | Erreur moyenne | Pire cas |
+| --- | --- | --- |
+| première version | 1,45 s | 1,9 s |
+| sommet de pente au lieu du premier dépassement | 1,05 s | 1,9 s |
+| franchissement exact, puis calage sur un temps | 0,85 s | 1,1 s |
+| **moyenne centrée au lieu de glissante** | **0,15 s** | **0,2 s** |
+
+Le dernier pas est le plus instructif. Une fenêtre qui ne regarde que le passé
+rend une courbe en retard de la moitié de sa largeur ; les frontières héritaient
+de ce retard, une seconde pleine, et toutes dans le même sens. Un montage calé
+là changeait de régime avant la musique — et ça s'entend.
+
+### Les coupes
+
+Le tempo donne la grille : une coupe tombe sur un temps, jamais entre deux. La
+section donne le régime — un drop veut des plans courts, un pont veut qu'on
+laisse respirer :
+
+| Intensité | Tenue d'un plan |
+| --- | --- |
+| drop | 2 temps |
+| montée | 4 temps |
+| pont | 8 temps |
+| calme, intro, outro | 16 temps |
+
+Chaque case reçoit le rush qui lui va le mieux. Trois critères, dans cet ordre :
+l'accord d'énergie, la fraîcheur — revoir le même plan trois fois de suite tue
+un AMV plus sûrement qu'un mauvais choix —, et la qualité du rush en départage.
+
+**L'usure a dû être bornée.** Sans borne elle s'accumule : mesuré sur un morceau
+à deux montées, les plans de combat sortaient de la première si usés que la
+seconde se remplissait de plans calmes. Éviter la répétition ne doit jamais
+valoir plus que tomber juste.
+
+Mesuré après correction, sur cinq sections et six rushs :
+
+```
+section   énergie  plans  tenue     en temps  ambiances
+intro       0        3    6,67s       16,7    acting×3
+drop        3       38    0,79s        2,0    vitesse×11 combat+effets×11 combat×10
+pont        1        6    3,33s        8,3    acting×4 effets×2
+drop        3       38    0,79s        2,0    vitesse×11 combat+effets×11 combat×10
+outro       0        3    6,67s       16,7    acting×3
+```
+
+120,0 s montés pour 120 s de musique. Jamais deux fois le même plan de suite, et
+les points d'entrée avancent dans chaque source — un rush réemployé ne rejoue
+pas les mêmes images.
+
+### Ce que ça ne fait pas
+
+**L'outil ne regarde pas l'image.** Il ne sait pas qu'un plan montre une main qui
+tremble ; il sait qu'il est étiqueté « acting ». L'accord se fait sur les
+étiquettes et sur l'énergie, pas sur le sens. C'est déjà beaucoup — un montage
+qui respire au bon endroit et coupe sur le temps —, mais ce n'est pas un regard,
+et il ne faut pas le vendre comme tel.
+
+Il choisit parmi les rushs **déjà posés** dans le montage : il n'en cherche pas
+de nouveaux. La sélection reste une décision humaine.
+
+Le résultat est une proposition. Elle passe par l'historique, donc « annuler »
+la défait d'un coup — l'essayer ne coûte rien.
+
 ## Sauvegarder un montage
 
 Ce qu'un montage a d'irremplaçable tient dans presque rien. Mesuré : un plan

@@ -1428,7 +1428,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 04:37";
+const VERSION_PAGE = "2026-08-19 10:17";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4266,7 +4266,18 @@ function boutonSon(projet) {
   brief.setAttribute("aria-label", "Brief musical");
   brief.addEventListener("click", ouvrirBrief);
 
-  barre.append(bouton, champ, brief);
+  /* Le montage automatique ne s'offre que si une musique a livré son tempo :
+     sans grille, il n'y a rien sur quoi caler les coupes. */
+  const monter = document.createElement("button");
+  monter.type = "button";
+  monter.className = "son-retirer";
+  monter.innerHTML = icone("couper");
+  monter.title = "Monter sur la musique";
+  monter.setAttribute("aria-label", "Monter sur la musique");
+  monter.disabled = !projet.rythme?.bpm;
+  monter.addEventListener("click", () => monterSurLaMusique(monter));
+
+  barre.append(bouton, champ, brief, monter);
 
   if (projet.audio) {
     const retirer = document.createElement("button");
@@ -5629,26 +5640,135 @@ function calerSurLesFrappes(net, periodeApprochee) {
    les endroits où un montage doit changer de régime. */
 function rupturesDuNiveau(niveau) {
   const lissage = TRAMES_PAR_SECONDE * 2;
+  /* Moyenne centrée, et pas glissante vers l'arrière : une fenêtre qui ne
+     regarde que le passé rend une courbe en retard de la moitié de sa largeur,
+     et les frontières héritaient de ce retard — une seconde, mesurée. */
+  const demi = Math.round(lissage / 2);
+  const cumuls = new Float64Array(niveau.length + 1);
+  for (let t = 0; t < niveau.length; t += 1) cumuls[t + 1] = cumuls[t] + niveau[t];
   const doux = new Float32Array(niveau.length);
-  let cumul = 0;
   for (let t = 0; t < niveau.length; t += 1) {
-    cumul += niveau[t];
-    if (t >= lissage) cumul -= niveau[t - lissage];
-    doux[t] = cumul / Math.min(t + 1, lissage);
+    const a = Math.max(0, t - demi);
+    const b = Math.min(niveau.length, t + demi);
+    doux[t] = (cumuls[b] - cumuls[a]) / (b - a);
   }
   const sommet = Math.max(...doux) || 1;
+
+  /* On ne retient pas le premier instant où la marche dépasse le seuil, mais
+     celui où elle est la plus raide. Mesuré : le premier dépassement arrive une
+     seconde et demie avant la vraie bascule — la fenêtre de lissage regarde en
+     avant, donc elle voit venir. Un montage calé là changerait de régime avant
+     la musique, et ça s'entend. */
+  const marches = new Float32Array(doux.length);
+  for (let t = lissage; t < doux.length - lissage; t += 1) {
+    marches[t] = Math.abs(doux[t + lissage] - doux[t - lissage]) / sommet;
+  }
+
   const ruptures = [];
   let derniere = -Infinity;
-  for (let t = lissage; t < doux.length - lissage; t += 1) {
-    const avant = doux[t - lissage];
-    const apres = doux[t + lissage];
-    const marche = Math.abs(apres - avant) / sommet;
-    if (marche > 0.25 && t - derniere > TRAMES_PAR_SECONDE * 8) {
-      ruptures.push({ temps: t / TRAMES_PAR_SECONDE, sens: apres > avant ? "montee" : "chute" });
-      derniere = t;
+  let t = lissage;
+  while (t < doux.length - lissage) {
+    if (marches[t] <= 0.25) { t += 1; continue; }
+    // On suit la marche jusqu'à ce qu'elle retombe, et on garde son sommet.
+    let fin = t;
+    let cime = t;
+    while (fin < doux.length - lissage && marches[fin] > 0.25) {
+      if (marches[fin] > marches[cime]) cime = fin;
+      fin += 1;
     }
+    if (cime - derniere > TRAMES_PAR_SECONDE * 8) {
+      /* Le sommet de pente reste une approximation à la largeur de la fenêtre.
+         On affine en cherchant, autour de lui, l'instant où le niveau franchit
+         vraiment la moitié du chemin entre l'avant et l'après. */
+      const avant = doux[cime - lissage];
+      const apres = doux[cime + lissage];
+      const milieu = (avant + apres) / 2;
+      const monte = apres > avant;
+      let exact = cime;
+      for (let k = cime - lissage; k <= cime + lissage; k += 1) {
+        if (monte ? doux[k] >= milieu : doux[k] <= milieu) { exact = k; break; }
+      }
+      ruptures.push({ temps: exact / TRAMES_PAR_SECONDE, sens: monte ? "montee" : "chute" });
+      derniere = cime;
+    }
+    t = fin;
   }
   return ruptures;
+}
+
+/* Les sections : ce que les ruptures découpent, nommé et pesé.
+
+   Une rupture dit qu'il se passe quelque chose ; elle ne dit pas quoi. Ce qui
+   sert au montage, c'est le morceau entre deux ruptures — sa durée et son
+   intensité. Un drop de vingt secondes appelle des coupes courtes et des plans
+   de combat ; un pont calme appelle l'inverse. C'est cette table-là que le
+   montage automatique lira.
+
+   L'intensité se mesure sur le niveau moyen de la section, rapportée au plus
+   fort passage du morceau. En valeur absolue elle ne voudrait rien dire : un
+   morceau doux n'a pas de drop à 0 dB, il a un drop relatif au reste. */
+const SECTION_MIN = 6;        // secondes : plus court, ce n'est pas une section
+
+function decouperEnSections(niveau, ruptures, duree, tempo) {
+  if (!niveau.length || !(duree > 0)) return [];
+
+  /* Une frontière se cale sur un temps. Le repérage a la précision de sa
+     fenêtre — quelques dixièmes —, alors que le montage, lui, coupe sur la
+     grille : une section qui commencerait à contretemps s'entendrait. */
+  const periode = tempo?.periode > 0 ? tempo.periode : 0;
+  const surLeTemps = (t) => {
+    if (!periode) return t;
+    const k = Math.round((t - tempo.phase) / periode);
+    const cale = tempo.phase + k * periode;
+    return cale > 0 && cale < duree ? Math.round(cale * 100) / 100 : t;
+  };
+
+  const bornes = [0, ...ruptures.map((r) => surLeTemps(r.temps)), duree];
+  const moyenne = (debut, fin) => {
+    const a = Math.max(0, Math.round(debut * TRAMES_PAR_SECONDE));
+    const b = Math.min(niveau.length, Math.round(fin * TRAMES_PAR_SECONDE));
+    if (b <= a) return 0;
+    let cumul = 0;
+    for (let t = a; t < b; t += 1) cumul += niveau[t];
+    return cumul / (b - a);
+  };
+
+  /* Les sections trop courtes se fondent dans la précédente. Une rupture peut
+     en cacher deux à une seconde d'intervalle — les garder donnerait des
+     sections d'une seconde, qui ne veulent rien dire pour un montage. */
+  const coupes = [bornes[0]];
+  for (let i = 1; i < bornes.length - 1; i += 1) {
+    if (bornes[i] - coupes[coupes.length - 1] >= SECTION_MIN
+      && duree - bornes[i] >= SECTION_MIN) coupes.push(bornes[i]);
+  }
+  coupes.push(duree);
+
+  const brutes = [];
+  for (let i = 0; i < coupes.length - 1; i += 1) {
+    brutes.push({ debut: coupes[i], fin: coupes[i + 1], force: moyenne(coupes[i], coupes[i + 1]) });
+  }
+  const sommet = Math.max(...brutes.map((s) => s.force)) || 1;
+
+  return brutes.map((section, i) => {
+    const part = section.force / sommet;
+    const energie = part >= 0.85 ? 3 : part >= 0.65 ? 2 : part >= 0.4 ? 1 : 0;
+    /* Le nom suit la place autant que l'intensité : une section calme en tête
+       est une intro, la même au milieu est un pont. */
+    const premiere = i === 0;
+    const derniere = i === brutes.length - 1;
+    const nom = energie >= 3 ? "drop"
+      : energie === 2 ? "montee"
+      : premiere ? "intro"
+      : derniere ? "outro"
+      : energie === 1 ? "pont"
+      : "calme";
+    return {
+      debut: Math.round(section.debut * 100) / 100,
+      fin: Math.round(section.fin * 100) / 100,
+      energie,
+      nom,
+    };
+  });
 }
 
 async function analyserRythme(donnees) {
@@ -5664,6 +5784,7 @@ async function analyserRythme(donnees) {
     return null;
   }
   const { net, niveau } = enveloppeAttaque(buffer);
+  const ruptures = rupturesDuNiveau(niveau).slice(0, 24);
   const tempo = tempoDeLenveloppe(net);
   const cale = calerSurLesFrappes(net, tempo.retard / TRAMES_PAR_SECONDE);
   return {
@@ -5671,8 +5792,145 @@ async function analyserRythme(donnees) {
     depart: Math.round(cale.phase * 1000) / 1000,
     confiance: Math.round(tempo.confiance * 100) / 100,
     duree: Math.round(buffer.duration * 100) / 100,
-    ruptures: rupturesDuNiveau(niveau).slice(0, 24),
+    ruptures,
+    sections: decouperEnSections(niveau, ruptures, buffer.duration, cale),
   };
+}
+
+/* --- montage automatique ---------------------------------------------- */
+/* Le travail dans l'autre sens : au lieu de déduire une musique du montage,
+   déduire le montage de la musique.
+
+   Tout ce qu'il faut est déjà là. Le tempo donne la grille — une coupe tombe
+   sur un temps, jamais entre deux. Les sections donnent le régime : un drop
+   veut des plans courts et violents, un pont veut qu'on laisse respirer. Et
+   chaque rush porte ses ambiances, relevées à la source, dont on sait déjà
+   tirer une énergie de 0 à 3.
+
+   Ce que ça ne fait pas, et qu'il faut dire : l'outil ne regarde pas l'image.
+   Il ne sait pas qu'un plan montre une main qui tremble ; il sait qu'il est
+   étiqueté « acting ». L'accord se fait sur les étiquettes et sur l'énergie,
+   pas sur le sens. C'est déjà beaucoup — un montage qui respire au bon endroit
+   et coupe sur le temps —, mais ce n'est pas un regard.
+
+   Le résultat est une proposition, pas un verdict : elle remplace les blocs de
+   la piste et se défait d'un retour en arrière. */
+
+// Combien de temps tient un plan, selon l'intensité de la section.
+const TEMPS_PAR_PLAN = { 3: 2, 2: 4, 1: 8, 0: 16 };
+
+/* Ce qui distingue deux candidats pour une même case. L'accord d'énergie pèse
+   le plus : c'est lui qu'on entend. Vient ensuite la variété — revoir le même
+   plan trois fois de suite tue un AMV plus sûrement qu'un mauvais choix —, puis
+   la qualité du rush, en simple départage. */
+function noterCandidat(plan, section, vus, rang) {
+  const ecart = Math.abs(energieDuPlan(plan) - section.energie);
+  const derniereFois = vus.get(plan.id);
+  const fraicheur = derniereFois === undefined ? 0 : Math.max(0, 6 - (rang - derniereFois));
+  /* L'usure est bornée, et volontairement faible. Sans borne, elle s'accumule :
+     mesuré sur un morceau à deux montées, les plans de combat sortaient de la
+     première si usés que la seconde se remplissait de plans calmes. Éviter la
+     répétition ne doit jamais valoir plus que tomber juste — c'est le rôle de
+     la fraîcheur, qui ne regarde que les derniers plans posés. */
+  const usure = Math.min(4, plan.__pris || 0) * 0.5;
+  return ecart * 6 + fraicheur * 2 + usure - (plan.score || 0) / 100;
+}
+
+/* La case suivante à remplir dans une source : on avance dans le rush à chaque
+   réemploi, pour ne pas remontrer les mêmes images. Quand on arrive au bout, on
+   revient au début. */
+function fenetreDans(plan, duree) {
+  const source = dureeSource(plan);
+  if (!(source > 0)) return null;
+  const tenue = Math.min(duree, Math.max(PLAN_MINI, source));
+  if (source < PLAN_MINI) return null;
+  const pris = plan.__pris || 0;
+  let entree = pris * tenue;
+  if (entree + tenue > source) entree = (entree % Math.max(tenue, source - tenue)) % Math.max(0.01, source - tenue);
+  entree = Math.max(0, Math.min(entree, source - tenue));
+  return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
+}
+
+function construireMontage(projet) {
+  const rythme = projet.rythme;
+  const sources = projet.plans.filter((plan) => dureeSource(plan) >= PLAN_MINI);
+  if (!rythme?.bpm || !sources.length) return null;
+
+  const periode = 60 / rythme.bpm;
+  const sections = rythme.sections?.length
+    ? rythme.sections
+    : [{ debut: 0, fin: rythme.duree || 0, energie: 2, nom: "montee" }];
+
+  sources.forEach((plan) => { plan.__pris = 0; });
+  const vus = new Map();
+  const montage = [];
+
+  sections.forEach((section) => {
+    const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
+    /* On répartit la section en cases égales plutôt que d'en découper une de
+       travers à la fin : mieux vaut des plans un peu plus longs que prévu
+       qu'un dernier plan tronqué à un dixième de seconde. */
+    const cases = Math.max(1, Math.round((section.fin - section.debut) / tenue));
+    const pas = (section.fin - section.debut) / cases;
+
+    for (let i = 0; i < cases; i += 1) {
+      const rang = montage.length;
+      let choix = null;
+      let meilleure = Infinity;
+      for (const plan of sources) {
+        const note = noterCandidat(plan, section, vus, rang);
+        if (note < meilleure) { meilleure = note; choix = plan; }
+      }
+      if (!choix) return;
+      const bornes = fenetreDans(choix, pas);
+      if (!bornes) continue;
+      montage.push({ ...choix, ...bornes, __pris: undefined });
+      choix.__pris = (choix.__pris || 0) + 1;
+      vus.set(choix.id, rang);
+    }
+  });
+
+  sources.forEach((plan) => { delete plan.__pris; });
+  montage.forEach((plan) => { delete plan.__pris; });
+  return montage.length ? montage : null;
+}
+
+/* Poser le montage proposé. On passe par « enregistrer », donc le bouton
+   « annuler » le défait comme n'importe quel autre geste : la proposition ne
+   coûte rien à essayer. */
+function monterSurLaMusique(bouton) {
+  const projet = projetActif();
+  if (!projet) return;
+  if (!projet.rythme?.bpm) {
+    alert("Il faut d'abord une musique : c'est son tempo qui donne la grille des coupes.");
+    return;
+  }
+  const disponibles = projet.plans.filter((plan) => dureeSource(plan) >= PLAN_MINI);
+  if (!disponibles.length) {
+    alert("Ajoute des rushs au montage : l'outil choisit parmi eux, il ne va pas en chercher.");
+    return;
+  }
+
+  const montage = construireMontage(projet);
+  if (!montage) {
+    alert("Rien à poser — les durées des rushs n'ont pas encore été mesurées, réessaie dans un instant.");
+    return;
+  }
+
+  const sections = projet.rythme.sections?.length || 1;
+  const total = montage.reduce((somme, plan) => somme + (sortieDe(plan) - entreeDe(plan)), 0);
+  projet.plans = montage;
+  sauver();
+  enregistrer(projet);
+  rendreProjet();
+  rendre();
+
+  if (bouton) {
+    const avant = bouton.title;
+    bouton.title = `${montage.length} coupes sur ${sections} sections`;
+    setTimeout(() => { bouton.title = avant; }, 4000);
+  }
+  alert(`${montage.length} coupes posées sur ${sections} section${sections > 1 ? "s" : ""}, ${minutage(total)} en tout.\n\nÉcoute, puis reprends ce qui ne va pas à la main. « Annuler » défait tout d'un coup.`);
 }
 
 /* --- brief musical ---------------------------------------------------- */
