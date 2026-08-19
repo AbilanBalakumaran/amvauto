@@ -270,6 +270,34 @@ audible sur un morceau qui sert de support de montage).
 sortie du quota : ACE-Step tourne sur une machine personnelle munie d'un GPU, on
 pointe le Worker dessus, et la limite disparaît. Même protocole, même code.
 
+### Quatre minutes, et le choix de la longueur
+
+Le plafond est celui du modèle : ACE-Step compose jusqu'à **240 secondes** d'un
+seul tenant — la borne est lisible sur son propre réglage, et le Space donne à
+chaque appel soixante secondes de GPU (`@spaces.GPU` sans argument), largement
+de quoi les couvrir. Quatre minutes passent devant la quasi-totalité des AMV.
+
+La durée **se choisit**, de 0:30 à 4:00, parce que le travail va dans les deux
+sens. On peut demander une musique taillée sur un montage déjà fait ; on peut
+aussi demander un morceau entier et monter dessus ensuite — c'est même le but à
+terme. Un montage de trente secondes ne doit pas condamner la musique à trente
+secondes.
+
+Le conseil par défaut est la longueur du montage arrondie au demi-pas supérieur,
+avec un plancher d'une minute trente et le plafond à quatre minutes. Un morceau
+un peu plus long que l'image ne gêne jamais — la queue se coupe — alors qu'un
+morceau trop court oblige à tout reprendre.
+
+Vérifié dans le navigateur : montage de 16 s → 1:30 conseillé, 100 s → 2:00,
+360 s → 4:00 ; et de bout en bout, 3:00 choisi dans le panneau donne bien 180 s
+partis au Space, avec la piste rendue déposée dans la voie son.
+
+Au-delà de quatre minutes, le Space expose un point d'entrée d'extension
+(`right_extend_length`, chaînable par `extend_source: "last_extend"`) : il
+faudrait lui repasser les paramètres de la génération précédente, et payer un
+appel de quota par rallonge. Ce n'est pas écrit — la longueur d'un AMV ne le
+demande pas encore.
+
 ### Le dialogue avec Gradio
 
 Un Space Gradio répond en deux temps : on dépose la demande, on écoute la file.
