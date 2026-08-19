@@ -270,6 +270,36 @@ audible sur un morceau qui sert de support de montage).
 sortie du quota : ACE-Step tourne sur une machine personnelle munie d'un GPU, on
 pointe le Worker dessus, et la limite disparaît. Même protocole, même code.
 
+### Sortir du quota : son propre GPU, gratuitement
+
+Cinq minutes de GPU par jour, c'est le plafond de ZeroGPU — deux ou trois
+morceaux. Ce n'est pas le plafond d'ACE-Step, c'est celui de l'hébergement.
+Ailleurs, le même modèle a bien plus de temps :
+
+| | GPU gratuit | Rapport |
+| --- | --- | --- |
+| ZeroGPU, compte gratuit | 5 min/jour ≈ 35 min/semaine | — |
+| Google Colab | 15 à 30 h/semaine, T4 | ~40× |
+| **Kaggle** | **30 h/semaine, T4/P100** | **~50×** |
+
+Le champ **« Mon serveur (sans quota) »** du panneau musique reçoit l'adresse
+qu'un Gradio lancé là-bas annonce. `tools/ace-step-gratuit.py` se colle dans un
+carnet Kaggle ou Colab et fait le reste : clone, dépendances, lancement avec
+`--share`. La ligne « Running on public URL » est celle à recopier.
+
+L'adresse vit dans le navigateur, pas dans le projet : c'est un réglage de
+machine, et elle change à chaque session du carnet.
+
+**Elle ne peut pas être n'importe laquelle.** Un Worker qui va chercher l'URL
+qu'on lui souffle est une porte ouverte sur tout ce qu'il peut joindre, services
+internes compris. Seuls les domaines des tunnels connus sont acceptés, en HTTPS :
+`.gradio.live`, `.trycloudflare.com`, `.ngrok-free.app`, `.ngrok.io`, `.loca.lt`.
+Vérifié : un hôte quelconque, un `http://` et une adresse privée sont refusés en
+400 avant tout appel sortant ; un vrai sous-domaine de tunnel passe.
+
+Le jeton Hugging Face n'est **pas** envoyé à un serveur personnel : il n'en
+demande pas, et le donner à une machine qu'on ne contrôle pas serait le perdre.
+
 ### Quatre minutes, et le choix de la longueur
 
 Le plafond est celui du modèle : ACE-Step compose jusqu'à **240 secondes** d'un

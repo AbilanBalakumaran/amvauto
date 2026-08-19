@@ -1458,7 +1458,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 12:42";
+const VERSION_PAGE = "2026-08-19 12:58";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6472,6 +6472,16 @@ const motsDe = (table, cles) => (cles || []).map((c) => table.find((e) => e[0] =
 
 /* Les choix vivent avec le projet : rouvrir le panneau doit retrouver ce qu'on
    avait décidé, pas repartir de zéro. Vide veut dire « suis le montage ». */
+/* L'adresse d'un serveur ACE-Step personnel. Elle vit sur l'appareil et non
+   dans le projet : c'est un réglage de machine, pas une décision de montage, et
+   elle change à chaque session du carnet qui l'héberge. */
+const CLE_ESPACE = "amvauto-espace";
+const espacePerso = () => localStorage.getItem(CLE_ESPACE) || "";
+const poserEspacePerso = (adresse) => {
+  if (adresse) localStorage.setItem(CLE_ESPACE, adresse.trim());
+  else localStorage.removeItem(CLE_ESPACE);
+};
+
 const briefDe = (projet) => {
   if (!projet.brief || typeof projet.brief !== "object") projet.brief = {};
   const b = projet.brief;
@@ -6667,6 +6677,7 @@ async function genererMusique(bouton, brief, paroles) {
         paroles: chanteAvec(brief) && paroles.trim() ? paroles.trim() : parolesAce(bilan),
         secondes: brief.duree,
         court: brief.duree <= 32,
+        espace: espacePerso() || undefined,
       }),
     });
     if (!reponse.ok) {
@@ -7049,6 +7060,21 @@ function ouvrirBrief() {
     ligneDuree.append(dureeTexte, duree);
     reglages.push(ligneDuree);
 
+    /* Le quota de ZeroGPU est le seul vrai plafond de la génération. Qui fait
+       tourner ACE-Step ailleurs — Kaggle, Colab, sa propre machine — n'en a
+       plus : il colle ici l'adresse que son Gradio annonce. */
+    const serveur = document.createElement("input");
+    serveur.type = "text";
+    serveur.placeholder = "https://…gradio.live (facultatif)";
+    serveur.value = espacePerso();
+    serveur.addEventListener("input", () => { poserEspacePerso(serveur.value); peindre(); });
+    const ligneServeur = document.createElement("label");
+    ligneServeur.className = "lecteur-reglage pile";
+    const serveurTexte = document.createElement("span");
+    serveurTexte.textContent = "Mon serveur (sans quota)";
+    ligneServeur.append(serveurTexte, serveur);
+    reglages.push(ligneServeur);
+
     const histoire = document.createElement("input");
     histoire.type = "text";
     histoire.placeholder = "ce que la chanson doit raconter (facultatif)";
@@ -7105,6 +7131,10 @@ function ouvrirBrief() {
           /* Le quota d'ACE-Step est vite atteint, et le brief ne sert pas qu'à
              lui : les deux boutons de copie le portent ailleurs sans rien
              coûter. Autant le dire là où l'on se heurte au mur. */
+          espacePerso()
+            ? `La génération part sur ton serveur : ${espacePerso()}. Aucun quota, et rien ne passe par Hugging Face. Vide le champ pour revenir au Space public.`
+            : "Cinq minutes de GPU par jour, c'est le plafond de ZeroGPU. Kaggle en donne trente heures par semaine et Colab une quinzaine, gratuitement : le même ACE-Step y tourne derrière un Gradio, qui annonce une adresse à coller dans « Mon serveur ». Le carnet est dans le dépôt, sous tools/.",
+          "",
           "Quota épuisé, ou envie d'essayer ailleurs ? « Copier le style » et « Copier les paroles » se collent dans Suno, mode Custom. Son palier gratuit rend une dizaine de morceaux par jour — bien plus qu'ici — mais il les filigrane et les réserve à un usage privé, là où ACE-Step, sous Apache 2.0, ne pose aucune de ces deux conditions. On télécharge, et « En apporter une » réimporte.",
         ] : [
           "Apporte le morceau que tu veux : l'outil en lit le tempo et y découpe les sections exactement comme pour une musique qu'il aurait faite lui-même. Rien d'autre ne change.",

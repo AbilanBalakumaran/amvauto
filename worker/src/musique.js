@@ -32,6 +32,28 @@ const ETAPES_DEFAUT = 27;         // moitié du réglage d'usine : deux fois moi
 const DUREE_MAX = 240;            // la borne du modèle
 const DUREE_MIN = 10;
 
+/* Un serveur personnel, annoncé par la page.
+
+   ZeroGPU donne cinq minutes de GPU par jour. Kaggle en donne trente heures par
+   semaine, Colab une quinzaine — cinquante fois plus, gratuitement. Il suffit d'y
+   faire tourner le même ACE-Step derrière un Gradio, ce qui rend une adresse
+   publique temporaire, et de la donner ici.
+
+   Cette adresse ne peut pas être n'importe laquelle. Un Worker qui va chercher
+   l'URL qu'on lui souffle est une porte ouverte sur tout ce qu'il peut joindre —
+   y compris des services internes. On n'accepte donc que les domaines des
+   tunnels connus, en HTTPS, et jamais une adresse brute. */
+const TUNNELS = [".gradio.live", ".trycloudflare.com", ".ngrok-free.app", ".ngrok.io", ".loca.lt"];
+
+function espacePersonnel(brut) {
+  if (typeof brut !== "string" || !brut) return null;
+  let cible;
+  try { cible = new URL(brut.trim()); } catch { return null; }
+  if (cible.protocol !== "https:") return null;
+  if (!TUNNELS.some((suffixe) => cible.hostname.endsWith(suffixe))) return null;
+  return `${cible.origin}`;
+}
+
 const nettoyer = (brut) => String(brut || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 
 
@@ -136,12 +158,16 @@ function trouverAudio(sortie) {
 }
 
 async function parEspaceHF(env, brief) {
-  const espace = env.ESPACE_MUSIQUE || ESPACE_DEFAUT;
+  // L'adresse annoncée par la page l'emporte : c'est le serveur de
+  // l'utilisateur, avec son GPU et sans quota.
+  const espace = brief.espace || env.ESPACE_MUSIQUE || ESPACE_DEFAUT;
   /* Une adresse complète l'emporte sur un nom de Space : c'est par là qu'on
      branche un ACE-Step tournant sur sa propre machine — même protocole, même
      code, et plus aucun quota à respecter. */
   const hote = /^https?:\/\//.test(espace) ? espace.replace(/\/+$/, "") : hoteEspace(espace);
-  const entetes = { authorization: `Bearer ${env.JETON_HF}` };
+  /* Pas de jeton vers un serveur personnel : il n'en demande pas, et l'envoyer
+     le donnerait à une machine que nous ne contrôlons pas. */
+  const entetes = !brief.espace && env.JETON_HF ? { authorization: `Bearer ${env.JETON_HF}` } : {};
   const session = crypto.randomUUID().replace(/-/g, "");
 
   const secondes = Math.min(DUREE_MAX, Math.max(DUREE_MIN, Math.round(brief.secondes) || 60));
@@ -253,9 +279,18 @@ export async function genererMusique(request, url, env) {
   if (!brief?.consigne || typeof brief.consigne !== "string" || brief.consigne.length > 4000) {
     return new Response("consigne inattendue", { status: 400 });
   }
+  if (brief.espace) {
+    const propre = espacePersonnel(brief.espace);
+    if (!propre) {
+      return new Response(JSON.stringify({
+        erreur: `Adresse de serveur refusée. Seuls les tunnels connus sont acceptés, en HTTPS : ${TUNNELS.join(", ")}.`,
+      }), { status: 400, headers: { "content-type": "application/json; charset=utf-8" } });
+    }
+    brief.espace = propre;
+  }
 
   const fournisseur = env.MUSIQUE_DEMO ? parDemonstration
-    : env.JETON_HF ? parEspaceHF
+    : (brief.espace || env.JETON_HF) ? parEspaceHF
     : env.MUSIQUE_LYRIA && env.GEMINI_API_KEY ? parLyria
     : null;
   if (!fournisseur) {
