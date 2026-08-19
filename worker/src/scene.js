@@ -194,7 +194,10 @@ export async function lireScene(request, url, env) {
   const rang = await compter(env, "scene", code.slice(0, 8), PAR_JOUR);
   if (rang < 0) {
     return new Response(JSON.stringify({
-      erreur: `Plafond atteint : ${PAR_JOUR} plans lus aujourd'hui. Il se remet à zéro demain.`,
+      erreur: `Plafond atteint : ${PAR_JOUR} plans lus aujourd'hui. Il se remet à zéro demain.\n\n`
+        + "Le montage continue sans la lecture des plans restants : il s'accorde alors sur les "
+        + "étiquettes de Sakugabooru.",
+      definitif: true,
     }), { status: 429, headers: { "content-type": "application/json; charset=utf-8" } });
   }
 
@@ -228,9 +231,56 @@ export async function lireScene(request, url, env) {
       },
     });
   } catch (erreur) {
-    return new Response(JSON.stringify({ erreur: erreur.message }), {
-      status: 502,
+    const clair = traduireEchec(erreur.message);
+    return new Response(JSON.stringify({ erreur: clair.texte, definitif: clair.definitif }), {
+      status: clair.statut,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
   }
+}
+
+/* Dire ce qui s'est passé, pas ce que le serveur a répondu.
+
+   Le message brut de Google — « HTTP 429 — {"error":{"code":429,"message":"You
+   exceeded your current quota, please check your plan and billing details…" } »
+   — était affiché tel quel, dans une alerte bloquante, au milieu d'une
+   automatisation qui continuait ensuite comme si de rien n'était. Deux défauts
+   en un : illisible, et contredit par la suite.
+
+   Chaque cas rend trois choses : un texte en français, le code HTTP qui lui
+   correspond, et surtout « definitif » — insister a-t-il un sens ? Un quota
+   épuisé ne se débloque pas en réessayant, et la page doit le savoir pour
+   arrêter la lecture au lieu de brûler quinze appels de plus. */
+export function traduireEchec(motif = "") {
+  const quota = /quota|RESOURCE_EXHAUSTED|rate.?limit|HTTP 429/i.test(motif);
+  if (quota) {
+    return {
+      statut: 429,
+      definitif: true,
+      texte:
+        "Le quota gratuit de Gemini est épuisé pour aujourd'hui. Il se remet à zéro " +
+        "au début de la journée, heure du Pacifique — vers 9 h en France.\n\n" +
+        "Le montage continue sans la lecture des plans : il s'accorde alors sur les " +
+        "étiquettes de Sakugabooru et coupe au début des plans. Plus grossier, mais " +
+        "il se fait.",
+    };
+  }
+  if (/API key|API_KEY_INVALID|PERMISSION_DENIED|HTTP 40[13]/i.test(motif)) {
+    return {
+      statut: 403,
+      definitif: true,
+      texte: "La clé Gemini de ce serveur est refusée. Il faut la renouveler dans la console Google AI Studio.",
+    };
+  }
+  if (/n'a pas répondu à temps|HTTP 50[0-9]|overloaded|UNAVAILABLE/i.test(motif)) {
+    return {
+      statut: 503,
+      definitif: false,
+      texte: "Gemini n'a pas répondu à temps. Les plans suivants sont tentés quand même.",
+    };
+  }
+  if (/trop lourd|inaccessible/i.test(motif)) {
+    return { statut: 422, definitif: false, texte: `Ce plan n'a pas pu être lu : ${motif}.` };
+  }
+  return { statut: 502, definitif: false, texte: motif.slice(0, 200) };
 }

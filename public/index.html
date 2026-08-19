@@ -6790,6 +6790,9 @@ async function lirePlans(bouton, enchaine = false, dire = null, socle = null) {
   if (!enchaine) bouton.disabled = true;
   let faits = 0;
   let echecs = 0;
+  /* Ce qui a mis fin à la lecture, en français, pour être dit à la fin plutôt
+     qu'aboyé au milieu. */
+  let motif = "";
   try {
     for (const plan of aLire) {
       if (automate.arret) break;
@@ -6803,7 +6806,11 @@ async function lirePlans(bouton, enchaine = false, dire = null, socle = null) {
           body: JSON.stringify({ id: String(plan.id), video: plan.video }),
         });
         const contenu = await reponse.json();
-        if (!reponse.ok) throw new Error(contenu?.erreur || `le serveur a répondu ${reponse.status}`);
+        if (!reponse.ok) {
+          const arret = new Error(contenu?.erreur || `le serveur a répondu ${reponse.status}`);
+          arret.definitif = Boolean(contenu?.definitif);
+          throw arret;
+        }
         fraiche = reponse.headers.get("x-lecture") !== "cache";
         // La fiche va sur tous les blocs du même rush : un plan coupé en trois
         // reste un seul plan, et se relire trois fois serait du gâchis.
@@ -6814,10 +6821,12 @@ async function lirePlans(bouton, enchaine = false, dire = null, socle = null) {
       } catch (erreur) {
         echecs += 1;
         if (echecs === 1) console.warn("lecture refusée :", erreur.message);
-        if (/[Pp]lafond|quota/.test(erreur.message)) {
-          alert(erreur.message);
-          break;
-        }
+        /* Un refus définitif — quota épuisé, clé refusée — ne se répare pas en
+           insistant : on arrête la lecture et on garde la raison pour la dire à
+           la fin. Une alerte bloquante ici disait « impossible » au milieu d'une
+           automatisation qui continuait ensuite : le message et la suite se
+           contredisaient. */
+        if (erreur.definitif) { motif = erreur.message; break; }
       }
       sauver();
       if (fraiche && plan !== aLire[aLire.length - 1]) {
@@ -6832,10 +6841,11 @@ async function lirePlans(bouton, enchaine = false, dire = null, socle = null) {
       rendreProjet();
     }
   }
-  if (enchaine) return faits > 0;
+  if (enchaine) return { faits, echecs, motif };
   alert(`${faits} plan${faits > 1 ? "s" : ""} lu${faits > 1 ? "s" : ""}` +
     (echecs ? `, ${echecs} refusé${echecs > 1 ? "s" : ""}` : "") +
-    ".\n\nLe montage automatique s'en sert désormais : l'énergie vient de l'image, et les coupes des passages forts tombent sur le moment repéré.");
+    (motif ? `\n\n${motif}` : "") +
+    (faits ? "\n\nLe montage automatique s'en sert désormais : l'énergie vient de l'image, et les coupes des passages forts tombent sur le moment repéré." : ""));
 }
 
 /* Rapprocher les plans des paroles.
@@ -7653,23 +7663,38 @@ async function automatiserAmv(bouton) {
 
     /* La lecture porte sur les sources : lire soixante blocs issus de six rushs
        ferait soixante appels pour six réponses utiles. */
-    const relus = await lirePlans(bouton, true, dire, socle);
-    if (automate.arret || !relus) return;
-
-    dire("Accord aux paroles…");
-    await accorderAuxParoles(projet, true);
+    // Surtout pas « lecture » : c'est le nom de l'état du lecteur, dans la
+    // portée du module. L'ombrer ici casserait tout ce qui s'y réfère.
+    const bilan = await lirePlans(bouton, true, dire, socle);
     if (automate.arret) return;
+    /* La lecture peut s'arrêter en route — quota épuisé — sans que le montage
+       s'arrête avec elle. Il continue avec ce qui a été lu, et la raison est
+       dite à la fin, une seule fois, au lieu d'interrompre le parcours. */
+    const note = bilan?.motif ? `\n\n${bilan.motif}` : "";
+
+    if (bilan?.faits) {
+      dire("Accord aux paroles…");
+      await accorderAuxParoles(projet, true);
+      if (automate.arret) return;
+    }
 
     dire("Nouveau montage, avec ce que l'IA a vu…");
     const second = poser();
-    if (second) dire(`${second} coupes, affinées sur ce que montrent les plans.`);
+    dire((second
+      ? `${second} coupes` + (bilan?.faits
+        ? `, affinées sur ${bilan.faits} plan${bilan.faits > 1 ? "s" : ""} lu${bilan.faits > 1 ? "s" : ""}.`
+        : ", sur les étiquettes seules.")
+      : "Montage inchangé.") + note);
+    // Un message qui explique quelque chose mérite d'être lu jusqu'au bout.
+    if (note) automate.garder = true;
   } catch (erreur) {
     alert(`Automatisation interrompue : ${erreur.message}`);
   } finally {
     automate.encours = false;
     bouton.textContent = avant;
     bouton.classList.remove("stop");
-    setTimeout(() => etat.remove(), 4000);
+    if (!automate.garder) setTimeout(() => etat.remove(), 4000);
+    automate.garder = false;
   }
 }
 

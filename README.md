@@ -1175,6 +1175,66 @@ de nouveaux. La sélection reste une décision humaine.
 Le résultat est une proposition. Elle passe par l'historique, donc « annuler »
 la défait d'un coup — l'essayer ne coûte rien.
 
+## Un message qui disait « impossible », puis continuait
+
+Quota Gemini épuisé au milieu d'une automatisation. Ce qui s'affichait :
+
+```
+HTTP 429 — {
+  "error": {
+    "code": 429,
+    "message": "You exceeded your current quota, please check your plan
+    and billing details. For more information on this error, head to:
+    https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your
+```
+
+Une alerte bloquante, en anglais, tronquée au milieu d'une phrase — et
+derrière, l'automatisation qui reprenait comme si de rien n'était et finissait
+par annoncer un montage réussi. Le message et la suite se contredisaient : on
+ne savait plus si ça avait marché.
+
+Trois défauts distincts, trois corrections.
+
+**Le serveur dit ce qui s'est passé, pas ce que Google a répondu.** Chaque cas
+rend un texte en français, le bon code HTTP, et surtout un drapeau `definitif` :
+insister a-t-il un sens ?
+
+| motif | code | insister ? |
+| --- | --- | --- |
+| quota épuisé | 429 | non — inutile jusqu'à demain |
+| clé refusée | 403 | non |
+| pas répondu à temps, surcharge | 503 | oui, plan suivant |
+| plan trop lourd, vidéo inaccessible | 422 | oui |
+
+**La page n'aboie plus au milieu du parcours.** Un refus définitif arrête la
+lecture et garde sa raison de côté ; les autres laissent la boucle continuer.
+Plus d'alerte bloquante pendant une automatisation.
+
+**Le montage continue, et le dit.** Perdre la lecture des plans n'est pas perdre
+le montage : il s'accorde alors sur les étiquettes de Sakugabooru. La suite du
+parcours se fait, et le message final dit exactement ce qui a été obtenu — puis
+reste à l'écran, au lieu de s'effacer au bout de quatre secondes comme les
+messages d'avancement.
+
+Éprouvé sur le cas exact : deux plans lus, puis 429.
+
+```
+appels /api/scene : 3
+alertes bloquantes : (aucune)
+
+50 coupes, affinées sur 2 plans lus.
+
+Le quota gratuit de Gemini est épuisé pour aujourd'hui. Il se remet à zéro
+au début de la journée, heure du Pacifique — vers 9 h en France.
+Le montage continue sans la lecture des plans : il s'accorde alors sur les
+étiquettes de Sakugabooru et coupe au début des plans. Plus grossier, mais
+il se fait.
+```
+
+Un piège au passage : la variable qui recueille ce bilan avait d'abord été
+nommée `lecture` — le nom de l'état du lecteur, dans la portée du module.
+L'ombrer dans ce bloc aurait cassé tout ce qui s'y réfère.
+
 ## Un message qui montre une porte fermée
 
 Trois routes demandent le code du coffre — génération, paroles, lecture des
