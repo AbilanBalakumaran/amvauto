@@ -547,6 +547,59 @@ Une réserve écrite dans le panneau : le palier gratuit de Suno appose un
 filigrane et réserve la musique à un usage privé. ACE-Step, sous Apache 2.0, ne
 pose aucune de ces deux conditions.
 
+## D'un projet vide à un AMV : l'assistant
+
+Les pièces existaient toutes et **ne s'enchaînaient pas**. Il fallait savoir
+qu'on compose d'abord la musique, qu'on fait ensuite lire les plans, qu'on monte
+enfin — et retrouver trois boutons rangés dans la même barre sans que rien ne
+dise dans quel ordre les prendre.
+
+Un bouton **« Créer un AMV »**, visible dès le projet vide, pose l'ordre :
+
+1. **La musique.** On la compose — voix, genre, émotion, tempo — ou on en apporte
+   une. On la génère, on l'écoute.
+2. **« Démarrer le montage automatique »**, qui ne s'active qu'une fois un tempo
+   lu. Trois questions, et trois seulement :
+
+| Question | Ce que ça change |
+| --- | --- |
+| **Un seul animé** ou **mixte** | l'outil va chercher les plans lui-même, sur un titre ou sur plusieurs |
+| **Dans l'ordre** ou **libre** | la chronologie de l'animé, ou l'accord avec la musique |
+| **Lecture des plans** | l'IA regarde chaque plan, ou l'on s'en tient aux étiquettes |
+
+3. **« Automatiser l'AMV »** — recherche des plans, mesure des durées, lecture,
+   montage. Il ne reste qu'à appuyer sur lecture.
+
+**Un projet vide est exactement le moment où l'assistant sert**, puisqu'il sait
+chercher les plans. Le renvoyer vers l'explorateur, comme le faisait la note
+précédente, c'était lui demander de faire à la main ce qu'on venait de lui
+proposer d'automatiser. Le panneau de composition marche donc désormais sans un
+seul plan : faute d'image à interroger, tout devient un choix, et il le dit.
+
+### « Dans l'ordre », et ce qu'on y gagne
+
+Le montage libre laisse la musique décider : à chaque case, le rush qui lui va le
+mieux. C'est le meilleur accord, et **l'ordre du récit s'y perd**.
+
+« Dans l'ordre » suit la chronologie — épisode, puis numéro de plan — et n'y
+déroge pas. On y perd l'accord d'énergie, on y gagne un récit : les plans se
+suivent comme dans l'animé, et seule la durée des coupes reste dictée par la
+musique.
+
+Éprouvé de bout en bout, depuis un projet vide et sur des épisodes volontairement
+mélangés à la source (5, 2, 9, 1, 7, 3) : le montage rend `1 → 2 → 3 → 5 → 7 → 9`
+puis reprend le cycle. Soixante coupes pour une minute de musique.
+
+### Combien de plans chercher
+
+Il n'en faut pas un par coupe — un même plan sert plusieurs fois, à des instants
+différents de sa source — mais il en faut assez pour que le montage ne tourne pas
+en rond. Un rush par tranche de cinq secondes de musique donne une variété
+honnête sans faire exploser ni l'attente ni la mémoire, plafonné à soixante.
+
+Un défaut d'affichage corrigé au passage : `minutage` arrondissait les secondes
+avant de les séparer des minutes, et rendait **« 0:60 »** pour 59,6 secondes.
+
 ## Monter sur la musique
 
 Le travail dans l'autre sens : au lieu de déduire une musique du montage,

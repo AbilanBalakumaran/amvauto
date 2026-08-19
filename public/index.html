@@ -1445,7 +1445,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 11:36";
+const VERSION_PAGE = "2026-08-19 11:53";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2570,7 +2570,16 @@ function rendreProjet() {
     return;
   }
   if (!projet.plans.length) {
-    morceaux.push(note(`« ${projet.nom} » est vide. Ajoute des plans depuis l'explorateur.`));
+    morceaux.push(note(`« ${projet.nom} » est vide. Choisis des plans dans l'explorateur — ou laisse l'outil s'en charger.`));
+    /* Un projet vide est exactement le moment où l'assistant sert : il sait
+       chercher les plans lui-même. Le renvoyer vers l'explorateur serait lui
+       demander de faire à la main ce qu'on vient de lui proposer d'automatiser. */
+    const assistant = document.createElement("button");
+    assistant.type = "button";
+    assistant.className = "note-action";
+    assistant.textContent = "Créer un AMV";
+    assistant.addEventListener("click", () => ouvrirAssistant("musique"));
+    morceaux.push(assistant);
     vue.replaceChildren(...morceaux);
     return;
   }
@@ -2583,7 +2592,12 @@ function rendreProjet() {
   lecture.echelleManuelle = false;
   lecture.index = 0;
   lecture.position = 0;
-  morceaux.push(editeur(projet));
+  const assistant = document.createElement("button");
+  assistant.type = "button";
+  assistant.className = "note-action";
+  assistant.textContent = "Créer un AMV";
+  assistant.addEventListener("click", () => ouvrirAssistant("musique"));
+  morceaux.push(assistant, editeur(projet));
   vue.replaceChildren(...morceaux);
   remplirBarreOutils(projet);
   poserPlan(0, 0);
@@ -5890,10 +5904,25 @@ function fenetreDans(plan, duree, viserLePic = false) {
   return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
 }
 
-function construireMontage(projet) {
+/* Deux façons d'enchaîner les plans.
+
+   « Libre » laisse la musique décider : à chaque case, le rush qui lui va le
+   mieux. C'est ce qui donne le meilleur accord, et l'ordre du récit s'y perd.
+
+   « Dans l'ordre » suit la chronologie — épisode, puis numéro de plan — et n'y
+   déroge pas. On y perd l'accord d'énergie, on y gagne un récit : les plans se
+   suivent comme dans l'animé, et seule la durée des coupes reste dictée par la
+   musique. C'est le bon choix pour un AMV qui raconte quelque chose. */
+const parChronologie = (a, b) =>
+  (Number(a.episode) || 0) - (Number(b.episode) || 0) || String(a.id).localeCompare(String(b.id));
+
+function construireMontage(projet, { ordre = "libre" } = {}) {
   const rythme = projet.rythme;
   const sources = projet.plans.filter((plan) => dureeSource(plan) >= PLAN_MINI);
   if (!rythme?.bpm || !sources.length) return null;
+  const chrono = ordre === "chrono";
+  const suite = chrono ? [...sources].sort(parChronologie) : null;
+  let rangSuite = 0;
 
   const periode = 60 / rythme.bpm;
   const sections = rythme.sections?.length
@@ -5928,13 +5957,18 @@ function construireMontage(projet) {
       const rang = montage.length;
 
       let choix = null;
-      let meilleure = Infinity;
-      for (const plan of sources) {
-        // Un rush trop court pour la case n'est pas disqualifié — il n'y en
-        // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
-        const court = dureeSource(plan) < vise ? 3 : 0;
-        const note = noterCandidat(plan, section, vus, rang) + court;
-        if (note < meilleure) { meilleure = note; choix = plan; }
+      if (chrono) {
+        choix = suite[rangSuite % suite.length];
+        rangSuite += 1;
+      } else {
+        let meilleure = Infinity;
+        for (const plan of sources) {
+          // Un rush trop court pour la case n'est pas disqualifié — il n'y en
+          // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
+          const court = dureeSource(plan) < vise ? 3 : 0;
+          const note = noterCandidat(plan, section, vus, rang) + court;
+          if (note < meilleure) { meilleure = note; choix = plan; }
+        }
       }
       if (!choix) break;
 
@@ -5960,6 +5994,38 @@ function construireMontage(projet) {
   sources.forEach((plan) => { delete plan.__pris; delete plan.__picVu; });
   montage.forEach((plan) => { delete plan.__pris; delete plan.__picVu; });
   return montage.length ? montage : null;
+}
+
+/* Aller chercher les plans soi-même.
+
+   Jusqu'ici le montage automatique choisissait parmi les rushs déjà posés : il
+   fallait donc les avoir cherchés à la main, un par un. Pour un AMV entier c'est
+   le gros du travail, et c'est précisément celui qu'on veut confier.
+
+   Le nombre demandé suit la durée de la musique. Il n'en faut pas un par coupe —
+   un même plan sert plusieurs fois, à des instants différents de sa source — mais
+   il en faut assez pour que le montage ne tourne pas en rond : compter un rush
+   par tranche de cinq secondes donne une variété honnête sans faire exploser ni
+   l'attente ni la mémoire. */
+const RUSHS_MAX = 60;
+
+async function chercherRushs(animes, secondes) {
+  const parAnime = Math.max(8, Math.ceil(secondes / 5 / Math.max(1, animes.length)));
+  const trouves = [];
+  for (const anime of animes) {
+    const cible = `/api/rushes?anime=${encodeURIComponent(anime)}&top=${Math.min(60, parAnime)}&pool=600`;
+    try {
+      const reponse = await fetch(cible);
+      const contenu = await reponse.json();
+      if (!reponse.ok) throw new Error(contenu?.error || `le serveur a répondu ${reponse.status}`);
+      (contenu.rushes || []).forEach((rush) => trouves.push({ ...rush, anime }));
+    } catch (erreur) {
+      console.warn(`aucun rush pour « ${anime} » :`, erreur.message);
+    }
+  }
+  // Un même plan peut sortir de deux recherches : on ne le garde qu'une fois.
+  const uniques = [...new Map(trouves.map((r) => [String(r.id), r])).values()];
+  return uniques.slice(0, RUSHS_MAX);
 }
 
 /* Faire lire les plans.
@@ -6027,11 +6093,14 @@ async function lirePlans(bouton) {
       }
     }
   } finally {
-    bouton.disabled = false;
-    bouton.textContent = avant;
-    enregistrer(projet);
-    rendreProjet();
+    if (!enchaine) {
+      bouton.disabled = false;
+      bouton.textContent = avant;
+      enregistrer(projet);
+      rendreProjet();
+    }
   }
+  if (enchaine) return;
   alert(`${faits} plan${faits > 1 ? "s" : ""} lu${faits > 1 ? "s" : ""}` +
     (echecs ? `, ${echecs} refusé${echecs > 1 ? "s" : ""}` : "") +
     ".\n\nLe montage automatique s'en sert désormais : l'énergie vient de l'image, et les coupes des passages forts tombent sur le moment repéré.");
@@ -6053,7 +6122,7 @@ function monterSurLaMusique(bouton) {
     return;
   }
 
-  const montage = construireMontage(projet);
+  const montage = construireMontage(projet, { ordre: projet.amv?.ordre });
   if (!montage) {
     alert("Rien à poser — les durées des rushs n'ont pas encore été mesurées, réessaie dans un instant.");
     return;
@@ -6129,9 +6198,22 @@ function tempoPour(cadence) {
 
 const NOMS_SECTION = ["Intro", "Build", "Drop", "Breakdown", "Build", "Drop", "Outro"];
 
+/* Un montage vide n'empêche pas de composer : c'est même l'ordre naturel du
+   travail quand on part de la musique. Faute d'image à interroger, tout devient
+   un choix — et le panneau le dit plutôt que de renvoyer l'utilisateur chercher
+   des plans qu'il comptait justement faire chercher. */
+function bilanVierge(projet) {
+  return {
+    plans: [], durees: [], totalSec: 120, cadence: 2,
+    tempo: tempoPour(2), dominantes: [], pesees: [],
+    sections: [{ debut: 0, fin: 120, energie: 2 }], techniques: [],
+    anime: projet.nom || "", vierge: true,
+  };
+}
+
 function analyserMontage(projet) {
   const plans = projet.plans.filter((plan) => !plan.youtube);
-  if (!plans.length) return null;
+  if (!plans.length) return bilanVierge(projet);
   const durees = plans.map((plan) => duree(plan));
   const totalSec = durees.reduce((a, c) => a + c, 0);
 
@@ -6180,7 +6262,10 @@ function analyserMontage(projet) {
     anime: projet.plans.find((plan) => plan.anime)?.anime || projet.nom };
 }
 
-const minutage = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+const minutage = (s) => {
+  const t = Math.max(0, Math.round(s));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+};
 
 /* Le vocabulaire de composition.
 
@@ -6455,6 +6540,226 @@ async function genererMusique(bouton, brief, paroles) {
   }
 }
 
+/* --- l'assistant : d'un projet vide à un AMV ------------------------- */
+/* Les pièces existaient toutes et ne s'enchaînaient pas. Il fallait savoir
+   qu'on compose d'abord la musique, qu'on fait ensuite lire les plans, qu'on
+   monte enfin — et retrouver trois boutons rangés dans la même barre sans que
+   rien ne dise dans quel ordre les prendre. L'assistant pose cet ordre.
+
+   Deux étapes seulement, parce que deux décisions comptent vraiment : quelle
+   musique, et sur quelles images. Le reste, l'outil s'en charge. */
+
+const amvDe = (projet) => {
+  if (!projet.amv || typeof projet.amv !== "object") projet.amv = {};
+  const a = projet.amv;
+  if (!Array.isArray(a.animes)) a.animes = [];
+  if (!a.ordre) a.ordre = "libre";
+  if (!a.portee) a.portee = "unique";
+  if (typeof a.lire !== "boolean") a.lire = true;
+  return a;
+};
+
+function ouvrirAssistant(etape = "musique") {
+  const projet = projetActif() || creerProjet();
+  if (etape === "musique") return ouvrirBrief();
+
+  const amv = amvDe(projet);
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = "Montage automatique";
+
+  const meta = document.createElement("div");
+  meta.className = "lecteur-meta";
+  meta.style.whiteSpace = "pre-line";
+
+  const reglages = [];
+  const rangee = (intitule, table, lire, ecrire) => {
+    const enveloppe = document.createElement("div");
+    enveloppe.className = "lecteur-reglage pile";
+    const texte = document.createElement("span");
+    texte.textContent = intitule;
+    const pastilles = document.createElement("div");
+    pastilles.className = "pastilles";
+    table.forEach(([cle, nom]) => {
+      const pastille = document.createElement("button");
+      pastille.type = "button";
+      pastille.className = "pastille";
+      pastille.textContent = nom;
+      pastille.addEventListener("click", () => { ecrire(cle); accorder(); });
+      pastilles.append(pastille);
+    });
+    enveloppe.append(texte, pastilles);
+    enveloppe.__peindre = () => {
+      [...pastilles.children].forEach((el, k) => el.classList.toggle("on", lire() === table[k][0]));
+    };
+    reglages.push(enveloppe);
+    return enveloppe;
+  };
+
+  rangee("Sources", [["unique", "Un seul animé"], ["mixte", "Mixte"]],
+    () => amv.portee, (v) => { amv.portee = v; });
+  rangee("Ordre", [["libre", "Libre, sur la musique"], ["chrono", "Dans l'ordre"]],
+    () => amv.ordre, (v) => { amv.ordre = v; });
+  rangee("Lecture des plans", [[true, "Oui, plus juste"], [false, "Non, plus rapide"]].map(([v, n]) => [String(v), n]),
+    () => String(amv.lire), (v) => { amv.lire = v === "true"; });
+
+  const champ = document.createElement("input");
+  champ.type = "text";
+  champ.placeholder = "Chainsaw Man, Jujutsu Kaisen, Demon Slayer…";
+  champ.value = amv.animes.join(", ")
+    || [...new Set(projet.plans.map((p) => p.anime).filter(Boolean))].join(", ");
+  champ.addEventListener("input", () => {
+    amv.animes = champ.value.split(",").map((x) => x.trim()).filter(Boolean);
+    peindre();
+  });
+  const ligneAnimes = document.createElement("label");
+  ligneAnimes.className = "lecteur-reglage pile";
+  const animesTexte = document.createElement("span");
+  ligneAnimes.append(animesTexte, champ);
+  reglages.push(ligneAnimes);
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+
+  const lancer = document.createElement("button");
+  lancer.type = "button";
+  lancer.className = "fort";
+  lancer.textContent = "Automatiser l'AMV";
+  lancer.addEventListener("click", () => automatiserAmv(lancer, meta));
+
+  const retour = document.createElement("button");
+  retour.type = "button";
+  retour.textContent = "← La musique";
+  retour.addEventListener("click", () => ouvrirAssistant("musique"));
+
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.className = "fort";
+  fermer.textContent = "Fermer";
+  fermer.addEventListener("click", fermerFeuille);
+  actions.append(lancer, retour, fermer);
+
+  const peindre = () => {
+    const seul = amv.portee === "unique";
+    animesTexte.textContent = seul ? "L'animé" : "Les animés, séparés par des virgules";
+    champ.placeholder = seul ? "Chainsaw Man" : "Chainsaw Man, Jujutsu Kaisen, Demon Slayer…";
+    const noms = amv.animes.length ? amv.animes : ["(à renseigner)"];
+    const duree = projet.rythme?.duree;
+    meta.textContent = [
+      projet.rythme?.bpm
+        ? `Musique : ${Math.round(projet.rythme.bpm)} BPM, ${minutage(duree || 0)}, ${projet.rythme.sections?.length || 1} sections.`
+        : "Aucune musique pour l'instant — reviens à l'étape précédente : c'est son tempo qui donne la grille.",
+      `Sources : ${seul ? noms[0] : noms.join(" · ")}.`,
+      "",
+      seul
+        ? "Un seul animé : l'AMV raconte une histoire, et les plans se répondent."
+        : "Mixte : plusieurs animés se croisent. Cherche des ambiances proches, sinon le montage part dans tous les sens.",
+      amv.ordre === "chrono"
+        ? "Dans l'ordre : les plans se suivent comme dans l'animé, seule la durée des coupes vient de la musique. Pour un AMV qui raconte."
+        : "Libre : à chaque coupe, le plan qui colle le mieux à ce que fait la musique. Le meilleur accord, au prix du récit.",
+      amv.lire
+        ? "Les plans seront lus par l'IA : l'énergie vient de l'image, et les coupes fortes tombent sur l'instant fort. Compte quelques secondes par plan."
+        : "Sans lecture : l'outil s'accorde sur les étiquettes de Sakugabooru et coupe au début des plans. Rapide, plus grossier.",
+      "",
+      `${projet.plans.length} plans déjà dans le montage. Ce qui manque sera cherché.`,
+    ].join("\n");
+  };
+
+  const accorder = () => {
+    reglages.forEach((r) => r.__peindre?.());
+    peindre();
+    sauver();
+  };
+
+  corps.append(titre, meta, ...reglages, actions);
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
+  accorder();
+}
+
+/* Tout faire, dans l'ordre, en disant où l'on en est. Chaque étape est déjà
+   éprouvée séparément ; l'assistant ne fait que les enchaîner sans laisser
+   l'utilisateur deviner laquelle vient ensuite. */
+async function automatiserAmv(bouton, meta) {
+  const projet = projetActif();
+  if (!projet) return;
+  const amv = amvDe(projet);
+  if (!projet.rythme?.bpm) {
+    alert("Il faut d'abord une musique : reviens à l'étape précédente.");
+    return;
+  }
+
+  const avant = bouton.textContent;
+  bouton.disabled = true;
+  const dire = (quoi) => { bouton.textContent = quoi; };
+  try {
+    const animes = amv.animes.length
+      ? (amv.portee === "unique" ? amv.animes.slice(0, 1) : amv.animes)
+      : [...new Set(projet.plans.map((p) => p.anime).filter(Boolean))];
+
+    if (animes.length) {
+      dire("Recherche des plans…");
+      const trouves = await chercherRushs(animes, projet.rythme.duree || 120);
+      const connus = new Set(projet.plans.map((p) => String(p.id)));
+      const neufs = trouves.filter((r) => !connus.has(String(r.id)));
+      neufs.forEach((rush) => {
+        const plan = { ...rush, duree: null, entree: 0, sortie: null };
+        projet.plans.push(plan);
+        preparerLocal(plan);
+        mesurerDuree(plan);
+      });
+      sauver();
+    }
+    if (!projet.plans.length) {
+      alert("Aucun plan trouvé. Vérifie le nom de l'animé.");
+      return;
+    }
+
+    /* Les durées se lisent dans les fichiers, et rien ne peut être découpé
+       avant. On laisse le temps aux mesures d'arriver plutôt que de monter sur
+       des durées absentes. */
+    dire("Mesure des plans…");
+    for (let attente = 0; attente < 40; attente += 1) {
+      const prets = projet.plans.filter((plan) => dureeSource(plan) >= PLAN_MINI).length;
+      if (prets >= Math.min(projet.plans.length, 8)) break;
+      await new Promise((suite) => setTimeout(suite, 500));
+    }
+
+    if (amv.lire) {
+      dire("Lecture des plans…");
+      await lirePlans(bouton, true);
+    }
+
+    dire("Montage…");
+    const montage = construireMontage(projet, { ordre: amv.ordre });
+    if (!montage) {
+      alert("Rien à monter : aucune durée n'a pu être mesurée.");
+      return;
+    }
+    projet.plans = montage;
+    sauver();
+    enregistrer(projet);
+    fermerFeuille();
+    rendreProjet();
+    rendre();
+    const total = montage.reduce((somme, plan) => somme + (sortieDe(plan) - entreeDe(plan)), 0);
+    alert(`AMV monté : ${montage.length} coupes, ${minutage(total)}.\n\nAppuie sur lecture. « Annuler » défait tout d'un coup.`);
+  } catch (erreur) {
+    alert(`Automatisation interrompue : ${erreur.message}`);
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = avant;
+  }
+}
+
 function ouvrirBrief() {
   const projet = projetActif();
   const bilan = projet && analyserMontage(projet);
@@ -6478,9 +6783,7 @@ function ouvrirBrief() {
   // Renseignés seulement s'il y a un montage : sans plans, rien à régler.
   const reglages = [];
 
-  if (!bilan) {
-    meta.textContent = "Ajoute des plans au montage : le brief se calcule à partir de leur durée et de leur ambiance.";
-  } else {
+  {
     const brief = briefDe(projet);
     if (!brief.duree) brief.duree = dureeConseillee(bilan);
     if (!brief.voix) brief.voix = "instrumental";
@@ -6631,12 +6934,16 @@ function ouvrirBrief() {
       const chante = composer && chanteAvec(brief);
       tempoTexte.textContent = `Tempo · ${brief.bpm || bilan.tempo.bpm} BPM`;
       meta.textContent = [
-        `${bilan.plans.length} plans · ${minutage(bilan.totalSec)} · coupe médiane ${bilan.cadence.toFixed(2)} s`,
-        `Le montage propose ${bilan.tempo.bpm} BPM — ${battue}.`,
-        `Ambiances relevées : ${bilan.dominantes.slice(0, 3).map((a) => MOODS_FR[a] || a).join(", ") || "aucune"}` +
-          `${bilan.techniques.length ? ` · ${bilan.techniques.join(", ")}` : ""}`,
-        "",
-        "Tout part du montage, et tout se reprend. Ce qui n'est pas choisi suit ce que l'image raconte ; ce qui l'est l'emporte.",
+        ...(bilan.vierge ? [
+          "Montage vide : rien à déduire, donc tout se choisit. Compose la musique, l'outil ira chercher les plans ensuite.",
+        ] : [
+          `${bilan.plans.length} plans · ${minutage(bilan.totalSec)} · coupe médiane ${bilan.cadence.toFixed(2)} s`,
+          `Le montage propose ${bilan.tempo.bpm} BPM — ${battue}.`,
+          `Ambiances relevées : ${bilan.dominantes.slice(0, 3).map((a) => MOODS_FR[a] || a).join(", ") || "aucune"}` +
+            `${bilan.techniques.length ? ` · ${bilan.techniques.join(", ")}` : ""}`,
+          "",
+          "Tout part du montage, et tout se reprend. Ce qui n'est pas choisi suit ce que l'image raconte ; ce qui l'est l'emporte.",
+        ]),
         "",
         chante
           ? "Les paroles partent telles qu'elles sont écrites ci-dessous, mot pour mot. « Écrire les paroles » les fait rédiger d'après le montage, en anglais — c'est ce que les modèles chantent le mieux, et de loin."
@@ -6652,8 +6959,8 @@ function ouvrirBrief() {
         ]),
         "",
         projet.rythme?.bpm
-          ? `Musique en place : ${Math.round(projet.rythme.bpm)} BPM, ${projet.rythme.sections?.length || 1} section${(projet.rythme.sections?.length || 1) > 1 ? "s" : ""}. « Monter sur la musique » pose le montage.`
-          : "Dès qu'une musique est là, son tempo se lit et « Monter sur la musique » s'active.",
+          ? `Musique en place : ${Math.round(projet.rythme.bpm)} BPM, ${projet.rythme.sections?.length || 1} section${(projet.rythme.sections?.length || 1) > 1 ? "s" : ""}. Écoute-la, puis passe au montage automatique.`
+          : "Dès qu'une musique est là, son tempo se lit et l'étape suivante s'ouvre.",
       ].join("\n");
     };
 
@@ -6722,8 +7029,8 @@ function ouvrirBrief() {
     const monter = document.createElement("button");
     monter.type = "button";
     monter.className = "fort";
-    monter.textContent = "Monter sur la musique";
-    monter.addEventListener("click", () => { fermerFeuille(); monterSurLaMusique(null); });
+    monter.textContent = "Démarrer le montage automatique";
+    monter.addEventListener("click", () => ouvrirAssistant("montage"));
 
     actions.append(generer, monter, premier, second, remettre);
     accorder();
