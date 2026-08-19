@@ -1472,6 +1472,66 @@ moniteur pendant  1280×720
 moniteur après    380×213
 ```
 
+### Un rendu qui ne part pas pour rien
+
+Vidéo exportée sans son, et un aperçu qui saute à chaque lecture. Deux
+symptômes, une même cause de fond : l'outil laissait faire au lieu de dire ce
+qui manquait.
+
+**Le son.** Un navigateur ne peut pas rouvrir seul un fichier choisi la veille —
+on ne garde que son nom et sa durée. Après un rechargement de la page, la piste
+son est donc vide, et le rendu partait quand même : une demi-heure d'écran
+allumé pour un fichier muet. Le panneau le mentionnait dans son texte ; il ne
+suffit pas de le mentionner. Le bouton **porte maintenant ce qui manque**, et un
+bouton de secours rouvre le fichier sans quitter le panneau.
+
+```
+1. musique fermée après rechargement
+   bouton  « Il manque la musique »   (grisé)
+   secours « Rouvrir "ma-zik.mp3" »
+2. musique redonnée, fichiers en route
+   bouton  « Préparation 0/4… »       (grisé)
+3. tout est prêt
+   bouton  « Rendre la vidéo »        ✔ il s'allume seul
+```
+
+Le panneau se recalcule chaque seconde : les fichiers continuent d'arriver
+pendant qu'on le lit, et il faudrait sinon le refermer pour s'apercevoir que
+c'est prêt.
+
+**L'aperçu qui saute.** Ce n'est pas une panne, c'est une conséquence : deux
+cents plans qui ne se répètent jamais, ce sont deux cents fichiers à rapatrier,
+et sur un lien mobile la lecture va plus vite que le téléchargement. Ce qui
+manquait n'était pas de la vitesse, c'était de le dire. Un bandeau discret, en
+bas du moniteur, donne les deux chiffres qui comptent — et se retire de lui-même
+quand il n'a plus rien à dire :
+
+```
+0/5 plans sur l'appareil · celui-ci 0 % — l'aperçu saute tant que les fichiers arrivent
+```
+
+Au passage, un vrai gaspillage corrigé : quand le lecteur laisse un plan à la
+file d'import, il gardait le plan précédent en lecture — un décodage qui
+continuait pour une image que le moniteur ne montrait plus. Il est mis en pause.
+
+### Trois imports en parallèle : mesuré, et abandonné
+
+L'idée allait de soi sur un lien mobile : au lieu d'un fichier à la fois, trois.
+Mesuré à 8 Mb/s et 150 ms de latence, sur dix plans d'une seconde :
+
+| | temps sans image | octets utiles reçus |
+| --- | --- | --- |
+| un seul import | 65 % | 12,9 Mo |
+| trois en parallèle | 63 % | 6,5 Mo |
+
+Rien de gagné, et deux fois moins d'octets utiles. La raison est simple une fois
+vue : trois fichiers avancent ensemble et arrivent tous les trois en retard,
+alors que la tête de lecture les réclame **dans l'ordre**. Un seul à la fois,
+c'est le premier qui est prêt le plus tôt — et c'est celui-là qu'on regarde.
+
+Le rendu, lui, tient même sur un processeur bridé quatre fois : 1280×720,
+15,88 s de son à niveau 0,135 pour 16 s de montage.
+
 ### Ce qu'il faut assumer plutôt que cacher
 
 **Le rendu se fait en temps réel.** Quatre minutes de montage prennent quatre

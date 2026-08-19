@@ -817,6 +817,26 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   background: #000;
 }
 
+/* Ce que l'aperçu attend, dit sans couvrir l'image : un bandeau discret en bas
+   du moniteur, qui ne s'allume que pendant un téléchargement. Un écran qui
+   saute pendant qu'on lit n'est pas un défaut si l'on sait qu'il se remplit —
+   c'en est un quand rien ne le dit. */
+.preparation {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--doux);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+}
+.preparation[hidden] { display: none; }
+
 .transport { display: flex; align-items: center; gap: var(--e3); }
 .lecture {
   flex: none;
@@ -2839,7 +2859,12 @@ function editeur(projet) {
   vide.className = "ecran-vide";
   vide.id = "ecran-vide";
 
-  ecran.append(moniteur, lecteurs[0], lecteurs[1], vide);
+  const preparation = document.createElement("div");
+  preparation.className = "preparation";
+  preparation.id = "preparation";
+  preparation.hidden = true;
+
+  ecran.append(moniteur, lecteurs[0], lecteurs[1], vide, preparation);
   bloc.append(ecran, transport(), pisteComplete(projet));
   lecture.actif = 0;
   reveillerMoniteur(1500);
@@ -4678,6 +4703,10 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   if (change && laisserAuReseau(plan)) {
     video.dataset.plan = "";
     video.dataset.source = "";
+    /* Le lecteur tenait encore le plan précédent. Le laisser tourner, c'est un
+       décodage qui continue pour une image que le moniteur ne montre plus — et
+       le son du fichier d'avant qui traîne. On l'arrête. */
+    video.pause();
     preparerSuivant(index + 1);
     prioriserImports(index);
     majTransport();
@@ -4714,6 +4743,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   preparerSuivant(index + 1);
   prioriserImports(index);
   majTransport();
+  majPreparation(projet);
 }
 
 function planSuivant() {
@@ -5079,6 +5109,14 @@ const arretsImport = new Map();
    partagent la même connexion vers le même domaine : les paralléliser ne gagne
    rien en débit, cela ne fait que retarder le premier fichier — celui sur lequel
    on travaille. Le réglage reste ici pour être révisé si le transport change. */
+/* Un seul import à la fois, et c'est mesuré.
+
+   Trois en parallèle paraissaient évidents sur un lien mobile. À 8 Mb/s et
+   150 ms de latence, l'aperçu passait de 65 % à 63 % de temps sans image — rien
+   — et recevait deux fois moins d'octets utiles : trois fichiers avancent
+   ensemble et arrivent tous les trois en retard, alors que la tête de lecture,
+   elle, les réclame dans l'ordre. Un seul à la fois, c'est le premier qui est
+   prêt le plus tôt. */
 const IMPORTS_PARALLELES = 1;
 // Combien de plans à venir la file remonte devant les autres.
 const PORTEE_IMPORT = 8;
@@ -5293,6 +5331,32 @@ async function lancerImport() {
   }
 }
 
+/* Dire à l'écran ce qu'il attend.
+
+   Un aperçu qui saute pendant la lecture passe pour une panne. Il n'en est pas
+   une : deux cents plans qui ne se répètent jamais, ce sont deux cents fichiers
+   à rapatrier, et sur un lien mobile la lecture va plus vite que le
+   téléchargement. Ce qui manquait n'était pas de la vitesse — c'était de le
+   dire. Le bandeau ne s'allume que pendant un transfert, disparaît quand tout
+   est là, et donne les deux chiffres qui comptent : combien de plans sont
+   prêts, et où en est celui qu'on attend. */
+function majPreparation(projet) {
+  const bandeau = $("preparation");
+  if (!bandeau) return;
+  const aRapatrier = projet.plans.filter((plan) => !plan.youtube && mediaDe(plan));
+  const prets = aRapatrier.filter(estLocal).length;
+  const total = aRapatrier.length;
+  if (!total || prets >= total) { bandeau.hidden = true; return; }
+
+  const courant = projet.plans[lecture.index];
+  const part = courant && avancement(courant);
+  bandeau.hidden = false;
+  bandeau.textContent =
+    `${prets}/${total} plans sur l'appareil` +
+    (typeof part === "number" ? ` · celui-ci ${Math.round(part * 100)} %` : "") +
+    " — l'aperçu saute tant que les fichiers arrivent";
+}
+
 // L'interface reflète l'avancement, et le plan courant bascule sur sa copie
 // locale dès qu'elle est prête.
 function majImports() {
@@ -5319,6 +5383,7 @@ function majImports() {
     })();
     jauge.querySelector(".clip-import-jauge").style.width = `${Math.round(part * 100)}%`;
   });
+  majPreparation(projet);
   const bilan = $("zoom-total");
   if (bilan) bilan.textContent = bilanProjet(projet);
 }
@@ -5630,6 +5695,31 @@ $("btn-export").addEventListener("click", () => {
   ouvrirExport(projet);
 });
 
+/* Ce que le panneau raconte, recalculé à chaque seconde : les fichiers
+   continuent d'arriver pendant qu'on le lit. */
+function texteExport(projet, format, extension) {
+  const longueur = total(projet);
+  const absents = plansAbsents(projet).length;
+  const poids = (longueur * (5e6 + 192e3)) / 8 / 1e6;
+  return [
+    `${projet.plans.length} plans · ${minutage(longueur)}`,
+    lecture.audio
+      ? `Musique : ${projet.audio?.nom || "chargée"}.`
+      : projet.audio?.nom
+        ? `Musique « ${projet.audio.nom} » : le fichier n'est plus ouvert. Un navigateur ne peut pas rouvrir seul un fichier choisi la dernière fois — il faut le redonner, en bas de ce panneau. Sans lui la vidéo sortirait muette.`
+        : "Aucune musique : la vidéo sortirait muette. Choisis un fichier en bas de ce panneau.",
+    "",
+    format
+      ? `La vidéo sortira en ${extension}, ${IMAGES_PAR_SECONDE} images par seconde, ${RENDU_LARGEUR}×${RENDU_HAUTEUR}, environ ${poids.toFixed(0)} Mo.`
+      : "Ce navigateur ne sait pas enregistrer de vidéo.",
+    `Le rendu se fait en temps réel : compte ${minutage(longueur)}, écran allumé et application au premier plan.`,
+    "",
+    absents
+      ? `${absents} plan${absents > 1 ? "s ne sont" : " n'est"} pas encore sur l'appareil. Le rendu attend : filmer un montage incomplet donnerait du noir, et coûterait le même temps. Laisse la page ouverte, les fichiers arrivent.`
+      : "Tous les plans sont sur l'appareil : le rendu sera complet.",
+  ].join("\n");
+}
+
 function ouvrirExport(projet) {
   const fond = $("feuille");
   const boite = document.createElement("div");
@@ -5643,27 +5733,11 @@ function ouvrirExport(projet) {
 
   const format = formatRendu();
   const extension = format && format.startsWith("video/mp4") ? "MP4" : "WebM";
-  const absents = plansAbsents(projet);
-  const longueur = total(projet);
 
   const meta = document.createElement("div");
   meta.className = "lecteur-meta";
   meta.style.whiteSpace = "pre-line";
-  const poids = (longueur * (5e6 + 192e3)) / 8 / 1e6;
-  meta.textContent = [
-    `${projet.plans.length} plans · ${minutage(longueur)}`,
-    lecture.audio ? `Musique : ${projet.audio?.nom || "chargée"}.` :
-      "Aucune musique chargée : la vidéo sortira muette. Recharge le fichier depuis la piste son.",
-    "",
-    format
-      ? `La vidéo sortira en ${extension}, ${IMAGES_PAR_SECONDE} images par seconde, ${RENDU_LARGEUR}×${RENDU_HAUTEUR}.`
-      : "Ce navigateur ne sait pas enregistrer de vidéo.",
-    `Le rendu se fait en temps réel : compte ${minutage(longueur)}, écran allumé et application au premier plan.`,
-    `Le fichier pèsera environ ${poids.toFixed(0)} Mo.`,
-    absents.length
-      ? `\n${absents.length} plan${absents.length > 1 ? "s ne sont" : " n'est"} pas encore sur l'appareil et sortira${absents.length > 1 ? "ont" : ""} noir. Laisse la page ouverte le temps que le téléchargement finisse, puis reviens ici.`
-      : "\nTous les plans sont sur l'appareil : le rendu sera complet.",
-  ].join("\n");
+  meta.textContent = texteExport(projet, format, extension);
 
   const etat = document.createElement("div");
   etat.className = "lecteur-meta";
@@ -5678,11 +5752,46 @@ function ouvrirExport(projet) {
   const video = document.createElement("button");
   video.type = "button";
   video.className = "fort";
-  video.textContent = "Rendre la vidéo";
-  video.disabled = !format;
   video.addEventListener("click", () => {
+    if (rendu.encours) { arreterRendu(); return; }
     lancerRendu(projet, video, etat, (blob, ext) => livrerRendu(blob, ext, projet, livraison));
   });
+
+  /* Un rendu qui part quand même et sort muet, ou troué de noir, c'est une
+     demi-heure perdue à filmer un écran incomplet — et sur un téléphone, une
+     demi-heure d'écran allumé. Les deux conditions se vérifient avant, pas
+     après : le bouton dit ce qui manque au lieu de laisser faire. */
+  const jauger = () => {
+    if (rendu.encours) return;
+    const absents = plansAbsents(projet);
+    const restants = absents.length;
+    if (!format) {
+      video.disabled = true;
+      video.textContent = "Rendu impossible ici";
+      return;
+    }
+    if (!lecture.audio) {
+      video.disabled = true;
+      video.textContent = "Il manque la musique";
+      return;
+    }
+    if (restants) {
+      video.disabled = true;
+      const total = projet.plans.filter((x) => !x.youtube && mediaDe(x)).length;
+      video.textContent = `Préparation ${total - restants}/${total}…`;
+      return;
+    }
+    video.disabled = false;
+    video.textContent = "Rendre la vidéo";
+  };
+  /* Les fichiers continuent d'arriver pendant que le panneau est ouvert : le
+     bouton doit s'allumer tout seul quand le dernier est là, sans quoi il
+     faudrait le refermer et le rouvrir pour s'en apercevoir. */
+  const veille = setInterval(() => {
+    if (!document.body.contains(video)) { clearInterval(veille); return; }
+    jauger();
+    meta.textContent = texteExport(projet, format, extension);
+  }, 1000);
 
   const edl = document.createElement("button");
   edl.type = "button";
@@ -5695,13 +5804,38 @@ function ouvrirExport(projet) {
   liste.textContent = "Liste des plans";
   liste.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.txt`, versTexte(projet)));
 
+  /* Rouvrir le fichier de musique sans quitter le panneau : après un
+     rechargement de la page, le navigateur ne peut pas retrouver seul un
+     fichier choisi la veille — on ne garde que son nom. C'est la cause la plus
+     probable d'une vidéo muette, et le remède tient en un bouton. */
+  const musique = document.createElement("label");
+  musique.className = "lecteur-actions";
+  musique.style.margin = "0";
+  const choisir = document.createElement("input");
+  choisir.type = "file";
+  choisir.accept = FORMATS_SON;
+  choisir.hidden = true;
+  choisir.addEventListener("change", () => {
+    const fichier = choisir.files?.[0];
+    if (fichier) chargerSon(projet, fichier);
+  });
+  const texteMusique = document.createElement("span");
+  texteMusique.className = "fort";
+  texteMusique.style.cursor = "pointer";
+  texteMusique.textContent = projet.audio?.nom
+    ? `Rouvrir « ${projet.audio.nom} »`
+    : "Choisir la musique";
+  musique.append(texteMusique, choisir);
+
   const fermer = document.createElement("button");
   fermer.type = "button";
   fermer.textContent = "Fermer";
   fermer.addEventListener("click", () => { arreterRendu(); fermerFeuille(); });
 
   actions.append(video, edl, liste, fermer);
+  if (!lecture.audio) actions.append(musique);
   corps.append(titre, meta, etat, livraison, actions);
+  jauger();
   boite.append(corps);
   fond.replaceChildren(boite);
   fond.hidden = false;
