@@ -105,10 +105,10 @@ async function traduireEchec(motif, env) {
       /* ZeroGPU annonce « 0:00:00 » quand il ne reste rien : ce n'est pas un
          délai, c'est une absence de délai calculable. Le dire tel quel ferait
          réessayer en boucle. */
-      return `Quota GPU du jour épuisé pour le compte « ${qui.name} ». Il se recharge vingt-quatre heures après la première génération, pas à minuit. En attendant, « En apporter une » accepte n'importe quel fichier audio : le montage automatique marche exactement pareil dessus.`;
+      return `Quota GPU du jour épuisé pour le compte « ${qui.name} ». Il se recharge vingt-quatre heures après la première génération, pas à minuit.\n\nEn attendant : « Copier le style » et « Copier les paroles » se collent dans Suno, dont le palier gratuit rend une dizaine de morceaux par jour. On télécharge le résultat, « En apporter une » l'importe, et le montage automatique marche exactement pareil dessus.`;
     }
     return "Quota GPU épuisé" + (dans && dans !== "0:00:00" ? ` : il revient dans ${dans}.` : " pour aujourd'hui.") +
-      " En attendant, « En apporter une » accepte n'importe quel fichier audio : le montage automatique marche exactement pareil dessus.";
+      " En attendant, le brief se colle dans Suno — une dizaine de morceaux par jour sur son palier gratuit — et « En apporter une » réimporte le résultat.";
   }
   if (/GPU task aborted|ZeroGPU worker error/i.test(motif)) {
     return "Le GPU partagé a lâché en cours de route. Relance : c'est presque toujours passager.";

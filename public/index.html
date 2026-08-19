@@ -1458,7 +1458,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 12:38";
+const VERSION_PAGE = "2026-08-19 12:42";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7101,6 +7101,11 @@ function ouvrirBrief() {
           styleSuno(bilan, brief),
           "",
           "Une à deux minutes d'attente. La piste tombe ensuite dans la voie son.",
+          "",
+          /* Le quota d'ACE-Step est vite atteint, et le brief ne sert pas qu'à
+             lui : les deux boutons de copie le portent ailleurs sans rien
+             coûter. Autant le dire là où l'on se heurte au mur. */
+          "Quota épuisé, ou envie d'essayer ailleurs ? « Copier le style » et « Copier les paroles » se collent dans Suno, mode Custom. Son palier gratuit rend une dizaine de morceaux par jour — bien plus qu'ici — mais il les filigrane et les réserve à un usage privé, là où ACE-Step, sous Apache 2.0, ne pose aucune de ces deux conditions. On télécharge, et « En apporter une » réimporte.",
         ] : [
           "Apporte le morceau que tu veux : l'outil en lit le tempo et y découpe les sections exactement comme pour une musique qu'il aurait faite lui-même. Rien d'autre ne change.",
         ]),
