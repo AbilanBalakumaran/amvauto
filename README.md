@@ -270,6 +270,33 @@ audible sur un morceau qui sert de support de montage).
 sortie du quota : ACE-Step tourne sur une machine personnelle munie d'un GPU, on
 pointe le Worker dessus, et la limite disparaît. Même protocole, même code.
 
+### Tirer davantage du quota gratuit
+
+Trois leviers, avant d'aller chercher un GPU ailleurs. Ils ne demandent rien à
+personne et se cumulent.
+
+**Le nombre d'itérations.** ZeroGPU facture la durée réelle du calcul, pas la
+réservation : seize pas coûtent environ quarante pour cent de moins que
+vingt-sept.
+
+**La durée produite.** C'est le levier le plus fort, et le plus négligé : le
+temps de calcul suit la longueur du morceau. Demander quatre-vingt-dix secondes
+pour en juger dix, c'est brûler trois fois le quota nécessaire. Le mode
+**brouillon** plafonne donc la génération à trente secondes — on veut savoir si
+la direction est la bonne, pas écouter le morceau. Les deux effets réunis
+divisent le coût d'un essai par environ quatre.
+
+**Ne pas payer deux fois le même brief.** Un clic répété, un « réessaie » après
+une coupure, un aller-retour entre deux réglages qu'on finit par remettre comme
+avant : chacun de ces gestes coûtait une génération entière. Le rendu est
+maintenant gardé un jour sous l'empreinte de ce qui le détermine — style,
+paroles, durée, itérations, serveur.
+
+Éprouvé : deux appels identiques, un seul atteint le serveur, le second revient
+en `x-serveur: cache` sans toucher au compteur. Et un brouillon demandé à
+quatre-vingt-dix secondes arrive au Space en **trente secondes, seize
+itérations**.
+
 ### Sortir du quota : son propre GPU, gratuitement
 
 Cinq minutes de GPU par jour, c'est le plafond de ZeroGPU — deux ou trois

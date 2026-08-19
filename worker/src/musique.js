@@ -169,7 +169,12 @@ async function surUnEspace(env, brief, poste) {
   const entetes = poste.jeton ? { authorization: `Bearer ${poste.jeton}` } : {};
   const session = crypto.randomUUID().replace(/-/g, "");
 
-  const secondes = Math.min(DUREE_MAX, Math.max(DUREE_MIN, Math.round(brief.secondes) || 60));
+  /* Un brouillon se juge sur trente secondes : on veut savoir si la direction
+     est la bonne, pas écouter le morceau. Et le temps de GPU suit la durée
+     produite — demander quatre-vingt-dix secondes pour en écouter dix, c'est
+     brûler trois fois le quota nécessaire. */
+  const voulues = Math.min(DUREE_MAX, Math.max(DUREE_MIN, Math.round(brief.secondes) || 60));
+  const secondes = brief.brouillon ? Math.min(30, voulues) : voulues;
   /* Le nombre d'itérations décide du temps de GPU, donc du quota consommé —
      ZeroGPU facture la durée réelle, pas la réservation. Un brouillon à seize
      pas coûte environ quarante pour cent de moins qu'un rendu à vingt-sept, ce
@@ -303,6 +308,19 @@ async function parDemonstration(env) {
   return { octets, type: reponse.headers.get("content-type") || "audio/wav", nom: "demonstration.wav" };
 }
 
+/* Deux fois le même brief ne se paie pas deux fois.
+
+   Un clic répété, un « réessaie » après une coupure réseau, un aller-retour
+   entre deux réglages qu'on finit par remettre comme avant : chacun de ces
+   gestes coûtait une génération entière. Le résultat est donc gardé un jour,
+   sous l'empreinte de ce qui le détermine. C'est une économie modeste et
+   gratuite, sur un quota qui, lui, ne l'est pas. */
+async function empreinteBrief(brief, secondes, etapes) {
+  const matiere = JSON.stringify([brief.style, brief.paroles, secondes, etapes, brief.espace || ""]);
+  const somme = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(matiere));
+  return [...new Uint8Array(somme)].slice(0, 12).map((n) => n.toString(16).padStart(2, "0")).join("");
+}
+
 export async function genererMusique(request, url, env) {
   if (request.method !== "POST") return new Response("méthode non permise", { status: 405 });
 
@@ -342,6 +360,28 @@ export async function genererMusique(request, url, env) {
     }), { status: 503, headers: { "content-type": "application/json; charset=utf-8" } });
   }
 
+  /* Le cache passe avant le plafond : reprendre un morceau déjà rendu ne doit
+     rien coûter, ni en quota ni en compteur. */
+  const etapesVoulues = Math.min(60, Math.max(8,
+    Number(brief.etapes) || Number(env.MUSIQUE_ETAPES) || ETAPES_DEFAUT));
+  const secondesVoulues = brief.brouillon
+    ? Math.min(30, Math.round(brief.secondes) || 60)
+    : Math.round(brief.secondes) || 60;
+  const cle = `musique:${await empreinteBrief(brief, secondesVoulues, etapesVoulues)}`;
+  if (env.COFFRE) {
+    const garde = await env.COFFRE.get(cle, { type: "arrayBuffer" });
+    if (garde) {
+      return new Response(garde, {
+        headers: {
+          "content-type": "audio/mpeg",
+          "content-disposition": 'inline; filename="deja-rendu.mp3"',
+          "cache-control": "no-store",
+          "x-serveur": "cache",
+        },
+      });
+    }
+  }
+
   const rang = await compter(env, "musique", code.slice(0, 8), PAR_JOUR);
   if (rang < 0) {
     return new Response(JSON.stringify({
@@ -353,6 +393,12 @@ export async function genererMusique(request, url, env) {
     const attente = new Promise((_, rejeter) =>
       setTimeout(() => rejeter(new Error("le fournisseur n'a pas répondu à temps")), ATTENTE_MAX));
     const { octets, type, nom, serveur, secours } = await Promise.race([fournisseur(env, brief), attente]);
+    /* Gardé un jour : au-delà, on aura changé d'idée, et l'espace du coffre sert
+       d'abord aux montages. Un morceau trop lourd ne rentrerait pas, on le
+       laisse simplement passer. */
+    if (env.COFFRE && octets.length < 20_000_000) {
+      await env.COFFRE.put(cle, octets, { expirationTtl: 86400 }).catch(() => null);
+    }
     return new Response(octets, {
       headers: {
         "content-type": type,

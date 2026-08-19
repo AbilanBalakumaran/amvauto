@@ -1458,7 +1458,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 13:37";
+const VERSION_PAGE = "2026-08-19 13:47";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6734,6 +6734,7 @@ async function genererMusique(bouton, brief, paroles) {
         paroles: chanteAvec(brief) && paroles.trim() ? paroles.trim() : parolesAce(bilan),
         secondes: brief.duree,
         etapes: brief.etapes || undefined,
+        brouillon: brief.etapes === 16 || undefined,
         court: brief.duree <= 32,
         espace: espacePerso() || undefined,
       }),
@@ -7133,7 +7134,7 @@ function ouvrirBrief() {
        d'itérations, moins de calcul, plus d'essais dans la journée. Un brouillon
        ne sert pas à écouter le morceau final, il sert à savoir si la direction
        est la bonne — et c'est ce qu'on fait dix fois avant de garder une prise. */
-    rangee("Rendu", [["16", "Brouillon · deux fois plus d'essais"], ["27", "Complet"]],
+    rangee("Rendu", [["16", "Brouillon · 30 s, quatre fois plus d'essais"], ["27", "Complet"]],
       () => String(brief.etapes || 27), (v) => { brief.etapes = Number(v); }, { unique: true });
 
     /* Le quota de ZeroGPU est le seul vrai plafond de la génération. Qui fait
@@ -7207,7 +7208,9 @@ function ouvrirBrief() {
           "— CE QUI PART AU GÉNÉRATEUR —",
           styleSuno(bilan, brief),
           "",
-          "Une à deux minutes d'attente. La piste tombe ensuite dans la voie son.",
+          brief.etapes === 16
+            ? "Brouillon : trente secondes, seize itérations. C'est fait pour juger la direction, pas pour écouter — et ça coûte environ quatre fois moins de quota qu'un rendu complet d'une minute trente. Repasse en « Complet » quand une idée te plaît."
+            : "Une à deux minutes d'attente. La piste tombe ensuite dans la voie son.",
           "",
           /* Le quota d'ACE-Step est vite atteint, et le brief ne sert pas qu'à
              lui : les deux boutons de copie le portent ailleurs sans rien
