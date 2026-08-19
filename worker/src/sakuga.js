@@ -93,13 +93,46 @@ export async function posts(tags, limit) {
   });
 }
 
-// Les cuts d'une série, filtrés sur ce qui est réellement montable.
-export async function rushes(seriesTag, limit = 1000) {
-  const found = await posts(`${seriesTag} order:score`, limit);
-  return found.filter(
+// Ce qui est réellement montable : une vidéo, pas du papier, pas de contenu
+// explicite.
+const montables = (found) =>
+  found.filter(
     (post) =>
       VIDEO_EXTS.has(post.file_ext) &&
       !post.tags.some((tag) => PAPER_TAGS.has(tag)) &&
       post.rating !== "e",
   );
+
+// Les cuts d'une série.
+export async function rushes(seriesTag, limit = 1000) {
+  return montables(await posts(`${seriesTag} order:score`, limit));
+}
+
+/* Les meilleurs cuts du site, sans série imposée.
+
+   C'est ce que demande un AMV mixte : ne pas choisir les animés soi-même, et
+   laisser remonter ce que la communauté a le mieux noté. Un tag d'ambiance
+   restreint la pioche sans la fermer — « fighting order:score » rend les
+   meilleurs plans de combat, d'où qu'ils viennent. */
+export async function rushesPartout(tagAmbiance, limit = 1000) {
+  const requete = tagAmbiance ? `${tagAmbiance} order:score` : "order:score";
+  return montables(await posts(requete, limit));
+}
+
+/* La série d'un post, lue dans ses tags.
+
+   En mixte, l'animé n'est plus une donnée d'entrée : c'est une donnée de
+   sortie. Sans elle, le montage afficherait deux cents plans sans savoir d'où
+   ils viennent, et le chapitrage par animé n'aurait plus de sens. */
+let copyrightCache = null;
+export async function copyrightTags() {
+  if (copyrightCache) return copyrightCache;
+  const tags = await api("/tag.json", { type: TAG_COPYRIGHT, order: "count", limit: 2000 }, 86400);
+  copyrightCache = new Set(tags.map((tag) => tag.name));
+  return copyrightCache;
+}
+
+export function serieDe(post, series) {
+  const tag = post.tags.find((nom) => series.has(nom));
+  return tag ? tag.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "";
 }

@@ -1080,6 +1080,90 @@ sans          après le saut : 3 4 5 6      ← la file continue son chemin
 avec          après le saut : 7 8 9 3      ← elle se retourne vers l'écran
 ```
 
+### « Mixte » veut dire mixte
+
+Le mode mixte demandait quand même la liste des animés. C'est une contradiction
+dans les termes : si l'on savait déjà quels animés employer, on n'aurait pas
+besoin que l'outil cherche. Le champ est devenu facultatif — vide, il veut dire
+« pioche partout ».
+
+Sakugabooru sait rendre les meilleurs cuts sans série imposée : `order:score`
+seul. Mais son classement est dominé par le combat, et un montage n'aurait plus
+rien de calme à poser sur un pont. On balaie donc les cinq ambiances, chacune
+sur sa propre recherche — `fighting`, `effects`, `running`, `character_acting`,
+`henshin` — puis on entrelace les résultats, de sorte que couper la liste au
+plafond ne supprime jamais une ambiance entière.
+
+L'animé cesse d'être une consigne pour devenir un résultat : il est lu dans les
+tags de chaque plan, au retour.
+
+```
+libellé   Les animés — facultatif : vide, l'outil pioche partout
+champ     ""
+lancé     mood=combat  mood=effets  mood=vitesse  mood=acting  mood=hype
+monté     45 blocs
+trouvés   One Piece · My Hero Academia · Kekkai Sensen · Boruto ·
+          One-Punch Man · FLCL · Yozakura Quartet
+```
+
+Sans avoir nommé un seul animé. « Un seul animé » reste, lui, un mode qui
+réclame un titre — c'est sa raison d'être.
+
+### Le vrai coût de l'aperçu : quatorze téléchargements sur dix-sept abandonnés
+
+L'aperçu paraissait lent, et la cause n'était pas celle qu'on croyait. Mesuré
+sur dix plans d'une seconde, chacun son fichier, sur un lien bridé à 8 Mb/s :
+
+```
+17 requêtes, 14 interrompues, 2,2 Mo reçus — sur 13 Mo possibles
+89 % du temps sans image
+```
+
+Le lien n'était pas saturé : il était **gaspillé**. Un montage qui change de
+plan chaque seconde repointait un lecteur sur un nouveau fichier chaque
+seconde, et chaque changement abandonnait le téléchargement en cours. Aucun
+fichier n'arrivait jamais au bout, donc aucun ne s'affichait jamais — et les
+octets déjà reçus étaient jetés.
+
+Deux corrections tiennent tout :
+
+**Une seule adresse.** L'aperçu lisait la source d'origine pendant que la
+réserve rapatriait le même fichier par `/api/media`. Deux adresses, deux
+entrées de cache, deux téléchargements du même plan. L'aperçu passe désormais
+par le relais lui aussi — ce que l'un a lu, l'autre le retrouve.
+
+**Le lecteur ne double plus la réserve.** Quand un fichier est déjà dans la
+file d'import, le lecteur ne le redemande pas au réseau : il laisse la réserve
+aller au bout — elle finit un fichier avant d'attaquer le suivant, et
+`prioriserImports` la fait travailler dans l'ordre où l'on regarde. Le plan
+s'affiche dès sa copie locale prête. Si l'import échoue, le lecteur reprend la
+main : mieux vaut un flux que rien.
+
+| lien | avant | après |
+| --- | --- | --- |
+| 8 Mb/s | 14 abandons, 2,2 Mo, **89 % sans image** | **0 abandon, 12,9 Mo, 61 %** |
+| 20 Mb/s | — | 0 abandon, 17,3 Mo, **14 %** |
+| sans bride | 15 % | 13 % |
+
+À 8 Mb/s, il reste 61 % : vingt-deux mégaoctets de vidéo pour douze secondes de
+lecture ne passeront jamais dans un lien qui en porte treize. Ce qui a changé,
+c'est que le lien sert enfin à quelque chose — et que la seconde lecture, elle,
+est parfaite, puisque tout est arrivé.
+
+### L'image de couverture n'a plus sa place pendant la lecture
+
+Faute d'image du lecteur, le moniteur puisait dans sa réserve d'imagettes, puis
+dans la couverture du plan, puis dans la vignette de la source. Les imagettes
+font 160 points de large, l'écran en fait 1280 : étirée huit fois, une vignette
+est une bouillie — et comme c'est une seule image pour tout le plan, elle reste
+là toute la coupe, fixe, au milieu d'un montage qui bouge.
+
+Pendant la lecture, la réserve se limite donc à une imagette réellement proche
+de l'instant demandé (0,4 s au lieu de 1,5 s) ; la couverture du plan et la
+vignette de la source sont écartées. Elles restent en place à l'arrêt et pendant
+un déplacement, où elles servent à se repérer et où personne n'attend une image
+animée.
+
 ### Ce que ça ne fait pas
 
 **Sans lecture, l'outil reste aveugle.** Tant qu'on n'a pas appuyé sur l'œil, il

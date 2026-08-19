@@ -3149,12 +3149,25 @@ function dessinerMoniteur() {
        si le plan commence bien au début de son fichier — c'est la première image
        de ce fichier, et sur un plan fractionné dont on a retiré le début, elle
        montrait justement ce qu'on venait de supprimer. Faute de mieux, du noir :
-       une image fausse est pire que pas d'image. */
+       une image fausse est pire que pas d'image.
+
+       Pendant la lecture, cette réserve se réduit à ce qui est juste. Les
+       imagettes font 160 points de large et l'écran en fait 1280 : étirée huit
+       fois, une vignette de couverture est une bouillie fixe posée au milieu
+       d'un montage qui bouge — et comme c'est une seule image pour tout le
+       plan, elle reste là toute la coupe. On n'accepte donc, en lecture, qu'une
+       imagette réellement proche de l'instant demandé ; la couverture du plan
+       et la vignette de la source sont écartées. Elles restent en place à
+       l'arrêt et pendant un déplacement, où elles servent à se repérer et où
+       personne n'attend une image animée. */
     const cible = positionCible();
     const dans = cible && cible.plan.id === plan.id ? cible.dans : 0;
-    source = imagetteLaPlusProche(bandeDe(plan), entreeDe(plan) + dans, 1.5)
-      || bandeDe(plan).couverture?.image
-      || (rogne(plan) ? null : vignetteDe(plan));
+    const instant = entreeDe(plan) + dans;
+    source = lecture.demande
+      ? imagetteLaPlusProche(bandeDe(plan), instant, 0.4)
+      : imagetteLaPlusProche(bandeDe(plan), instant, 1.5)
+        || bandeDe(plan).couverture?.image
+        || (rogne(plan) ? null : vignetteDe(plan));
   }
   // Une toile n'a ni videoWidth ni naturalWidth : sans ce troisième recours, la
   // dernière image décodée n'était jamais dessinée et le moniteur passait au
@@ -3801,6 +3814,10 @@ function preparerSuivant(index) {
   const plan = projetActif()?.plans[index];
   const attente = elementAttente();
   if (!plan || !attente || plan.youtube || !mediaDe(plan)) return;
+  // Même règle qu'à l'affichage : préparer un plan que la réserve rapatrie
+  // reviendrait à télécharger deux fois le même fichier, et à interrompre le
+  // téléchargement du lecteur au changement de plan suivant.
+  if (laisserAuReseau(plan)) return;
   const source = sourceDe(plan);
   if (attente.dataset.plan === plan.id && attente.dataset.source === source) return;
   attente.dataset.plan = plan.id;
@@ -4639,6 +4656,17 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   }
   const source = sourceDe(plan);
   const change = video.dataset.plan !== plan.id || video.dataset.source !== source;
+  /* Le fichier est en route par la réserve : on ne le redemande pas au lecteur.
+     On laisse en place ce qu'il montrait — le moniteur tient la dernière image
+     — et le plan s'affichera dès sa copie locale prête. */
+  if (change && laisserAuReseau(plan)) {
+    video.dataset.plan = "";
+    video.dataset.source = "";
+    preparerSuivant(index + 1);
+    prioriserImports(index);
+    majTransport();
+    return;
+  }
   if (change) {
     video.dataset.plan = plan.id;
     video.dataset.source = source;
@@ -4696,6 +4724,8 @@ function basculerLecture() {
     video.pause();
     majTransport();
     reveillerMoniteur();
+    // La réserve, mise en sourdine pendant la lecture, reprend ici.
+    lancerImport();
     return;
   }
   lecture.demande = true;
@@ -4753,6 +4783,8 @@ function arreter() {
   lecture.boucle = null;
   elementActif()?.pause();
   arreterSon();
+  // La réserve reprend : elle se taisait pour laisser le lien à l'aperçu.
+  lancerImport();
 }
 
 // La tête suit le doigt à la milliseconde : la position du montage est tenue
@@ -5092,12 +5124,48 @@ async function effacerBase(adresse) {
 }
 
 // L'adresse à donner au lecteur : le fichier local dès qu'on l'a.
+/* L'aperçu lit par le relais, à l'adresse exacte qu'utilise l'import.
+
+   Il lisait la source d'origine pendant que la réserve rapatriait le même
+   fichier par « /api/media » : deux adresses, deux entrées de cache, deux
+   téléchargements du même plan. Sur un montage de deux cents plans qui ne se
+   répètent jamais, c'est le double des octets — et sur un lien mobile, le
+   double du temps d'attente devant un écran vide.
+
+   Une seule adresse, et les deux se servent l'une l'autre : ce que l'aperçu a
+   déjà lu, l'import le retrouve en cache, et inversement. Le relais est de
+   même origine, ce qui ne teinte plus la toile du moniteur — bénéfice de
+   surcroît. */
 function sourceDe(plan) {
   const adresse = mediaDe(plan);
-  return (adresse && locales.get(adresse)) || adresse;
+  if (!adresse) return "";
+  return locales.get(adresse) || `/api/media?u=${encodeURIComponent(adresse)}`;
 }
 
 const estLocal = (plan) => Boolean(mediaDe(plan) && locales.get(mediaDe(plan)));
+
+/* Faut-il laisser le lecteur tirer ce plan du réseau ?
+
+   Non, quand la réserve s'en occupe déjà. C'était le vrai coût de l'aperçu :
+   un montage qui change de plan chaque seconde repointait un lecteur sur un
+   nouveau fichier chaque seconde, et chaque changement abandonnait le
+   téléchargement en cours. Mesuré sur dix plans à 8 Mb/s : dix-sept requêtes,
+   quatorze abandonnées, deux mégaoctets reçus sur treize possibles. Le lien
+   n'était pas saturé — il était gaspillé. Rien n'arrivait jamais au bout, donc
+   rien ne s'affichait jamais, et le peu de bande passante consommée l'était
+   pour rien.
+
+   La réserve, elle, va au bout d'un fichier avant de passer au suivant, et
+   « prioriserImports » la fait travailler dans l'ordre où l'on regarde. On la
+   laisse donc faire : le plan s'affiche dès sa copie locale prête. Si l'import
+   a échoué — le fichier ne viendra jamais de l'appareil — le lecteur reprend
+   la main et tire du réseau, c'est mieux que rien. */
+const laisserAuReseau = (plan) => {
+  const adresse = mediaDe(plan);
+  if (!adresse || estLocal(plan)) return false;
+  if (importsRates.has(adresse)) return false;
+  return importPrevu(plan);
+};
 const avancement = (plan) => enImport.get(mediaDe(plan));
 
 async function preparerLocal(plan) {
@@ -6317,11 +6385,49 @@ function exigerCoffre(quoi) {
    l'attente ni la mémoire. */
 const RUSHS_MAX = 240;
 
+/* Les ambiances balayées quand aucun animé n'est imposé.
+
+   Un AMV mixte sans titre ne peut pas demander « les meilleurs cuts » tout
+   court : le classement du site est dominé par le combat, et le montage se
+   retrouverait sans rien de calme à poser sur un pont. On balaie donc les cinq
+   ambiances, chacune sur sa propre recherche — le montage y puisera ce que
+   chaque section réclame. */
+const AMBIANCES_LIBRES = ["combat", "effets", "vitesse", "acting", "hype"];
+
+async function chercherPartout(voulues) {
+  const parAmbiance = Math.ceil(voulues / AMBIANCES_LIBRES.length);
+  const lots = await Promise.all(AMBIANCES_LIBRES.map(async (ambiance) => {
+    try {
+      const reponse = await fetch(
+        `/api/rushes?mood=${ambiance}&top=${Math.min(200, parAmbiance)}&pool=1000`);
+      const contenu = await reponse.json();
+      if (!reponse.ok) throw new Error(contenu?.error || `le serveur a répondu ${reponse.status}`);
+      return contenu.rushes || [];
+    } catch (erreur) {
+      console.warn(`rien pour l'ambiance « ${ambiance} » :`, erreur.message);
+      return [];
+    }
+  }));
+  /* Entrelacés, pas concaténés : couper la liste au plafond ne doit pas
+     supprimer une ambiance entière. */
+  const melange = [];
+  for (let rang = 0; melange.length < voulues * 2; rang += 1) {
+    if (!lots.some((lot) => lot[rang])) break;
+    for (const lot of lots) if (lot[rang]) melange.push(lot[rang]);
+  }
+  return melange;
+}
+
 async function chercherRushs(animes, secondes, cases = 0) {
   /* Autant de sources que de cases, quand on les connaît : c'est la seule façon
      qu'une scène n'apparaisse jamais deux fois. À défaut, une par tranche de
      cinq secondes, ce qui suffisait tant qu'on acceptait les redites. */
   const voulues = Math.max(12, cases || Math.ceil(secondes / 5));
+  // Aucun animé : c'est l'AMV mixte au sens propre — on cherche partout.
+  if (!animes.length) {
+    const partout = await chercherPartout(voulues);
+    return [...new Map(partout.map((r) => [String(r.id), r])).values()].slice(0, RUSHS_MAX);
+  }
   const parAnime = Math.ceil(voulues / Math.max(1, animes.length));
   const trouves = [];
   for (const anime of animes) {
@@ -7087,9 +7193,13 @@ function ouvrirAssistant(etape = "musique") {
 
   const peindre = () => {
     const seul = amv.portee === "unique";
-    animesTexte.textContent = seul ? "L'animé" : "Les animés, séparés par des virgules";
-    champ.placeholder = seul ? "Chainsaw Man" : "Chainsaw Man, Jujutsu Kaisen, Demon Slayer…";
-    const noms = amv.animes.length ? amv.animes : ["(à renseigner)"];
+    animesTexte.textContent = seul
+      ? "L'animé"
+      : "Les animés — facultatif : vide, l'outil pioche partout";
+    champ.placeholder = seul ? "Chainsaw Man" : "Laisse vide pour chercher dans tout Sakugabooru";
+    const noms = amv.animes.length
+      ? amv.animes
+      : [seul ? "(à renseigner)" : "tous les animés"];
     const duree = projet.rythme?.duree;
     meta.textContent = [
       projet.rythme?.bpm
@@ -7099,7 +7209,9 @@ function ouvrirAssistant(etape = "musique") {
       "",
       seul
         ? "Un seul animé : l'AMV raconte une histoire, et les plans se répondent."
-        : "Mixte : plusieurs animés se croisent. Cherche des ambiances proches, sinon le montage part dans tous les sens.",
+        : amv.animes.length
+          ? "Mixte, restreint : le montage se croise entre les animés listés."
+          : "Mixte, partout : aucun titre à donner. L'outil balaie les meilleures scènes du site — combat, effets, vitesse, acting, transformation — et garde celles qui collent à chaque section de la musique. L'animé de chaque plan est un résultat, pas une consigne.",
       amv.ordre === "chrono"
         ? "Dans l'ordre : les plans se suivent comme dans l'animé, seule la durée des coupes vient de la musique. Pour un AMV qui raconte."
         : "Libre : à chaque coupe, le plan qui colle le mieux à ce que fait la musique. Le meilleur accord, au prix du récit.",
@@ -7180,19 +7292,23 @@ async function automatiserAmv(bouton) {
   };
 
   try {
-    const animes = amv.animes.length
+    /* En mixte, le champ des animés est une restriction facultative, pas une
+       consigne obligatoire : laissé vide, il veut dire « pioche partout ».
+       C'est le sens même du mode — trouver les scènes qui vont, quel que soit
+       l'animé. Seul « un seul animé » réclame vraiment un titre. */
+    const choisis = amv.animes.length
       ? (amv.portee === "unique" ? amv.animes.slice(0, 1) : amv.animes)
-      : [...new Set(projet.plans.map((p) => p.anime).filter(Boolean))];
+      : (amv.portee === "unique"
+        ? [...new Set(projet.plans.map((p) => p.anime).filter(Boolean))]
+        : []);
+    const animes = choisis;
 
-    /* Sans animé et sans plan, il n'y a rien à monter — et le dire avant de
-       chercher évite d'attendre pour rien. L'exemple en gris du champ n'est pas
-       une valeur : c'est précisément la confusion qu'il fallait lever. */
-    if (!animes.length) {
-      alert("Aucun animé indiqué. Le champ affiche un exemple en gris, mais il est vide : écris un titre, ou tape une des propositions juste en dessous.");
+    if (amv.portee === "unique" && !animes.length) {
+      alert("« Un seul animé » demande un titre. Écris-le, ou tape une des propositions juste en dessous — ou passe en « Mixte » pour laisser l'outil chercher partout.");
       return;
     }
 
-    if (animes.length) {
+    {
       dire("Recherche des plans…");
       const trouves = await chercherRushs(animes, projet.rythme.duree || 120, casesAttendues(projet));
       const connus = new Set(projet.plans.map((p) => String(p.id)));

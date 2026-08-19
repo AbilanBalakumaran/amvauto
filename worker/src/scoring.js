@@ -24,6 +24,20 @@ export const MOODS = {
   },
 };
 
+/* Le tag qui porte l'ambiance à lui seul.
+
+   Chercher sans série impose de chercher par tag : Sakugabooru ne sait pas
+   rendre « les meilleurs cuts de combat toutes séries confondues » autrement.
+   On prend le tag le plus lourd de chaque ambiance — celui qui, à lui seul,
+   suffit à décrire ce qu'on veut voir. */
+export const TAG_PHARE = {
+  combat: "fighting",
+  effets: "effects",
+  vitesse: "running",
+  acting: "character_acting",
+  hype: "henshin",
+};
+
 // Ce qui aide ou gêne au montage, indépendamment de l'ambiance.
 const BONUS_TAGS = { background_animation: 6, impact_frames: 5, effects: 4, smears: 3, debris: 2 };
 const MALUS_TAGS = { cgi: -8, artist_unknown: -1, web: -2, "3d_background": -4 };

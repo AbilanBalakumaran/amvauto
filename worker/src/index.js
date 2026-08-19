@@ -10,8 +10,8 @@ import { ecrireParoles } from "./paroles.js";
 import { accorderParoles } from "./accord.js";
 import { lireScene } from "./scene.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
-import { rushes, searchSeries } from "./sakuga.js";
-import { MOODS, moodsOf, qualityFlags, rank } from "./scoring.js";
+import { copyrightTags, rushes, rushesPartout, searchSeries, serieDe } from "./sakuga.js";
+import { MOODS, TAG_PHARE, moodsOf, qualityFlags, rank } from "./scoring.js";
 import { findCurated, suggest } from "./series.js";
 import { VERSION } from "./version.js";
 
@@ -237,13 +237,34 @@ async function handleTree(url) {
 
 async function handleRushes(url) {
   const query = (url.searchParams.get("anime") || "").trim();
-  if (!query) return json({ error: "Indique un animé." }, 400);
 
   const mood = url.searchParams.get("mood") || null;
   if (mood && !MOODS[mood]) return json({ error: `Ambiance inconnue : ${mood}` }, 400);
 
   const top = Math.min(200, Math.max(1, Number(url.searchParams.get("top")) || 24));
   const pool = Math.min(2000, Math.max(top, Number(url.searchParams.get("pool")) || 1000));
+
+  /* Sans animé : l'AMV mixte. On ne choisit pas les séries, on prend les
+     meilleurs cuts du site et l'animé de chaque plan est lu dans ses tags — il
+     devient un résultat au lieu d'être une consigne. */
+  if (!query) {
+    const tagAmbiance = mood ? TAG_PHARE[mood] : null;
+    const trouves = await rushesPartout(tagAmbiance, pool);
+    if (!trouves.length) {
+      return json({ error: "Sakugabooru n'a rien rendu pour cette recherche." }, 502);
+    }
+    const series = await copyrightTags();
+    return json({
+      anime: "",
+      tag: tagAmbiance || "order:score",
+      mood,
+      total: trouves.length,
+      rushes: rank(trouves, mood, top).map((entree) => ({
+        ...serialize(entree),
+        anime: serieDe(entree.post, series),
+      })),
+    });
+  }
 
   const resolved = await resolve(query, pool);
   if (!resolved) {
