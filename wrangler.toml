@@ -20,3 +20,9 @@ run_worker_first = true
 [[kv_namespaces]]
 binding = "COFFRE"
 id = "7e8485da6b724b1b93045c6aaf0a993d"
+
+# Workers AI : le modèle de langue qui écrit les paroles. Il tourne sur ce même
+# compte, sans clé à part, et le plan gratuit donne dix mille neurones par jour
+# — une chanson en coûte une quarantaine.
+[ai]
+binding = "AI"

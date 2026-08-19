@@ -19,6 +19,7 @@
    — Démonstration : un fichier connu, pour éprouver la chaîne sans compte. */
 
 import { codeValide } from "./coffre.js";
+import { compter } from "./quota.js";
 
 const PAR_JOUR = 20;              // plafond de générations quotidiennes
 const ATTENTE_MAX = 180000;       // trois minutes : au-delà, on rend la main
@@ -30,16 +31,6 @@ const DUREE_MIN = 10;
 
 const nettoyer = (brut) => String(brut || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 
-async function compter(env, cle) {
-  if (!env.COFFRE) return 0;
-  const jour = new Date().toISOString().slice(0, 10);
-  const compteur = `musique:${jour}:${cle}`;
-  const vu = Number(await env.COFFRE.get(compteur)) || 0;
-  if (vu >= PAR_JOUR) return -1;
-  // Expire tout seul au bout de deux jours : rien à nettoyer.
-  await env.COFFRE.put(compteur, String(vu + 1), { expirationTtl: 172800 });
-  return vu + 1;
-}
 
 /* L'adresse d'un Space se déduit de son nom : « ACE-Step/ACE-Step » vit sur
    « ace-step-ace-step.hf.space ». Tout ce qui n'est pas une lettre ou un
@@ -252,7 +243,7 @@ export async function genererMusique(request, url, env) {
     }), { status: 503, headers: { "content-type": "application/json; charset=utf-8" } });
   }
 
-  const rang = await compter(env, code.slice(0, 8));
+  const rang = await compter(env, "musique", code.slice(0, 8), PAR_JOUR);
   if (rang < 0) {
     return new Response(JSON.stringify({
       erreur: `Plafond atteint : ${PAR_JOUR} générations pour aujourd'hui. Il se remet à zéro demain.`,

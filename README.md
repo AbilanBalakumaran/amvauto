@@ -298,6 +298,53 @@ faudrait lui repasser les paramètres de la génération précédente, et payer 
 appel de quota par rallonge. Ce n'est pas écrit — la longueur d'un AMV ne le
 demande pas encore.
 
+### Chanté ou instrumental
+
+Par défaut, la musique est **instrumentale** : c'est ce que demandait le brief,
+et le champ des paroles ne portait que des balises de structure. Un sélecteur
+« Voix » ouvre l'autre porte — **chanté, en anglais**.
+
+L'anglais n'est pas un jugement sur la langue. C'est ce que les modèles de
+musique chantent le mieux, et de très loin : ACE-Step comme les autres ont été
+entraînés sur un corpus massivement anglophone.
+
+Écrire des paroles est un travail à part entière, et rarement celui qu'on a
+envie de faire quand on monte. Le bouton **Écrire les paroles** les fait rédiger
+par le modèle de langue de **Workers AI** — sur le même compte Cloudflare que le
+reste, sans nouvelle clé, sans nouveau compte. Le plan gratuit donne dix mille
+neurones par jour ; une chanson en coûte une centaine. La limite ne se rencontre
+pas.
+
+Le brief qui part est celui du montage : l'animé, les ambiances dominantes, le
+tempo, la durée choisie, le plan des sections avec leur durée et leur humeur, et
+une ligne facultative — **ce que la chanson doit raconter**.
+
+Le texte revient **dans le panneau**, pas dans le générateur. Il se relit et se
+corrige avant d'être chanté : une parole ratée coûterait un appel de quota GPU,
+une parole relue n'en coûte aucun.
+
+Trois choses ont demandé d'insister dans la consigne, parce que le modèle les
+rate spontanément :
+
+- **`[inst]` est interdit.** Il marque un passage instrumental ; le premier jet
+  l'avait mis en tête et écrit des vers dessous, ce qui se contredit. La
+  consigne donne maintenant la correspondance à appliquer — Intro, Ambient,
+  Breakdown et Outro deviennent `[verse]`, Build devient `[bridge]`, Drop
+  devient `[chorus]` — et interdit tout le reste.
+- **Le nombre de sections**, sinon il en écrit autant qu'il veut.
+- **L'emballage** : « Here are the lyrics: », les blocs de code, les titres en
+  gras. Ils sont retirés à l'arrivée, sans toucher au texte.
+
+Un modèle a été retiré du catalogue Cloudflare en cours de route — le premier
+essai a répondu `5028: … was deprecated on 2026-05-30`. La route essaie donc
+trois modèles dans l'ordre et passe au suivant sur ce genre d'erreur : une
+dépréciation ne fera pas tomber la fonctionnalité entière.
+
+Vérifié en production : quatre sections demandées, quatre sections rendues, aux
+bonnes balises, en anglais, sans `[inst]`, en **3 secondes** ; et depuis le
+panneau, le brief part avec l'animé, les humeurs, le tempo, l'histoire et le
+plan, et le texte arrive dans le champ en 3,6 s.
+
 ### Le dialogue avec Gradio
 
 Un Space Gradio répond en deux temps : on dépose la demande, on écoute la file.
@@ -419,9 +466,10 @@ que le français.
 
 Les balises ne sont pas les mêmes des deux côtés, et c'est voulu : Suno lit la
 prose entre crochets comme une consigne, alors qu'ACE-Step **chante** ce qu'il
-trouve dans le champ des paroles. On ne lui donne donc que des balises de son
-vocabulaire — `[inst]`, puis `[intro]`, `[break]`, `[bridge]`, `[chorus]` dans
-l'ordre du montage — et jamais une phrase.
+trouve dans le champ des paroles. En instrumental, on ne lui donne donc que des
+balises de son vocabulaire — `[inst]`, puis `[intro]`, `[break]`, `[bridge]`,
+`[chorus]` dans l'ordre du montage — et jamais une phrase. En chanté, ce champ
+porte les vraies paroles, et c'est le sélecteur « Voix » qui décide.
 
 Une réserve écrite dans le panneau : le palier gratuit de Suno appose un
 filigrane et réserve la musique à un usage privé. ACE-Step, sous Apache 2.0, ne
