@@ -220,31 +220,103 @@ coupes.
 **La clé ne vit jamais dans la page.** Elle serait lisible par quiconque ouvre
 l'application, et dépensable par lui. Elle reste en secret du Worker, et la page
 ne connaît que la route `/api/musique`. Deux protections, parce que cette route
-coûte de l'argent à chaque appel :
+tire sur une ressource comptée :
 
-- **le code du coffre sert de laissez-passer** — sans lui, personne ne peut faire
-  payer le compte (vérifié : 401 sans code, 401 sur un code au contrôle faux) ;
+- **le code du coffre sert de laissez-passer** — sans lui, personne ne peut tirer
+  sur le quota du compte (vérifié : 401 sans code, 401 sur un code au contrôle faux) ;
 - **un plafond de vingt générations par jour** borne la casse même si le code
   fuite (vérifié : 200 jusqu'au vingtième appel, 429 au vingt et unième, remise à
   zéro le lendemain par expiration de la clé).
 
-Le fournisseur est choisi par ce qui est configuré, derrière un adaptateur.
+### Gratuit, et publiable
+
+J'avais écrit ici qu'aucun service ne générait de musique à la fois gratuitement
+et par programme. **C'était faux, et le chemin gratuit est maintenant celui par
+défaut** : le Space `ACE-Step/ACE-Step`, sur l'infrastructure ZeroGPU de Hugging
+Face. Un jeton Hugging Face personnel — gratuit, créé en trente secondes — ouvre
+un quota quotidien de GPU. Relevé dans la documentation officielle :
+
+| Compte | Quota GPU par jour |
+| --- | --- |
+| sans jeton | 2 minutes |
+| compte gratuit | **5 minutes** |
+| PRO | 40 minutes |
+
+Le quota se recharge vingt-quatre heures après la première utilisation. Une
+génération de trente secondes de musique en tient pour une quinzaine de secondes
+de GPU : cela fait une poignée de morceaux par jour, sans un centime.
+
+Le modèle est sous **licence Apache 2.0**. Ce qu'il produit se publie sans
+condition — pas de filigrane, pas de clause « usage privé ». C'est la différence
+qui compte pour un AMV destiné à être mis en ligne : le palier gratuit de Suno,
+lui, appose un filigrane et réserve la musique à un usage privé.
+
+**Le jeton reste un secret du Worker**, jamais dans la page. Le quota est une
+ressource comptée comme une autre : le code du coffre et le plafond quotidien
+le protègent exactement comme ils protégeraient une facture.
+
+Pour l'installer, une seule commande :
+
+```
+npx wrangler secret put JETON_HF
+```
+
+Deux réglages facultatifs : `ESPACE_MUSIQUE` pour viser un autre Space, et
+`MUSIQUE_ETAPES` pour le nombre d'itérations du modèle (27 par défaut, moitié du
+réglage d'usine — deux fois moins de quota brûlé pour une différence à peine
+audible sur un morceau qui sert de support de montage).
+
+`ESPACE_MUSIQUE` accepte aussi **une adresse complète**, et c'est la porte de
+sortie du quota : ACE-Step tourne sur une machine personnelle munie d'un GPU, on
+pointe le Worker dessus, et la limite disparaît. Même protocole, même code.
+
+### Le dialogue avec Gradio
+
+Un Space Gradio répond en deux temps : on dépose la demande, on écoute la file.
+Les vingt-deux arguments d'ACE-Step sont relevés sur `/gradio_api/info`, dans
+leur ordre exact ; seuls la durée, le style, les balises et le nombre d'étapes
+sont calculés, tout le reste garde les réglages d'usine.
+
+Deux détails appris en éprouvant la chose :
+
+- **la route courte ne dit pas pourquoi ça a raté.** `/call/<nom>/<événement>`
+  rend un `error` vide. La file, elle, rend la phrase du serveur — quota épuisé,
+  temps restant avant recharge. Comme la route nommée accepte qu'on lui impose
+  le `session_hash`, on prend la commodité de l'une et la parole de l'autre.
+- **le flux se coupe n'importe où.** Les événements arrivent en morceaux qui
+  tombent au milieu d'une ligne. Le lecteur garde donc un reste entre deux
+  paquets ; éprouvé contre un faux Space qui découpe exprès tous les 37 octets.
+
+Le message de quota est traduit, parce que c'est celui qu'on verra le plus
+souvent : *« Quota GPU épuisé pour aujourd'hui : il revient dans 18:03:00. »*
+
+### Ce qui est éprouvé, et ce qui ne l'est pas
+
+Contre un faux Space qui parle le protocole de Gradio : la charge sortante
+(22 arguments, bon ordre, jeton en `Authorization`), les bornes de durée
+(900 s → 240 s, 3 s → 10 s), le flux découpé au milieu des lignes, le fichier
+récupéré et rendu intact (3 244 octets attendus, 3 244 rendus), et la traduction
+de l'échec.
+
+Contre le vrai Space, sans jeton valable : la demande est acceptée, la session
+honorée, la file lue, l'erreur extraite et traduite — tout le chemin sauf la
+dernière marche. **La génération réussie sur le vrai Space n'est pas vérifiée
+ici, faute de jeton** ; elle le sera au premier essai avec un jeton personnel.
+
+### L'autre fournisseur
+
 **Lyria**, via l'API Gemini, est implémenté d'après la documentation officielle :
 `POST https://generativelanguage.googleapis.com/v1beta/interactions`, en-tête
 `x-goog-api-key`, corps `{ model, input, response_format }`, réponse en une seule
 requête portant l'audio en base64 — pas de file d'attente à interroger. Modèles
-`lyria-3-clip-preview` (30 s) et `lyria-3-pro-preview` (morceau complet).
+`lyria-3-clip-preview` (30 s, 0,04 $) et `lyria-3-pro-preview` (morceau complet,
+0,08 $) — aucun des deux n'est offert sur le palier gratuit. Il ne sert que si
+un jeton Hugging Face est absent et une clé Gemini présente.
 
 **Suno a bien une API officielle**, contrairement à ce que j'avais d'abord écrit,
 mais sa documentation demande un compte : l'adaptateur ne sera écrit que sur des
-points d'entrée lus, jamais devinés.
-
-Toute la mécanique est éprouvée de bout en bout avec un fournisseur de
-démonstration qui rend un fichier connu : laissez-passer, plafond, transport,
-dépôt dans la piste son, lecture du tempo, grille posée. Seul l'appel sortant au
-fournisseur reste à éprouver, faute de clé — et **aucun service ne génère de
-musique à la fois gratuitement et par programme** : c'est la seule pièce qui
-demande de payer.
+points d'entrée lus, jamais devinés. Le brief reste copiable à la main dans Suno
+depuis le panneau, pour qui a un abonnement.
 
 ## Le tempo se lit dans la musique, sur l'appareil
 
@@ -311,12 +383,21 @@ et sans un centime.
   frames ouvre sur un drop ; l'annoncer comme une intro donnerait la consigne
   inverse de l'image.
 
-La sortie est en deux blocs prêts à coller dans Suno en mode Custom — le style
-d'un côté, la structure balisée de l'autre — **en anglais**, que les générateurs
-comprennent nettement mieux que le français.
+La sortie sert deux fois. Le bouton **Générer la musique** l'envoie à ACE-Step,
+qui rend le morceau directement dans la piste son. Et elle reste copiable en deux
+blocs dans Suno en mode Custom — le style d'un côté, la structure balisée de
+l'autre. Le tout **en anglais**, que les générateurs comprennent nettement mieux
+que le français.
+
+Les balises ne sont pas les mêmes des deux côtés, et c'est voulu : Suno lit la
+prose entre crochets comme une consigne, alors qu'ACE-Step **chante** ce qu'il
+trouve dans le champ des paroles. On ne lui donne donc que des balises de son
+vocabulaire — `[inst]`, puis `[intro]`, `[break]`, `[bridge]`, `[chorus]` dans
+l'ordre du montage — et jamais une phrase.
 
 Une réserve écrite dans le panneau : le palier gratuit de Suno appose un
-filigrane et réserve la musique à un usage privé. Publier demande un abonnement.
+filigrane et réserve la musique à un usage privé. ACE-Step, sous Apache 2.0, ne
+pose aucune de ces deux conditions.
 
 ## Sauvegarder un montage
 

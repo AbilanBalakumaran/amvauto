@@ -1403,7 +1403,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 03:55";
+const VERSION_PAGE = "2026-08-19 04:12";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5800,6 +5800,23 @@ function structureSuno(bilan) {
   return lignes.join("\n");
 }
 
+/* ACE-Step lit lui aussi le champ des paroles comme un plan, mais il chante ce
+   qu'il y trouve : on n'y met donc que des balises de son vocabulaire, jamais
+   de phrases. « [inst] » ouvre le morceau en instrumental, les suivantes en
+   dessinent la forme, section par section, dans l'ordre du montage. */
+const BALISES_ACE = ["intro", "break", "bridge", "chorus"];
+
+function parolesAce(bilan) {
+  const lignes = ["[inst]"];
+  bilan.sections.forEach((section, i) => {
+    const dernier = i === bilan.sections.length - 1;
+    const balise = dernier && section.energie <= 1 ? "outro"
+      : BALISES_ACE[Math.min(BALISES_ACE.length - 1, Math.max(0, section.energie))];
+    lignes.push(`[${balise}]`);
+  });
+  return lignes.join("\n");
+}
+
 /* La consigne complète, telle qu'elle part au générateur : le style d'abord,
    puis la structure minutée. C'est le même texte que celui qu'on copie à la
    main dans Suno — l'outil ne demande pas autre chose que ce qu'on lui
@@ -5827,12 +5844,18 @@ async function genererMusique(bouton) {
   }
   const avant = bouton.textContent;
   bouton.disabled = true;
-  bouton.textContent = "Génération…";
+  bouton.textContent = "Génération… (1–2 min)";
   try {
     const reponse = await fetch("/api/musique", {
       method: "POST",
       headers: { "x-coffre": code, "content-type": "application/json" },
-      body: JSON.stringify({ consigne: consigneMusicale(bilan), court: bilan.totalSec <= 32 }),
+      body: JSON.stringify({
+        consigne: consigneMusicale(bilan),
+        style: styleSuno(bilan),
+        paroles: parolesAce(bilan),
+        secondes: Math.round(bilan.totalSec),
+        court: bilan.totalSec <= 32,
+      }),
     });
     if (!reponse.ok) {
       let motif = `le serveur a répondu ${reponse.status}`;
@@ -5887,7 +5910,9 @@ function ouvrirBrief() {
         `${bilan.techniques.length ? ` · ${bilan.techniques.join(", ")}` : ""}`,
       `Structure : ${bilan.sections.length} sections.`,
       "",
-      "Dans Suno, mode Custom : le premier bloc va dans « Styles », le second dans « Lyrics », et coche Instrumental. Les deux sont en anglais — Suno le comprend nettement mieux.",
+      "« Générer la musique » fabrique le morceau ici même, sur le quota gratuit d'ACE-Step. Compte une à deux minutes : la piste tombe ensuite toute seule dans la voie son, son tempo s'y lit et la grille des temps apparaît.",
+      "",
+      "À la main dans Suno, mode Custom : le premier bloc va dans « Styles », le second dans « Lyrics », et coche Instrumental. Les deux sont en anglais — Suno le comprend nettement mieux.",
       "",
       "— STYLES —",
       style,
@@ -5895,7 +5920,7 @@ function ouvrirBrief() {
       "— LYRICS —",
       structure,
       "",
-      "Le palier gratuit de Suno appose un filigrane et réserve la musique à un usage privé : pour publier, il faut un abonnement payant.",
+      "Le palier gratuit de Suno appose un filigrane et réserve la musique à un usage privé. ACE-Step est sous licence Apache 2.0 : ce qu'il produit se publie sans condition.",
     ].join("\n");
 
     const copier = (etiquette, texte) => {
