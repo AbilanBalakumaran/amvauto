@@ -1389,7 +1389,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-18 15:23";
+const VERSION_PAGE = "2026-08-19 01:52";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4185,7 +4185,19 @@ function boutonSon(projet) {
     if (fichier) chargerSon(projet, fichier);
   });
   bouton.addEventListener("click", () => champ.click());
-  barre.append(bouton, champ);
+
+  /* Le brief se tient à côté du bouton qui ouvre un fichier son : c'est le même
+     moment du travail — il faut une musique, et soit on en a une, soit on va la
+     faire faire. */
+  const brief = document.createElement("button");
+  brief.type = "button";
+  brief.className = "son-retirer";
+  brief.innerHTML = icone("liste");
+  brief.title = "Brief musical à partir du montage";
+  brief.setAttribute("aria-label", "Brief musical");
+  brief.addEventListener("click", ouvrirBrief);
+
+  barre.append(bouton, champ, brief);
 
   if (projet.audio) {
     const retirer = document.createElement("button");
@@ -5308,6 +5320,233 @@ $("btn-setting").addEventListener("click", () => {
   fond.hidden = false;
   fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
 });
+
+/* --- brief musical ---------------------------------------------------- */
+/* Une musique générée sur une consigne vague ne collera jamais à un montage.
+   Ce qu'il faut à un générateur, ce n'est pas « fais-moi un truc épique » : c'est
+   un tempo, une durée, une structure et une intensité par section. Or tout cela
+   se lit dans le montage lui-même — la durée de chaque plan, leur enchaînement,
+   les ambiances relevées à la source. On calcule donc la consigne à partir de la
+   piste, sans rien demander à personne : pas de clé, pas de réseau, pas un
+   centime. */
+
+// Ce qu'une ambiance vaut en énergie, de 0 (calme) à 3 (déchaîné).
+const ENERGIE = { combat: 3, effets: 2, vitesse: 3, hype: 3, acting: 0 };
+
+// Les instruments que chaque ambiance appelle, en anglais : les générateurs de
+// musique comprennent très mal le français.
+const COULEURS = {
+  combat: ["taiko drums", "distorted 808s", "aggressive brass"],
+  effets: ["granular textures", "risers", "impact hits"],
+  vitesse: ["driving breakbeat", "arpeggiated synths", "fast hats"],
+  hype: ["choir stabs", "supersaw leads", "orchestral swells"],
+  acting: ["felt piano", "sustained strings", "soft pads"],
+};
+
+function energieDuPlan(plan) {
+  const ambiances = Array.isArray(plan.moods) ? plan.moods : [];
+  if (!ambiances.length) return plan.technique ? 2 : 1;
+  const pics = ambiances.map((a) => ENERGIE[a] ?? 1);
+  const haut = Math.max(...pics);
+  // Les impact frames et les circus d'Itano ne sont jamais calmes.
+  return plan.technique ? Math.min(3, haut + 1) : haut;
+}
+
+/* Le tempo se déduit du rythme des coupes. Si les plans durent en médiane c
+   secondes et qu'on coupe sur les temps, alors c vaut un nombre entier de temps :
+   BPM = 60 × k / c. On retient le k qui place le tempo dans une plage jouable, le
+   plus près possible de 128 — le centre de gravité des musiques de montage. */
+function tempoPour(cadence) {
+  let meilleur = null;
+  for (const k of [1, 2, 3, 4, 6, 8]) {
+    const bpm = Math.round((60 * k) / cadence);
+    if (bpm < 70 || bpm > 180) continue;
+    const ecart = Math.abs(bpm - 128);
+    if (!meilleur || ecart < meilleur.ecart) meilleur = { bpm, temps: k, ecart };
+  }
+  // Cadence extrême : on replie sur la plage, quitte à ne plus tomber juste.
+  if (!meilleur) return { bpm: cadence < 0.5 ? 174 : 90, temps: null };
+  return meilleur;
+}
+
+const NOMS_SECTION = ["Intro", "Build", "Drop", "Breakdown", "Build", "Drop", "Outro"];
+
+function analyserMontage(projet) {
+  const plans = projet.plans.filter((plan) => !plan.youtube);
+  if (!plans.length) return null;
+  const durees = plans.map((plan) => duree(plan));
+  const totalSec = durees.reduce((a, c) => a + c, 0);
+
+  // La médiane, pas la moyenne : un seul plan de trente secondes ne doit pas
+  // écraser le rythme de vingt coupes courtes.
+  const triees = [...durees].sort((a, c) => a - c);
+  const cadence = triees[Math.floor(triees.length / 2)];
+  const tempo = tempoPour(cadence);
+
+  // Ambiances pondérées par le temps qu'elles occupent réellement à l'écran.
+  const poids = new Map();
+  plans.forEach((plan, i) => {
+    for (const ambiance of (plan.moods || [])) {
+      poids.set(ambiance, (poids.get(ambiance) || 0) + durees[i]);
+    }
+  });
+  const dominantes = [...poids.entries()].sort((a, c) => c[1] - a[1]).map(([k]) => k);
+  // Le même classement, mais l'énergie compte autant que le temps passé.
+  const pesees = [...poids.entries()]
+    .sort((a, c) => c[1] * (1 + (ENERGIE[c[0]] ?? 1)) - a[1] * (1 + (ENERGIE[a[0]] ?? 1)))
+    .map(([k]) => k);
+
+  /* Découpage en sections : on suit la courbe d'énergie du montage et on coupe
+     là où elle change franchement, sans descendre sous huit secondes — une
+     section plus courte n'a pas le temps d'exister musicalement. */
+  const sections = [];
+  let debut = 0;
+  let cumul = 0;
+  let energie = energieDuPlan(plans[0]);
+  plans.forEach((plan, i) => {
+    const e = energieDuPlan(plan);
+    const assezLongue = cumul - debut >= 8;
+    if (i && assezLongue && Math.abs(e - energie) >= 2) {
+      sections.push({ debut, fin: cumul, energie });
+      debut = cumul;
+      energie = e;
+    } else {
+      energie = Math.max(energie, e);
+    }
+    cumul += durees[i];
+  });
+  sections.push({ debut, fin: cumul, energie });
+
+  const techniques = [...new Set(plans.map((plan) => plan.technique).filter(Boolean))];
+  return { plans, durees, totalSec, cadence, tempo, dominantes, pesees, sections, techniques,
+    anime: projet.plans.find((plan) => plan.anime)?.anime || projet.nom };
+}
+
+const minutage = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+// Le champ « Style » de Suno : une seule ligne, dense, en anglais.
+function styleSuno(bilan) {
+  /* La palette suit le sommet du montage, pas sa moyenne. Un AMV qui passe
+     trente secondes en calme et douze en combat s'entend comme un morceau de
+     combat : c'est le pic qui reste en tête, et c'est sur lui qu'on coupe. On
+     pondère donc chaque ambiance par son énergie autant que par sa durée. */
+  const couleurs = bilan.pesees.slice(0, 2).flatMap((a) => COULEURS[a] || []).slice(0, 4);
+  const nerveux = bilan.tempo.bpm >= 140;
+  const morceaux = [
+    nerveux ? "cinematic hybrid trap" : "epic orchestral hybrid",
+    `${bilan.tempo.bpm} BPM`,
+    ...couleurs,
+    bilan.dominantes.includes("acting") ? "emotional dynamics" : "relentless momentum",
+    "instrumental, no vocals",
+  ];
+  return morceaux.join(", ");
+}
+
+/* Le champ des paroles sert ici de plan de montage : Suno lit les balises entre
+   crochets comme des consignes de structure. On y met les sections aux instants
+   exacts du montage, pour que les ruptures de la musique tombent sur les
+   ruptures de l'image. */
+function structureSuno(bilan) {
+  const lignes = ["[Instrumental]"];
+  bilan.sections.forEach((section, i) => {
+    const nom = section.energie >= 3 ? "Drop"
+      : section.energie === 2 ? "Build"
+      : section.energie === 1 ? "Breakdown"
+      : "Ambient";
+    /* « Intro » et « Outro » ne se méritent que si la section est calme : un
+       montage qui ouvre sur des impact frames ouvre sur un drop, et l'annoncer
+       comme une intro donnerait à Suno la consigne inverse de l'image. */
+    const seule = bilan.sections.length === 1;
+    const etiquette = seule ? nom
+      : i === 0 && section.energie <= 1 ? "Intro"
+      : i === bilan.sections.length - 1 && section.energie <= 1 ? "Outro"
+      : nom;
+    const tenue = Math.round(section.fin - section.debut);
+    lignes.push(`[${etiquette}]  ${minutage(section.debut)}–${minutage(section.fin)} (${tenue}s) — ` +
+      (section.energie >= 3 ? "full impact, drums and brass at maximum"
+        : section.energie === 2 ? "rising tension, percussion building"
+        : section.energie === 1 ? "sparse, let the image breathe"
+        : "quiet, single instrument"));
+  });
+  return lignes.join("\n");
+}
+
+function ouvrirBrief() {
+  const projet = projetActif();
+  const bilan = projet && analyserMontage(projet);
+  const fond = $("feuille");
+  const boite = document.createElement("div");
+  boite.className = "lecteur-boite";
+  const corps = document.createElement("div");
+  corps.className = "lecteur-corps";
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.textContent = "Brief musical";
+
+  const meta = document.createElement("div");
+  meta.className = "lecteur-meta";
+  meta.style.whiteSpace = "pre-line";
+
+  const actions = document.createElement("div");
+  actions.className = "lecteur-actions";
+
+  if (!bilan) {
+    meta.textContent = "Ajoute des plans au montage : le brief se calcule à partir de leur durée et de leur ambiance.";
+  } else {
+    const style = styleSuno(bilan);
+    const structure = structureSuno(bilan);
+    const battue = bilan.tempo.temps
+      ? `une coupe tous les ${bilan.tempo.temps} temps`
+      : "hors de la plage habituelle, à ajuster";
+    meta.textContent = [
+      `${bilan.plans.length} plans · ${minutage(bilan.totalSec)} · coupe médiane ${bilan.cadence.toFixed(2)} s`,
+      `Tempo proposé : ${bilan.tempo.bpm} BPM — ${battue}.`,
+      `Ambiances : ${bilan.dominantes.slice(0, 3).map((a) => MOODS_FR[a] || a).join(", ") || "aucune relevée"}` +
+        `${bilan.techniques.length ? ` · ${bilan.techniques.join(", ")}` : ""}`,
+      `Structure : ${bilan.sections.length} sections.`,
+      "",
+      "Dans Suno, mode Custom : le premier bloc va dans « Styles », le second dans « Lyrics », et coche Instrumental. Les deux sont en anglais — Suno le comprend nettement mieux.",
+      "",
+      "— STYLES —",
+      style,
+      "",
+      "— LYRICS —",
+      structure,
+      "",
+      "Le palier gratuit de Suno appose un filigrane et réserve la musique à un usage privé : pour publier, il faut un abonnement payant.",
+    ].join("\n");
+
+    const copier = (etiquette, texte) => {
+      const bouton = document.createElement("button");
+      bouton.type = "button";
+      bouton.textContent = etiquette;
+      bouton.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(texte);
+        const avant = bouton.textContent;
+        bouton.textContent = "Copié";
+        setTimeout(() => { bouton.textContent = avant; }, 1600);
+      });
+      return bouton;
+    };
+    actions.append(copier("Copier le style", style), copier("Copier la structure", structure));
+  }
+
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.className = "fort";
+  fermer.textContent = "Fermer";
+  fermer.addEventListener("click", fermerFeuille);
+  actions.append(fermer);
+
+  corps.append(titre, meta, actions);
+  boite.append(corps);
+  fond.replaceChildren(boite);
+  fond.hidden = false;
+  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
+}
+
+const MOODS_FR = { combat: "combat", effets: "effets", vitesse: "vitesse", acting: "acting", hype: "hype" };
 
 /* --- sauvegarde ------------------------------------------------------ */
 /* Ce qu'un montage a d'irremplaçable tient dans presque rien : un plan pèse

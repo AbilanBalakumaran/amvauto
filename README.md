@@ -209,6 +209,40 @@ la version Blu-ray n'a pas. Même image, même durée, du texte en plus pendant 
 absent du rendu. Quand une variante de même nature existe (créditée comme le rendu, ou sans
 crédits comme lui), c'est elle qui est préférée.
 
+## Le brief musical, calculé sur le montage
+
+Une musique générée sur une consigne vague ne collera jamais à un montage. Ce
+qu'attend un générateur, ce n'est pas « fais-moi un truc épique » : c'est un
+tempo, une durée, une structure et une intensité par section. Or tout cela se lit
+**dans le montage lui-même**, et l'application le calcule sans clé, sans réseau
+et sans un centime.
+
+- **Le tempo vient du rythme des coupes.** Si les plans durent en médiane `c`
+  secondes et qu'on coupe sur les temps, alors `c` vaut un nombre entier de
+  temps : `BPM = 60 × k / c`. On retient le `k` qui place le tempo dans une plage
+  jouable, au plus près de 128. Quatorze coupes d'une demi-seconde donnent
+  120 BPM, une coupe par temps ; des plans de six secondes donnent 80 BPM, une
+  coupe toutes les huit.
+- **La structure vient de la courbe d'énergie.** Chaque plan porte les ambiances
+  relevées à la source — combat, effets, vitesse, acting, hype — et sa technique.
+  On suit cette courbe et on coupe là où elle change franchement, jamais en
+  dessous de huit secondes. Un montage calme → combat → calme ressort en trois
+  sections aux instants exacts des ruptures.
+- **La palette suit le sommet, pas la moyenne.** Un AMV qui passe trente secondes
+  en calme et douze en combat s'entend comme un morceau de combat : c'est le pic
+  qui reste en tête. Chaque ambiance est donc pondérée par son énergie autant que
+  par sa durée.
+- **« Intro » et « Outro » se méritent.** Un montage qui ouvre sur des impact
+  frames ouvre sur un drop ; l'annoncer comme une intro donnerait la consigne
+  inverse de l'image.
+
+La sortie est en deux blocs prêts à coller dans Suno en mode Custom — le style
+d'un côté, la structure balisée de l'autre — **en anglais**, que les générateurs
+comprennent nettement mieux que le français.
+
+Une réserve écrite dans le panneau : le palier gratuit de Suno appose un
+filigrane et réserve la musique à un usage privé. Publier demande un abonnement.
+
 ## Sauvegarder un montage
 
 Ce qu'un montage a d'irremplaçable tient dans presque rien. Mesuré : un plan
