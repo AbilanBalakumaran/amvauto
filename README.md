@@ -209,6 +209,43 @@ la version Blu-ray n'a pas. Même image, même durée, du texte en plus pendant 
 absent du rendu. Quand une variante de même nature existe (créditée comme le rendu, ou sans
 crédits comme lui), c'est elle qui est préférée.
 
+## Générer la musique depuis l'outil
+
+Le panneau du brief porte un bouton **Générer la musique** : la consigne calculée
+sur le montage part au fournisseur, le morceau revient, il se pose dans la piste
+son — et son tempo est lu dans la foulée, ce qui fait apparaître la grille des
+temps. La boucle se referme : du montage à la musique, et de la musique aux
+coupes.
+
+**La clé ne vit jamais dans la page.** Elle serait lisible par quiconque ouvre
+l'application, et dépensable par lui. Elle reste en secret du Worker, et la page
+ne connaît que la route `/api/musique`. Deux protections, parce que cette route
+coûte de l'argent à chaque appel :
+
+- **le code du coffre sert de laissez-passer** — sans lui, personne ne peut faire
+  payer le compte (vérifié : 401 sans code, 401 sur un code au contrôle faux) ;
+- **un plafond de vingt générations par jour** borne la casse même si le code
+  fuite (vérifié : 200 jusqu'au vingtième appel, 429 au vingt et unième, remise à
+  zéro le lendemain par expiration de la clé).
+
+Le fournisseur est choisi par ce qui est configuré, derrière un adaptateur.
+**Lyria**, via l'API Gemini, est implémenté d'après la documentation officielle :
+`POST https://generativelanguage.googleapis.com/v1beta/interactions`, en-tête
+`x-goog-api-key`, corps `{ model, input, response_format }`, réponse en une seule
+requête portant l'audio en base64 — pas de file d'attente à interroger. Modèles
+`lyria-3-clip-preview` (30 s) et `lyria-3-pro-preview` (morceau complet).
+
+**Suno a bien une API officielle**, contrairement à ce que j'avais d'abord écrit,
+mais sa documentation demande un compte : l'adaptateur ne sera écrit que sur des
+points d'entrée lus, jamais devinés.
+
+Toute la mécanique est éprouvée de bout en bout avec un fournisseur de
+démonstration qui rend un fichier connu : laissez-passer, plafond, transport,
+dépôt dans la piste son, lecture du tempo, grille posée. Seul l'appel sortant au
+fournisseur reste à éprouver, faute de clé — et **aucun service ne génère de
+musique à la fois gratuitement et par programme** : c'est la seule pièce qui
+demande de payer.
+
 ## Le tempo se lit dans la musique, sur l'appareil
 
 Le but à terme est d'inverser le travail : au lieu de déduire une musique du

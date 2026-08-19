@@ -1403,7 +1403,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-19 03:37";
+const VERSION_PAGE = "2026-08-19 03:55";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5800,6 +5800,58 @@ function structureSuno(bilan) {
   return lignes.join("\n");
 }
 
+/* La consigne complète, telle qu'elle part au générateur : le style d'abord,
+   puis la structure minutée. C'est le même texte que celui qu'on copie à la
+   main dans Suno — l'outil ne demande pas autre chose que ce qu'on lui
+   demanderait soi-même. */
+function consigneMusicale(bilan) {
+  return [
+    styleSuno(bilan),
+    "",
+    `Target length: ${Math.round(bilan.totalSec)} seconds.`,
+    structureSuno(bilan),
+  ].join("\n");
+}
+
+/* Générer la musique et la poser dans la piste son. Une fois le fichier déposé,
+   le tempo en est lu tout seul et la grille des temps apparaît : la boucle se
+   referme, du montage à la musique et de la musique aux coupes. */
+async function genererMusique(bouton) {
+  const projet = projetActif();
+  const bilan = projet && analyserMontage(projet);
+  if (!bilan) return;
+  const code = coffre.code;
+  if (!code) {
+    alert("Active d'abord la sauvegarde en ligne dans Réglages : son code sert aussi de laissez-passer pour la génération, sans quoi n'importe qui pourrait faire payer le compte.");
+    return;
+  }
+  const avant = bouton.textContent;
+  bouton.disabled = true;
+  bouton.textContent = "Génération…";
+  try {
+    const reponse = await fetch("/api/musique", {
+      method: "POST",
+      headers: { "x-coffre": code, "content-type": "application/json" },
+      body: JSON.stringify({ consigne: consigneMusicale(bilan), court: bilan.totalSec <= 32 }),
+    });
+    if (!reponse.ok) {
+      let motif = `le serveur a répondu ${reponse.status}`;
+      try { motif = (await reponse.json()).erreur || motif; } catch { /* réponse non lisible */ }
+      throw new Error(motif);
+    }
+    const blob = await reponse.blob();
+    const nom = (reponse.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1]
+      || `musique-${Date.now()}.mp3`;
+    fermerFeuille();
+    chargerSon(projet, new File([blob], nom, { type: blob.type || "audio/mpeg" }));
+  } catch (erreur) {
+    alert(`Génération impossible : ${erreur.message}`);
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = avant;
+  }
+}
+
 function ouvrirBrief() {
   const projet = projetActif();
   const bilan = projet && analyserMontage(projet);
@@ -5858,7 +5910,13 @@ function ouvrirBrief() {
       });
       return bouton;
     };
-    actions.append(copier("Copier le style", style), copier("Copier la structure", structure));
+    const generer = document.createElement("button");
+    generer.type = "button";
+    generer.className = "fort";
+    generer.textContent = "Générer la musique";
+    generer.addEventListener("click", () => genererMusique(generer));
+
+    actions.append(generer, copier("Copier le style", style), copier("Copier la structure", structure));
   }
 
   const fermer = document.createElement("button");
