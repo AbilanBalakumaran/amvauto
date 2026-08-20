@@ -1458,6 +1458,40 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+### Un fichier qui se prétendait quatre fois plus court
+
+Le rendu contenait bien toutes ses images — vérifié une par une, deux cent
+soixante-neuf jusqu'à 11,95 s pour un montage de douze secondes. Pourtant un
+lecteur annonçait quatre secondes. En ouvrant les boîtes du fichier, la cause
+saute aux yeux :
+
+```
+mvhd  échelle 1000   durée 16018  = 16,02 s   ✔
+mdhd  échelle 30000  durée 16018  =  0,53 s   ✘  vidéo
+mdhd  échelle 48000  durée 15909  =  0,33 s   ✘  son
+```
+
+Le multiplexeur écrit la durée de chaque piste **dans l'échelle du film au lieu
+de celle de la piste**. Seize secondes deviennent une demi-seconde, et les
+lecteurs qui font confiance à cette boîte-là tombent sur un fichier qui se
+prétend minuscule.
+
+La correction est une réécriture sur place, quatre octets par piste : aucune
+taille de boîte ne change, et l'on ne touche pas aux images, qui, elles, sont
+justes. Le « moov » de ce multiplexeur étant en tête de fichier, deux cent
+cinquante kilo-octets suffisent à le couvrir — on ne relit pas les deux cents
+mégaoctets d'un AMV pour corriger huit octets.
+
+| montage | avant | après |
+| --- | --- | --- |
+| 16 s | 4,85 s annoncées | **15,98 s** |
+| 12 s | 4,48 s annoncées | **12,01 s** |
+
+Une limite demeure, et elle vient du même multiplexeur : le fichier est un MP4
+fragmenté sans index. Il se lit du début à la fin sans rien perdre, mais on ne
+peut pas s'y déplacer avant qu'il soit chargé. Les plateformes le réencodent à
+l'envoi ; un lecteur local, lui, avancera sans permettre de scruter.
+
 ### La toile de l'écran n'est pas la toile du rendu
 
 Premier fichier produit : **380 × 213**. Le moniteur est dimensionné pour
@@ -1559,6 +1593,29 @@ processeur quatre fois plus lent, la marge reste du simple au triple.
 Le rendu filme cet aperçu : il hérite exactement de cette qualité. C'est pour
 cette raison que le bouton attend que le dernier fichier soit là — un rendu
 lancé trop tôt filmerait le manque.
+
+### Mode avion, une fois tout arrivé
+
+Question posée, réponse mesurée. Réseau coupé, après que le dernier fichier est
+arrivé :
+
+```
+1. lecture hors réseau        1 % sans image   (8 % avec le réseau)
+2. bouton export              actif
+   rendu                      1280×720, son présent, durée juste
+3. rechargement de la page    l'application revient, le projet est là
+   aucun bandeau d'alerte
+```
+
+La lecture est **meilleure** hors réseau : plus rien ne se dispute la bande
+passante, et tout vient de l'appareil. Le rendu aussi, puisqu'il filme cet
+aperçu. La page elle-même se recharge sans réseau — le service worker en garde
+une copie.
+
+Une seule chose ne survit pas à un rechargement : le fichier de musique. Un
+navigateur ne peut pas rouvrir seul un fichier choisi auparavant ; il faut le
+redonner, ce qui se fait très bien hors réseau puisqu'il est sur l'appareil. Le
+panneau d'export le demande explicitement.
 
 ### Télécharger application fermée : non, et voici pourquoi
 

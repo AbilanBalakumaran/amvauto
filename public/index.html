@@ -6197,9 +6197,9 @@ async function lancerRendu(projet, bouton, etat, offrir) {
     bouton.textContent = "Rendre la vidéo";
     bouton.classList.remove("stop");
     const type = format.split(";")[0];
-    const blob = new Blob(morceaux, { type });
-    if (!blob.size) { etat.textContent = "Rien n'a été enregistré."; return; }
-    offrir(blob, type.endsWith("mp4") ? "mp4" : "webm");
+    const brut = new Blob(morceaux, { type });
+    if (!brut.size) { etat.textContent = "Rien n'a été enregistré."; return; }
+    corrigerRendu(brut).then((blob) => offrir(blob, type.endsWith("mp4") ? "mp4" : "webm"));
   });
 
   // L'écran doit rester allumé : un téléphone qui se verrouille arrête de
@@ -6214,7 +6214,12 @@ async function lancerRendu(projet, bouton, etat, offrir) {
   // sinon les premières secondes du fichier sont noires.
   await new Promise((suite) => setTimeout(suite, 700));
   if (!rendu.encours) return;
-  enregistreur.start(1000);
+  /* Sans découpage en tranches : « start(1000) » produit un MP4 fragmenté dont
+     l'en-tête ne porte pas la durée réelle. Le fichier se lit du début à la
+     fin — les images y sont toutes, vérifié image par image — mais un lecteur
+     annonce quatre secondes pour douze et refuse de s'y déplacer. Un seul bloc
+     rendu à l'arrêt laisse l'enregistreur écrire un en-tête complet. */
+  enregistreur.start();
   basculerLecture();
 
   const longueur = total(projet);
@@ -6227,6 +6232,101 @@ async function lancerRendu(projet, bouton, etat, offrir) {
     // La lecture s'arrête d'elle-même au bout du montage.
     if (!lecture.demande || fait >= longueur - 0.05) arreterRendu();
   }, 400);
+}
+
+/* Réparer la durée du MP4 avant de le livrer.
+
+   Le fichier produit contient bien toutes ses images — vérifié une par une,
+   deux cent soixante-neuf images jusqu'à 11,95 s pour un montage de douze
+   secondes. Pourtant un lecteur annonçait quatre secondes et refusait de s'y
+   déplacer. En ouvrant les boîtes du fichier, la cause saute aux yeux :
+
+     mvhd  échelle 1000   durée 16018  = 16,02 s   ✔
+     mdhd  échelle 30000  durée 16018  =  0,53 s   ✘  (vidéo)
+     mdhd  échelle 48000  durée 15909  =  0,33 s   ✘  (son)
+
+   Le multiplexeur écrit la durée de chaque piste dans l'échelle du film au lieu
+   de celle de la piste. Seize secondes deviennent une demi-seconde, et les
+   lecteurs qui font confiance à cette boîte-là — dont ceux des réseaux sociaux
+   — tombent sur un fichier qui se prétend minuscule.
+
+   La correction est une réécriture sur place : quatre octets par piste, aucune
+   taille de boîte ne change. On ne touche à rien d'autre — surtout pas aux
+   images, qui, elles, sont justes. */
+function reparerDuree(octets) {
+  const vue = new DataView(octets.buffer, octets.byteOffset, octets.byteLength);
+  const boites = (debut, fin, visiter) => {
+    let i = debut;
+    while (i + 8 <= fin) {
+      let taille = vue.getUint32(i);
+      let tete = 8;
+      if (taille === 1) { taille = Number(vue.getBigUint64(i + 8)); tete = 16; }
+      if (taille === 0) taille = fin - i;
+      if (taille < 8 || i + taille > fin) break;
+      const type = String.fromCharCode(
+        octets[i + 4], octets[i + 5], octets[i + 6], octets[i + 7]);
+      visiter(type, i + tete, i + taille);
+      i += taille;
+    }
+  };
+  // Les en-têtes « pleine version » : la version décide de la largeur des champs.
+  const entete = (debut) => {
+    const version = octets[debut];
+    return version === 1
+      ? { echelle: vue.getUint32(debut + 20), duree: debut + 24, large: true }
+      : { echelle: vue.getUint32(debut + 12), duree: debut + 16, large: false };
+  };
+
+  let moov = null;
+  boites(0, octets.length, (type, debut, fin) => { if (type === "moov") moov = [debut, fin]; });
+  if (!moov) return false;
+
+  let echelleFilm = 0;
+  const pistes = [];
+  boites(moov[0], moov[1], (type, debut, fin) => {
+    if (type === "mvhd") echelleFilm = entete(debut).echelle;
+    if (type === "trak") pistes.push([debut, fin]);
+  });
+  if (!echelleFilm) return false;
+
+  let repare = false;
+  for (const [debut, fin] of pistes) {
+    let dureeFilm = 0;
+    let mdhd = null;
+    boites(debut, fin, (type, a, b) => {
+      if (type === "tkhd") {
+        const t = entete(a);
+        dureeFilm = t.large ? Number(vue.getBigUint64(a + 28)) : vue.getUint32(a + 20);
+      }
+      if (type === "mdia") boites(a, b, (t2, c) => { if (t2 === "mdhd") mdhd = c; });
+    });
+    if (!dureeFilm || mdhd === null) continue;
+    const m = entete(mdhd);
+    const juste = Math.round((dureeFilm / echelleFilm) * m.echelle);
+    const ecrite = m.large ? Number(vue.getBigUint64(m.duree)) : vue.getUint32(m.duree);
+    if (ecrite === juste) continue;
+    if (m.large) vue.setBigUint64(m.duree, BigInt(juste));
+    else vue.setUint32(m.duree, juste);
+    repare = true;
+  }
+  return repare;
+}
+
+/* Le « moov » de ce multiplexeur est en tête de fichier : quelques dizaines de
+   kilo-octets suffisent à le couvrir. On ne relit donc pas les deux cents
+   mégaoctets d'un AMV pour corriger huit octets. */
+async function corrigerRendu(blob) {
+  if (!blob.type.includes("mp4")) return blob;
+  const taille = Math.min(blob.size, 262144);
+  try {
+    const tete = new Uint8Array(await blob.slice(0, taille).arrayBuffer());
+    if (!reparerDuree(tete)) return blob;
+    return new Blob([tete, blob.slice(taille)], { type: blob.type });
+  } catch {
+    // Un fichier qu'on n'a pas su relire se livre tel quel : il se lit quand
+    // même du début à la fin, seule sa durée annoncée est fausse.
+    return blob;
+  }
 }
 
 /* Livrer le fichier.
