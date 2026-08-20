@@ -1538,6 +1538,28 @@ du débit réellement observé, moyenné sur les derniers transferts :
 L'aperçu saute tant que les fichiers arrivent — laisse la page ouverte.
 ```
 
+### Ce que ça donne une fois tout arrivé
+
+Toute la chaîne — l'unicité, le relais partagé, la file qui suit la tête de
+lecture, la tenue d'image, le poids devenu un coût, les reprises — vise un seul
+résultat : que la lecture soit propre **une fois les fichiers sur l'appareil**.
+Mesuré, douze coupes de deux secondes, tout en local :
+
+| | processeur normal | bridé ×4 |
+| --- | --- | --- |
+| interruptions pendant le montage | 10 | 10 |
+| la plus longue | **100 ms** | **240 ms** |
+
+Dix interruptions de quelques images à chaque changement de plan, c'est le prix
+du passage d'un fichier à l'autre — il n'y a pas de montage sans coupe. Ce qui
+compte est qu'elles tiennent **toutes sous les 700 ms de tenue** : le moniteur
+montre l'image précédente pendant ce temps-là, et non du noir. Même sur un
+processeur quatre fois plus lent, la marge reste du simple au triple.
+
+Le rendu filme cet aperçu : il hérite exactement de cette qualité. C'est pour
+cette raison que le bouton attend que le dernier fichier soit là — un rendu
+lancé trop tôt filmerait le manque.
+
 ### Télécharger application fermée : non, et voici pourquoi
 
 La demande est juste : mille trois cents mégaoctets, on aimerait poser le
