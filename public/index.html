@@ -833,9 +833,25 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   font-size: 0.72rem;
   line-height: 1.35;
   text-align: center;
-  pointer-events: none;
 }
 .preparation[hidden] { display: none; }
+.preparation-dit { display: block; }
+.preparation button {
+  margin-top: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--trait);
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--encre);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.preparation button.on {
+  border-color: var(--vert-fonce);
+  background: var(--vert-fonce);
+  color: #fff;
+}
 
 .transport { display: flex; align-items: center; gap: var(--e3); }
 .lecture {
@@ -2863,6 +2879,10 @@ function editeur(projet) {
   preparation.className = "preparation";
   preparation.id = "preparation";
   preparation.hidden = true;
+  const preparationDit = document.createElement("span");
+  preparationDit.className = "preparation-dit";
+  preparationDit.id = "preparation-dit";
+  preparation.append(preparationDit, boutonVeille());
 
   ecran.append(moniteur, lecteurs[0], lecteurs[1], vide, preparation);
   bloc.append(ecran, transport(), pisteComplete(projet));
@@ -5410,17 +5430,22 @@ function resteAImporter(projet) {
 
 function majPreparation(projet) {
   const bandeau = $("preparation");
-  if (!bandeau) return;
+  const dit = $("preparation-dit");
+  if (!bandeau || !dit) return;
   const { total, prets, perdus, octets } = resteAImporter(projet);
+  const bouton = bandeau.querySelector("button");
   if (!total || prets + perdus >= total) {
     // Plus rien en route : reste éventuellement à dire ce qui ne viendra pas.
+    finirVeille(prets, total);
+    if (bouton) bouton.hidden = true;
     bandeau.hidden = !perdus;
     if (perdus) {
-      bandeau.textContent = `${prets}/${total} plans sur l'appareil · ${perdus} introuvable${perdus > 1 ? "s" : ""}`
+      dit.textContent = `${prets}/${total} plans sur l'appareil · ${perdus} introuvable${perdus > 1 ? "s" : ""}`
         + " — ces plans-là resteront noirs";
     }
     return;
   }
+  if (bouton) { bouton.hidden = false; majBoutonVeille(); }
 
   /* Une attente chiffrée vaut mieux qu'une barre qui avance : on sait s'il faut
      rester devant ou poser le téléphone. Le débit vient de ce qui a réellement
@@ -5430,11 +5455,111 @@ function majPreparation(projet) {
   const duree = attente > 90 ? `~${Math.round(attente / 60)} min` : attente > 5 ? `~${Math.round(attente)} s` : "";
 
   bandeau.hidden = false;
-  bandeau.textContent =
+  dit.textContent =
     `${prets}/${total} plans sur l'appareil · ${(octets / 1e6).toFixed(0)} Mo à venir` +
     (duree ? ` · ${duree}` : "") +
     (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "") +
-    "\nL'aperçu saute tant que les fichiers arrivent — laisse la page ouverte.";
+    "\nL'aperçu saute tant que les fichiers arrivent.";
+}
+
+/* --- attendre sans regarder --------------------------------------------
+
+   Ce qu'on voudrait : que les fichiers continuent d'arriver application fermée,
+   et une notification à la fin. Ce n'est pas possible sur iPhone, et il vaut
+   mieux le dire que le faire croire. L'API faite pour ça — Background Fetch —
+   n'existe que sur Chrome ; Safari ne l'a pas, ni Background Sync. Un service
+   worker ne tourne pas non plus quand la page est fermée. Aucune application
+   web ne télécharge en arrière-plan sur iOS, et aucun contournement ne change
+   cela.
+
+   Ce qui est possible, et qui couvre le vrai besoin — poser le téléphone :
+
+     — garder l'écran allumé, ce qui empêche iOS de suspendre la page. Le
+       téléphone reste sur la table, les fichiers arrivent ;
+     — prévenir à la fin par une notification. Sur iPhone elle demande deux
+       choses : l'application ajoutée à l'écran d'accueil, et iOS 16.4 ou plus.
+       Elle passe par le service worker — sur mobile, le constructeur
+       « Notification » lève une erreur, seul « showNotification » fonctionne ;
+     — et, si l'on ferme quand même, reprendre où l'on s'est arrêté : chaque
+       fichier interrompu garde ce qui était déjà arrivé.
+
+   Le tout est un bouton, pas un réglage silencieux : garder un écran allumé
+   sans le dire vide une batterie, et une permission qu'on n'a pas demandée est
+   une permission qu'on n'obtient pas. */
+const sentinelle = { verrou: null, voulue: false, prevenir: false };
+
+function boutonVeille() {
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.id = "btn-veille";
+  bouton.addEventListener("click", basculerVeille);
+  return bouton;
+}
+
+function majBoutonVeille() {
+  const bouton = $("btn-veille");
+  if (!bouton) return;
+  bouton.classList.toggle("on", sentinelle.voulue);
+  bouton.textContent = sentinelle.voulue
+    ? "Je préviens quand c'est prêt — garde le téléphone allumé"
+    : "Me prévenir quand c'est prêt";
+}
+
+async function basculerVeille() {
+  sentinelle.voulue = !sentinelle.voulue;
+  if (!sentinelle.voulue) { relacherVeille(); majBoutonVeille(); return; }
+
+  /* La permission se demande dans le geste, jamais avant : un navigateur refuse
+     une demande qui ne vient pas d'un appui, et l'utilisateur refuse une demande
+     qu'il n'a pas provoquée. */
+  try {
+    if ("Notification" in window && Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  } catch { /* refusée : on gardera l'écran allumé, sans notification */ }
+  sentinelle.prevenir = "Notification" in window && Notification.permission === "granted";
+  await prendreVeille();
+  majBoutonVeille();
+  if (!sentinelle.verrou && !sentinelle.prevenir) {
+    alert("Ni l'écran allumé ni les notifications ne sont disponibles ici.\n\nSur iPhone, il faut ajouter l'application à l'écran d'accueil — Partager, « Sur l'écran d'accueil » — pour que les notifications soient permises. En attendant, laisse simplement la page ouverte : si tu la fermes, chaque fichier reprend où il s'était arrêté.");
+  }
+}
+
+async function prendreVeille() {
+  if (!sentinelle.voulue || sentinelle.verrou || document.hidden) return;
+  try {
+    sentinelle.verrou = await navigator.wakeLock?.request("screen");
+    // Le système peut le reprendre seul — au verrouillage, par exemple.
+    sentinelle.verrou?.addEventListener?.("release", () => { sentinelle.verrou = null; });
+  } catch { sentinelle.verrou = null; }
+}
+
+function relacherVeille() {
+  sentinelle.verrou?.release?.().catch(() => {});
+  sentinelle.verrou = null;
+}
+
+/* Le verrou d'écran est perdu dès que la page passe derrière : c'est la règle,
+   pas un défaut. On le reprend au retour, tant que l'attente dure. */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) sentinelle.verrou = null;
+  else prendreVeille();
+});
+
+function finirVeille(prets, total) {
+  if (!sentinelle.voulue) return;
+  sentinelle.voulue = false;
+  relacherVeille();
+  majBoutonVeille();
+  if (!sentinelle.prevenir || !total) return;
+  navigator.serviceWorker?.ready?.then((enregistrement) => {
+    enregistrement.showNotification("Ton AMV est prêt", {
+      body: `${prets} plans sur l'appareil. L'aperçu ne saute plus, et la vidéo peut être rendue.`,
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      tag: "amvauto-pret",
+    });
+  }).catch(() => {});
 }
 
 // L'interface reflète l'avancement, et le plan courant bascule sur sa copie

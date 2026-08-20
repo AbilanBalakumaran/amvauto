@@ -1538,6 +1538,52 @@ du débit réellement observé, moyenné sur les derniers transferts :
 L'aperçu saute tant que les fichiers arrivent — laisse la page ouverte.
 ```
 
+### Télécharger application fermée : non, et voici pourquoi
+
+La demande est juste : mille trois cents mégaoctets, on aimerait poser le
+téléphone et être prévenu à la fin. La réponse honnête est que **sur iPhone, une
+application web ne télécharge pas quand elle est fermée**, et qu'aucun
+contournement ne change cela :
+
+| ce qu'il faudrait | état |
+| --- | --- |
+| Background Fetch — l'API faite exactement pour ça | Chrome seulement, **pas Safari** |
+| Background Sync | **pas Safari** |
+| un service worker qui tourne page fermée | n'existe pas : il ne vit que tant qu'une page l'anime |
+
+Ce n'est pas une limite de cette application, c'est une limite d'iOS. Le dire
+vaut mieux que faire semblant.
+
+Ce qui couvre le vrai besoin — poser le téléphone — tient en trois choses, et
+elles sont faites :
+
+**Garder l'écran allumé.** C'est ce qui empêche iOS de suspendre la page. Le
+téléphone reste sur la table, les fichiers continuent d'arriver. Le verrou est
+repris automatiquement au retour : le système le relâche dès que la page passe
+derrière, c'est la règle et non un défaut.
+
+**Prévenir à la fin.** Une notification part quand le dernier fichier est là.
+Sur iPhone elle demande deux choses : l'application ajoutée à l'écran d'accueil,
+et iOS 16.4 ou plus. Elle passe par le service worker — sur mobile, le
+constructeur `Notification` lève une erreur, seul `showNotification` fonctionne
+— et un appui dessus ramène dans l'application au lieu d'ouvrir un second
+onglet.
+
+**Reprendre où l'on s'est arrêté**, si l'on ferme quand même : chaque fichier
+interrompu garde ce qui était déjà arrivé.
+
+Le tout est un bouton, pas un réglage silencieux — garder un écran allumé sans
+le dire vide une batterie, et une permission qu'on n'a pas demandée est une
+permission qu'on n'obtient pas. La demande de permission se fait dans l'appui
+lui-même : un navigateur refuse celle qui ne vient pas d'un geste.
+
+```
+bouton au repos : « Me prévenir quand c'est prêt »
+après appui     : « Je préviens quand c'est prêt — garde le téléphone allumé »
+à la fin        : une notification, une seule
+                  « Ton AMV est prêt — 3 plans sur l'appareil. »
+```
+
 ### Un rendu qui ne part pas pour rien
 
 Vidéo exportée sans son, et un aperçu qui saute à chaque lecture. Deux

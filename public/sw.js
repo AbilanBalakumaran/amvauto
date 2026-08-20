@@ -50,6 +50,20 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+/* Une notification tapée ramène dans l'application plutôt que d'ouvrir un
+   second onglet. Si une fenêtre est déjà là, on la remet devant. */
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const fenetres = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const fenetre of fenetres) {
+      if ("focus" in fenetre) return fenetre.focus();
+    }
+    if (self.clients.openWindow) return self.clients.openWindow("./");
+    return undefined;
+  })());
+});
+
 self.addEventListener("fetch", (event) => {
   const requete = event.request;
   if (requete.method !== "GET") return;
