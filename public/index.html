@@ -5098,6 +5098,28 @@ const fileImport = [];
 // Fichiers dont l'import a échoué : eux seuls autorisent la sonde à aller
 // chercher des images sur la source distante.
 const importsRates = new Set();
+/* Combien de fois on a déjà essayé, par adresse.
+
+   Un échec n'était jamais retenté. Sur cent soixante-quinze fichiers rapatriés
+   en 4G, il y en a toujours quelques-uns qui tombent — une coupure, un 502 de
+   Sakugabooru, un délai dépassé. Chacun d'eux restait absent pour toujours, et
+   le compteur ne pouvait plus atteindre son total : « 173/175 », indéfiniment,
+   sans que rien ne dise pourquoi ni ne tente quoi que ce soit.
+
+   On réessaie donc, en espaçant — et ce qui est déjà arrivé est gardé, si bien
+   qu'un second passage reprend là où le premier s'est arrêté au lieu de tout
+   retélécharger. Après quatre tentatives, l'adresse est déclarée perdue : à ce
+   stade ce n'est plus le réseau, c'est le fichier. */
+const essaisImport = new Map();
+const ESSAIS_MAX = 4;
+const ATTENTE_ESSAI = [4000, 12000, 40000];
+
+/* Le débit observé, pour annoncer une attente plutôt qu'un point d'interrogation.
+   Moyenne glissante sur les derniers imports : un seul fichier mesuré ne dit
+   rien d'un lien mobile, dont le débit varie d'un instant à l'autre. */
+const debit = { octets: 0, millisecondes: 0 };
+const octetsParSeconde = () =>
+  debit.millisecondes > 1500 ? (debit.octets / debit.millisecondes) * 1000 : 0;
 // De quoi interrompre un téléchargement lancé par curiosité : on s'arrête, et
 // ce qui est arrivé reste pour la prochaine fois.
 const arretsImport = new Map();
@@ -5273,6 +5295,7 @@ async function lancerImport() {
 
   const abandon = new AbortController();
   arretsImport.set(adresse, abandon);
+  const parti = performance.now();
   let recus = [];
   let deja = 0;
   try {
@@ -5310,17 +5333,39 @@ async function lancerImport() {
       morceaux.push(new Uint8Array(await reponse.arrayBuffer()));
     }
 
+    /* Le débit se mesure sur ce qui vient d'être reçu, pas sur le fichier
+       entier : une reprise ne compte que ses octets neufs. */
+    const dure = performance.now() - parti;
+    if (dure > 200 && recu > deja) {
+      debit.octets = debit.octets * 0.7 + (recu - deja) * 0.3;
+      debit.millisecondes = debit.millisecondes * 0.7 + dure * 0.3;
+    }
+
     const blob = new Blob(morceaux, { type: reponse.headers.get("content-type") || "video/mp4" });
     await ecrireBase(adresse, blob);
     await effacerBase(cleParticelle(adresse));
     locales.set(adresse, URL.createObjectURL(blob));
+    essaisImport.delete(adresse);
   } catch (erreur) {
     // Interrompu ou en échec : on garde ce qui est arrivé pour la prochaine fois.
     if (recus.length) {
       const type = recus[0]?.type || "video/mp4";
       await ecrireBase(cleParticelle(adresse), new Blob(recus, { type }));
     }
-    if (erreur?.name !== "AbortError") importsRates.add(adresse);
+    if (erreur?.name !== "AbortError") {
+      const faits = (essaisImport.get(adresse) || 0) + 1;
+      essaisImport.set(adresse, faits);
+      if (faits >= ESSAIS_MAX) {
+        importsRates.add(adresse);
+      } else {
+        // Espacé, et remis en file : le lien mobile a le temps de revenir.
+        setTimeout(() => {
+          if (locales.has(adresse)) return;
+          fileImport.push(plan);
+          lancerImport();
+        }, ATTENTE_ESSAI[faits - 1] || 40000);
+      }
+    }
   } finally {
     arretsImport.delete(adresse);
     enImport.delete(adresse);
@@ -5340,21 +5385,56 @@ async function lancerImport() {
    dire. Le bandeau ne s'allume que pendant un transfert, disparaît quand tout
    est là, et donne les deux chiffres qui comptent : combien de plans sont
    prêts, et où en est celui qu'on attend. */
+/* Ce qu'il reste à rapatrier, en sources distinctes et en mégaoctets.
+
+   Le décompte porte sur les sources, pas sur les blocs : un rush découpé en
+   trois morceaux ne se télécharge qu'une fois, et annoncer trois fichiers pour
+   un seul transfert donnerait une attente fausse du simple au triple. */
+function resteAImporter(projet) {
+  const sources = new Map();
+  for (const plan of projet.plans) {
+    const adresse = !plan.youtube && mediaDe(plan);
+    if (adresse && !sources.has(adresse)) sources.set(adresse, plan);
+  }
+  let prets = 0;
+  let perdus = 0;
+  let octets = 0;
+  for (const [adresse, plan] of sources) {
+    if (locales.has(adresse)) { prets += 1; continue; }
+    if (importsRates.has(adresse)) { perdus += 1; continue; }
+    const part = enImport.get(adresse) || 0;
+    octets += Math.max(0, (plan.mb || 4) * 1e6 * (1 - part));
+  }
+  return { total: sources.size, prets, perdus, octets };
+}
+
 function majPreparation(projet) {
   const bandeau = $("preparation");
   if (!bandeau) return;
-  const aRapatrier = projet.plans.filter((plan) => !plan.youtube && mediaDe(plan));
-  const prets = aRapatrier.filter(estLocal).length;
-  const total = aRapatrier.length;
-  if (!total || prets >= total) { bandeau.hidden = true; return; }
+  const { total, prets, perdus, octets } = resteAImporter(projet);
+  if (!total || prets + perdus >= total) {
+    // Plus rien en route : reste éventuellement à dire ce qui ne viendra pas.
+    bandeau.hidden = !perdus;
+    if (perdus) {
+      bandeau.textContent = `${prets}/${total} plans sur l'appareil · ${perdus} introuvable${perdus > 1 ? "s" : ""}`
+        + " — ces plans-là resteront noirs";
+    }
+    return;
+  }
 
-  const courant = projet.plans[lecture.index];
-  const part = courant && avancement(courant);
+  /* Une attente chiffrée vaut mieux qu'une barre qui avance : on sait s'il faut
+     rester devant ou poser le téléphone. Le débit vient de ce qui a réellement
+     été rapatrié, pas d'une estimation théorique. */
+  const parSeconde = octetsParSeconde();
+  const attente = parSeconde > 0 ? octets / parSeconde : 0;
+  const duree = attente > 90 ? `~${Math.round(attente / 60)} min` : attente > 5 ? `~${Math.round(attente)} s` : "";
+
   bandeau.hidden = false;
   bandeau.textContent =
-    `${prets}/${total} plans sur l'appareil` +
-    (typeof part === "number" ? ` · celui-ci ${Math.round(part * 100)} %` : "") +
-    " — l'aperçu saute tant que les fichiers arrivent";
+    `${prets}/${total} plans sur l'appareil · ${(octets / 1e6).toFixed(0)} Mo à venir` +
+    (duree ? ` · ${duree}` : "") +
+    (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "") +
+    "\nL'aperçu saute tant que les fichiers arrivent — laisse la page ouverte.";
 }
 
 // L'interface reflète l'avancement, et le plan courant bascule sur sa copie
@@ -5700,6 +5780,8 @@ $("btn-export").addEventListener("click", () => {
 function texteExport(projet, format, extension) {
   const longueur = total(projet);
   const absents = plansAbsents(projet).length;
+  const perdus = plansPerdus(projet).length;
+  const reste = Math.round(resteAImporter(projet).octets / 1e6);
   const poids = (longueur * (5e6 + 192e3)) / 8 / 1e6;
   return [
     `${projet.plans.length} plans · ${minutage(longueur)}`,
@@ -5715,8 +5797,10 @@ function texteExport(projet, format, extension) {
     `Le rendu se fait en temps réel : compte ${minutage(longueur)}, écran allumé et application au premier plan.`,
     "",
     absents
-      ? `${absents} plan${absents > 1 ? "s ne sont" : " n'est"} pas encore sur l'appareil. Le rendu attend : filmer un montage incomplet donnerait du noir, et coûterait le même temps. Laisse la page ouverte, les fichiers arrivent.`
-      : "Tous les plans sont sur l'appareil : le rendu sera complet.",
+      ? `${absents} plan${absents > 1 ? "s ne sont" : " n'est"} pas encore sur l'appareil${reste ? `, ${reste} Mo à venir` : ""}. Le rendu attend : filmer un montage incomplet donnerait du noir, et coûterait le même temps. Laisse la page ouverte, les fichiers arrivent.`
+      : perdus
+        ? `Prêt, à ceci près : ${perdus} plan${perdus > 1 ? "s sont introuvables et sortiront noirs" : " est introuvable et sortira noir"}. Retire-le${perdus > 1 ? "s" : ""} de la piste si tu préfères.`
+        : "Tous les plans sont sur l'appareil : le rendu sera complet.",
   ].join("\n");
 }
 
@@ -5777,8 +5861,8 @@ function ouvrirExport(projet) {
     }
     if (restants) {
       video.disabled = true;
-      const total = projet.plans.filter((x) => !x.youtube && mediaDe(x)).length;
-      video.textContent = `Préparation ${total - restants}/${total}…`;
+      const bilan = resteAImporter(projet);
+      video.textContent = `Préparation ${bilan.prets}/${bilan.total}…`;
       return;
     }
     video.disabled = false;
@@ -5885,8 +5969,17 @@ function formatRendu() {
 const rendu = { encours: false, enregistreur: null, surveille: null, veille: null };
 
 // Ce qui n'est pas encore sur l'appareil sortira noir : autant le savoir avant.
+/* Ce qui manquera à l'image, au moment de rendre.
+
+   Les plans définitivement perdus n'y sont pas : le rendu ne doit pas attendre
+   un fichier qui ne viendra jamais. Ils sortiront noirs, et le panneau le dit
+   au lieu de bloquer le bouton pour l'éternité. */
 const plansAbsents = (projet) =>
-  projet.plans.filter((plan) => !plan.youtube && mediaDe(plan) && !estLocal(plan));
+  projet.plans.filter((plan) => !plan.youtube && mediaDe(plan)
+    && !estLocal(plan) && !importsRates.has(mediaDe(plan)));
+
+const plansPerdus = (projet) =>
+  projet.plans.filter((plan) => !plan.youtube && mediaDe(plan) && importsRates.has(mediaDe(plan)));
 
 /* La musique passe par un graphe audio pour être à la fois entendue et
    enregistrée. « createMediaElementSource » ne s'appelle qu'une fois par

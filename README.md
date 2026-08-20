@@ -1472,6 +1472,72 @@ moniteur pendant  1280×720
 moniteur après    380×213
 ```
 
+### Deux gigaoctets pour montrer quatre secondes par plan
+
+« 85/175 plans sur l'appareil ». Le chiffre est juste, et l'attente est réelle :
+un AMV de cent soixante-quinze scènes qui ne se répètent jamais, ce sont cent
+soixante-quinze fichiers différents. Mesuré sur les 175 meilleurs rushs de
+Naruto : **2 243 Mo**, médiane 10,5 Mo, le plus lourd 81,9 Mo.
+
+Le barème en était la cause. Il **récompensait le poids** — trois fois la racine
+des mégaoctets — parce qu'un fichier gros était supposé tenir une phrase
+musicale. C'était vrai quand un plan restait huit secondes à l'écran. Depuis
+qu'aucune coupe ne dépasse quatre secondes, un fichier de quarante mégaoctets
+n'en sert pas mieux quatre qu'un de huit — et l'appareil doit le rapatrier en
+entier.
+
+Le poids est donc devenu un coût, borné pour qu'un plan exceptionnel et lourd
+passe encore devant un plan quelconque et léger :
+
+| | avant | après |
+| --- | --- | --- |
+| total à rapatrier | 2 243 Mo | **1 283 Mo** |
+| médiane | 10,5 Mo | 7,1 Mo |
+| le plus lourd | 81,9 Mo | 23,8 Mo |
+
+Quarante-trois pour cent d'attente en moins, sur la même recherche et le même
+nombre de plans.
+
+### Un échec qui n'était jamais retenté
+
+Le vrai obstacle à « tous les plans chargés » n'était pas la lenteur, c'était
+qu'un import raté était **définitif**. Sur cent soixante-quinze fichiers en 4G,
+il y en a toujours quelques-uns qui tombent — une coupure, un 502, un délai
+dépassé. Chacun restait absent pour toujours : le compteur montrait « 173/175 »
+indéfiniment, sans que rien ne dise pourquoi ni ne tente quoi que ce soit. Le
+bouton de rendu, lui, restait grisé pour l'éternité.
+
+Quatre tentatives, espacées de 4, 12 puis 40 secondes, et ce qui est déjà arrivé
+est gardé : un second passage reprend là où le premier s'est arrêté. Éprouvé sur
+un lien qui refuse les deux premières demandes de chaque fichier :
+
+```
+essais par fichier : 3 3 3 3
+✔ les 4 plans ont fini par arriver malgré deux pannes chacun
+```
+
+Après quatre échecs, ce n'est plus le réseau : le plan est déclaré introuvable,
+il est annoncé comme tel, et le rendu **cesse de l'attendre** plutôt que de
+rester bloqué.
+
+```
+0/4 plans sur l'appareil · 4 introuvables — ces plans-là resteront noirs
+« Prêt, à ceci près : 4 plans sont introuvables et sortiront noirs. »
+```
+
+### Une attente chiffrée plutôt qu'une barre qui avance
+
+Le bandeau comptait des blocs ; il compte maintenant des **sources**, ce qui
+n'est pas la même chose — un rush découpé en trois morceaux ne se télécharge
+qu'une fois, et annoncer trois fichiers pour un transfert donnait une attente
+fausse du simple au triple. Il donne les mégaoctets restants et une durée tirée
+du débit réellement observé, moyenné sur les derniers transferts :
+
+```
+85/175 plans sur l'appareil · 640 Mo à venir · ~9 min
+L'aperçu saute tant que les fichiers arrivent — laisse la page ouverte.
+```
+
 ### Un rendu qui ne part pas pour rien
 
 Vidéo exportée sans son, et un aperçu qui saute à chaque lecture. Deux
