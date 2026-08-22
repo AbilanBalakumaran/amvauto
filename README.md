@@ -1458,6 +1458,94 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+### Deux fois la même chanson, deux montages différents
+
+Relancer l'automatisation sur la même musique rendait exactement le même
+montage — mêmes plans, mêmes coupes, dans le même ordre. C'est logique : tout le
+barème est déterministe, et rien ne distinguait un essai du suivant. C'est aussi
+inutilisable : relancer doit donner une autre lecture de la même chanson, pas
+une photocopie.
+
+Chaque essai tire donc une **humeur du jour** : quatre points de faveur ou de
+défaveur par source, assez pour rebattre l'ordre des candidats à énergie égale,
+jamais assez pour franchir les règles dures — l'unicité coûte cent points, le
+budget d'épisode soixante, un cran d'énergie six. La marche du pas d'or, qui
+décide quelles secondes d'une source sont montrées, démarre elle aussi à un
+endroit tiré de cette humeur.
+
+La graine est tenue pour toute la durée d'une automatisation : le second
+montage — celui qui profite de ce que l'IA a vu — doit être le même essai
+affiné, pas un troisième inconnu.
+
+```
+essai 1 vs 2   0 % de coupes identiques à la même place
+essai 1 vs 3   2 %
+essai 2 vs 3   0 %
+
+règles : coupe max 4 s · épisode max 15 s · 0 scène en double
+```
+
+Un réglage a suivi la mesure. À pleine force sur tous les emplois, l'humeur
+déséquilibrait le réemploi quand les sources manquent : vingt sources pour
+soixante-quinze coupes donnaient de un à onze emplois selon la faveur, là où
+l'usure les répartissait à trois ou quatre. Elle s'émousse donc à chaque emploi,
+et l'usure a été portée de deux à six points. Résultat : trois à cinq emplois
+par source, et l'accord d'énergie tient toujours à 0,39 cran d'écart moyen.
+
+### Un rendu qui filmait une toile morte
+
+Trois kilo-octets au lieu de deux mégaoctets, un fichier vide livré sans un
+mot : voilà ce que donnait « des bugs partout après l'export ».
+
+`captureStream` se lie à un élément précis. Or le moniteur affiché est
+reconstruit chaque fois que la vue du projet se redessine — un import qui se
+termine, une musique qu'on redonne, un montage qu'on repose. Le flux restait
+accroché à une toile détachée que plus personne ne peignait, et l'enregistrement
+continuait dans le vide.
+
+On enregistre désormais une toile à nous, que rien dans l'interface ne peut
+remplacer, et le moniteur y est recopié à l'identique à chaque passage — même
+taille, donc aucune perte. La recopie a lieu **avant tout arrêt anticipé** du
+dessin : `captureStream` ne produit d'image que lorsqu'on touche à la toile, et
+une seconde sans rien toucher est une seconde absente du fichier.
+
+### Le rendu ne se perd plus
+
+« Si on oublie de l'enregistrer après l'export, on doit tout refaire. » C'était
+vrai, et absurde : le fichier venait de coûter le temps réel du montage, et il
+n'existait que dans la page.
+
+Il est rangé sur l'appareil comme les rushs, et le panneau le propose tant qu'il
+est là — application fermée et rouverte comprise :
+
+```
+Rendu gardé sur l'appareil — 22 août, 16:21 · 2:23 · 187 Mo
+[ Enregistrer la vidéo ]  [ Télécharger ]
+```
+
+Pourquoi pas dans le nuage, comme Discord ? Parce que le coffre repose sur
+Workers KV, dont une valeur ne peut pas dépasser vingt-cinq mégaoctets, quand un
+AMV de deux minutes et demie en pèse deux cents. Il faudrait un stockage
+d'objets payant et une facture au transfert — ce que cette application
+s'interdit. Sur l'appareil, il ne coûte rien et survit à tout sauf à un
+effacement des données du navigateur.
+
+### Un bouton qui n'avale plus les appuis
+
+Le bouton de rendu s'éteignait dès qu'un plan repassait en téléchargement et se
+rallumait une seconde plus tard. Un appui tombait alors dans le vide sans rien
+dire — « le bouton exporter ne marche pas du premier coup ». Un bouton qui
+change d'état sous le doigt est hostile.
+
+Il reste donc toujours pressable, et répond toujours quelque chose : soit il
+lance, soit il écrit ce qui manque.
+
+```
+sans musique   « Il manque la musique »
+appui          → « Il manque la musique : le fichier n'est plus ouvert et la
+                  vidéo sortirait muette. Redonne-le avec le bouton en bas. »
+```
+
 ### Un fichier qui se prétendait quatre fois plus court
 
 Le rendu contenait bien toutes ses images — vérifié une par une, deux cent

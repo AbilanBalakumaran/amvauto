@@ -3130,6 +3130,15 @@ function dessinerMoniteur() {
   const toile = $("moniteur");
   if (!toile) return;
   ajusterMoniteur(toile);
+
+  /* Pendant un rendu, le moniteur est recopié sur la toile enregistrée à chaque
+     passage — y compris quand il n'a rien de neuf à peindre. C'est délibéré :
+     « captureStream » ne produit d'image que lorsqu'on touche à la toile, et une
+     seconde sans rien toucher est une seconde absente du fichier. La recopie a
+     lieu avant tout arrêt anticipé, pour cette raison précise. */
+  if (rendu.encours && toile.width === toileRendu.width && toile.height === toileRendu.height) {
+    toileRendu.getContext("2d")?.drawImage(toile, 0, 0);
+  }
   const ctx = toile.getContext("2d");
   const plan = projetActif()?.plans[lecture.index];
   const video = elementActif();
@@ -5137,6 +5146,46 @@ const ATTENTE_ESSAI = [4000, 12000, 40000];
 /* Le débit observé, pour annoncer une attente plutôt qu'un point d'interrogation.
    Moyenne glissante sur les derniers imports : un seul fichier mesuré ne dit
    rien d'un lien mobile, dont le débit varie d'un instant à l'autre. */
+/* Quand le dernier octet est arrivé, par transfert en cours.
+
+   Un seul fichier se rapatrie à la fois : c'est le bon choix quand la tête de
+   lecture les réclame dans l'ordre, mais cela veut dire qu'un transfert bloqué
+   bloque tout. Or c'est exactement ce que fait un téléphone qu'on met de côté :
+   iOS suspend la page, la connexion meurt en silence — pas d'erreur, pas de
+   fin, la promesse n'aboutit jamais — et la file reste arrêtée sur ce
+   fichier-là, pour toujours. « Les plans ont du mal à se charger en arrière-plan
+   » : ce n'était pas de la lenteur, c'était un arrêt.
+
+   Un chien de garde surveille donc l'arrivée des octets. Vingt-cinq secondes
+   sans rien, et le transfert est coupé — ce qui est déjà arrivé reste gardé, et
+   la reprise repart de là. */
+const progres = new Map();
+const bloques = new Set();
+const ATTENTE_MORTE = 25000;
+
+/* Le chien de garde lui-même.
+
+   Il ne compte pas le temps passé en arrière-plan : là, ce n'est pas le
+   transfert qui traîne, c'est la page qui dort. Au retour, on remet les
+   compteurs à zéro et on relance la file — le rappel qui devait l'enchaîner a
+   pu mourir avec la mise en veille. */
+setInterval(() => {
+  if (document.hidden) return;
+  const maintenant = performance.now();
+  for (const [adresse, quand] of progres) {
+    if (maintenant - quand < ATTENTE_MORTE) continue;
+    bloques.add(adresse);
+    arretsImport.get(adresse)?.abort();
+  }
+}, 5000);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  const maintenant = performance.now();
+  for (const adresse of progres.keys()) progres.set(adresse, maintenant);
+  lancerImport();
+});
+
 const debit = { octets: 0, millisecondes: 0 };
 const octetsParSeconde = () =>
   debit.millisecondes > 1500 ? (debit.octets / debit.millisecondes) * 1000 : 0;
@@ -5316,6 +5365,7 @@ async function lancerImport() {
   const abandon = new AbortController();
   arretsImport.set(adresse, abandon);
   const parti = performance.now();
+  progres.set(adresse, parti);
   let recus = [];
   let deja = 0;
   try {
@@ -5344,6 +5394,7 @@ async function lancerImport() {
         if (done) break;
         morceaux.push(value);
         recu += value.byteLength;
+        progres.set(adresse, performance.now());
         if (attendu) {
           enImport.set(adresse, Math.min(0.99, recu / attendu));
           majImports();
@@ -5372,7 +5423,11 @@ async function lancerImport() {
       const type = recus[0]?.type || "video/mp4";
       await ecrireBase(cleParticelle(adresse), new Blob(recus, { type }));
     }
-    if (erreur?.name !== "AbortError") {
+    /* Une coupure du chien de garde n'est pas un abandon de l'utilisateur : elle
+       doit être retentée, alors qu'un « Interrompre » demandé ne doit pas
+       l'être. Les deux arrivent ici sous le même nom d'erreur. */
+    const coupeParGarde = bloques.delete(adresse);
+    if (erreur?.name !== "AbortError" || coupeParGarde) {
       const faits = (essaisImport.get(adresse) || 0) + 1;
       essaisImport.set(adresse, faits);
       if (faits >= ESSAIS_MAX) {
@@ -5388,6 +5443,8 @@ async function lancerImport() {
     }
   } finally {
     arretsImport.delete(adresse);
+    progres.delete(adresse);
+    bloques.delete(adresse);
     enImport.delete(adresse);
     importsEnCours -= 1;
     majImports();
@@ -5900,6 +5957,25 @@ $("btn-export").addEventListener("click", () => {
   ouvrirExport(projet);
 });
 
+/* Ce qui empêche de rendre, en une phrase — ou rien du tout.
+
+   C'est la même vérification que celle qui écrit le bouton, mais rendue au
+   moment de l'appui : le bouton reste toujours pressable, et c'est ici qu'on
+   dit pourquoi il ne part pas. */
+function ceQuiManque(projet, format) {
+  if (!format) return "Ce navigateur ne sait pas enregistrer de vidéo. Safari sur iPhone et Chrome le savent.";
+  if (!lecture.audio) {
+    return "Il manque la musique : le fichier n'est plus ouvert et la vidéo sortirait muette.\n"
+      + "Redonne-le avec le bouton en bas de ce panneau.";
+  }
+  const bilan = resteAImporter(projet);
+  if (plansAbsents(projet).length) {
+    return `Encore ${bilan.total - bilan.prets} plan(s) à rapatrier sur ${bilan.total}.\n`
+      + "Le rendu filme l'aperçu : lancé maintenant, il filmerait les manques. Laisse la page ouverte.";
+  }
+  return "";
+}
+
 /* Ce que le panneau raconte, recalculé à chaque seconde : les fichiers
    continuent d'arriver pendant qu'on le lit. */
 function texteExport(projet, format, extension) {
@@ -5961,8 +6037,18 @@ function ouvrirExport(projet) {
   const video = document.createElement("button");
   video.type = "button";
   video.className = "fort";
+  /* Jamais grisé.
+
+     Le bouton s'éteignait dès qu'un plan repassait en téléchargement et se
+     rallumait une seconde plus tard : un appui tombait dans le vide sans rien
+     dire, et il fallait recommencer — « le bouton exporter ne marche pas du
+     premier coup ». Un bouton qui change d'état sous le doigt est hostile. Il
+     reste donc toujours pressable et répond toujours quelque chose : soit il
+     lance, soit il explique ce qui manque. */
   video.addEventListener("click", () => {
     if (rendu.encours) { arreterRendu(); return; }
+    const empeche = ceQuiManque(projet, format);
+    if (empeche) { etat.textContent = empeche; return; }
     lancerRendu(projet, video, etat, (blob, ext) => livrerRendu(blob, ext, projet, livraison));
   });
 
@@ -5972,25 +6058,13 @@ function ouvrirExport(projet) {
      après : le bouton dit ce qui manque au lieu de laisser faire. */
   const jauger = () => {
     if (rendu.encours) return;
-    const absents = plansAbsents(projet);
-    const restants = absents.length;
-    if (!format) {
-      video.disabled = true;
-      video.textContent = "Rendu impossible ici";
-      return;
-    }
-    if (!lecture.audio) {
-      video.disabled = true;
-      video.textContent = "Il manque la musique";
-      return;
-    }
-    if (restants) {
-      video.disabled = true;
+    if (!format) { video.textContent = "Rendu impossible ici"; return; }
+    if (!lecture.audio) { video.textContent = "Il manque la musique"; return; }
+    if (plansAbsents(projet).length) {
       const bilan = resteAImporter(projet);
       video.textContent = `Préparation ${bilan.prets}/${bilan.total}…`;
       return;
     }
-    video.disabled = false;
     video.textContent = "Rendre la vidéo";
   };
   /* Les fichiers continuent d'arriver pendant que le panneau est ouvert : le
@@ -6045,6 +6119,22 @@ function ouvrirExport(projet) {
   if (!lecture.audio) actions.append(musique);
   corps.append(titre, meta, etat, livraison, actions);
   jauger();
+
+  /* Le rendu précédent, s'il est encore là.
+
+     Il est proposé avant même qu'on en relance un : c'est très souvent ce qu'on
+     vient chercher en rouvrant ce panneau — la vidéo qu'on avait oublié
+     d'enregistrer. */
+  reprendreRendu(projet).then((garde) => {
+    if (!garde || !document.body.contains(corps) || livraison.children.length) return;
+    const quand = new Date(garde.quand).toLocaleString("fr-FR",
+      { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const note = document.createElement("div");
+    note.className = "lecteur-meta";
+    note.textContent = `Rendu gardé sur l'appareil — ${quand} · ${minutage(garde.duree)} · ${(garde.taille / 1e6).toFixed(0)} Mo`;
+    livraison.before(note);
+    livrerRendu(garde.blob, garde.extension, projet, livraison);
+  }).catch(() => {});
   boite.append(corps);
   fond.replaceChildren(boite);
   fond.hidden = false;
@@ -6091,6 +6181,20 @@ function formatRendu() {
   }) || null;
 }
 
+/* La toile qu'on enregistre n'est pas celle qu'on affiche.
+
+   « captureStream » se lie à un élément précis. Or le moniteur affiché est
+   reconstruit à chaque fois que la vue du projet se redessine — un import qui
+   se termine, une musique qu'on redonne, un montage qu'on repose. Le flux
+   restait alors accroché à une toile détachée que plus personne ne peignait, et
+   l'enregistrement continuait dans le vide : trois kilo-octets au lieu de deux
+   mégaoctets, un fichier vide livré sans un mot. C'est très probablement ce qui
+   donnait « des bugs partout après l'export ».
+
+   On enregistre donc une toile à nous, que rien dans l'interface ne peut
+   remplacer, et le moniteur y est recopié à l'identique à chaque image — même
+   taille, donc aucune perte. */
+const toileRendu = document.createElement("canvas");
 const rendu = { encours: false, enregistreur: null, surveille: null, veille: null };
 
 // Ce qui n'est pas encore sur l'appareil sortira noir : autant le savoir avant.
@@ -6153,9 +6257,12 @@ async function lancerRendu(projet, bouton, etat, offrir) {
      produirait une vidéo à l'ancienne taille. */
   rendu.encours = true;
   ajusterMoniteur(moniteur);
+  toileRendu.width = RENDU_LARGEUR;
+  toileRendu.height = RENDU_HAUTEUR;
+  toileRendu.getContext("2d", { alpha: false })?.drawImage(moniteur, 0, 0);
   let flux;
   try {
-    flux = moniteur.captureStream(IMAGES_PAR_SECONDE);
+    flux = toileRendu.captureStream(IMAGES_PAR_SECONDE);
   } catch (erreur) {
     /* Une toile « teintée » par un fichier d'une autre origine refuse d'être
        capturée. Depuis que l'aperçu lit par le relais — même origine — cela ne
@@ -6199,7 +6306,13 @@ async function lancerRendu(projet, bouton, etat, offrir) {
     const type = format.split(";")[0];
     const brut = new Blob(morceaux, { type });
     if (!brut.size) { etat.textContent = "Rien n'a été enregistré."; return; }
-    corrigerRendu(brut).then((blob) => offrir(blob, type.endsWith("mp4") ? "mp4" : "webm"));
+    const extension = type.endsWith("mp4") ? "mp4" : "webm";
+    corrigerRendu(brut).then(async (blob) => {
+      // Rangé avant d'être proposé : si l'on ferme la page tout de suite après,
+      // le fichier est déjà à l'abri.
+      await garderRendu(projetActif() || projet, blob, extension);
+      offrir(blob, extension);
+    });
   });
 
   // L'écran doit rester allumé : un téléphone qui se verrouille arrête de
@@ -6327,6 +6440,53 @@ async function corrigerRendu(blob) {
     // même du début à la fin, seule sa durée annoncée est fausse.
     return blob;
   }
+}
+
+/* Garder le dernier rendu.
+
+   « Si on oublie de l'enregistrer après l'export, on doit tout refaire. » C'est
+   vrai, et c'était absurde : le fichier venait de coûter le temps réel du
+   montage, et il n'existait que dans la page. Un retour en arrière, un onglet
+   fermé, un appui à côté, et la demi-heure était perdue.
+
+   Il est donc rangé sur l'appareil, comme les rushs, et le panneau d'export le
+   propose tant qu'il est là — même après avoir fermé l'application. Un nouveau
+   rendu remplace l'ancien : on ne garde pas une collection, on garde le dernier.
+
+   Pourquoi pas dans le nuage, comme Discord ? Parce que le coffre repose sur
+   Workers KV, dont une valeur ne peut pas dépasser vingt-cinq mégaoctets. Un
+   AMV de deux minutes et demie en pèse deux cents. Héberger cela demanderait un
+   stockage d'objets payant et une facture au transfert — ce que cette
+   application s'interdit. Sur l'appareil, en revanche, il ne coûte rien et il
+   survit à tout sauf à un effacement des données du navigateur. */
+const cleRendu = (projet) => `rendu:${projet.id}`;
+
+async function garderRendu(projet, blob, extension) {
+  try {
+    await ecrireBase(cleRendu(projet), blob);
+    const fiches = lireFichesRendu();
+    fiches[projet.id] = {
+      quand: Date.now(),
+      taille: blob.size,
+      extension,
+      duree: Math.round(total(projet)),
+      nom: projet.nom,
+    };
+    localStorage.setItem(CLE_RENDUS, JSON.stringify(fiches));
+  } catch { /* stockage plein : le rendu reste offert dans la page, pas au-delà */ }
+}
+
+const CLE_RENDUS = "amvauto-rendus";
+function lireFichesRendu() {
+  try { return JSON.parse(localStorage.getItem(CLE_RENDUS) || "{}"); } catch { return {}; }
+}
+
+async function reprendreRendu(projet) {
+  const fiche = lireFichesRendu()[projet.id];
+  if (!fiche) return null;
+  const blob = await lireBase(cleRendu(projet));
+  if (!(blob instanceof Blob) || !blob.size) return null;
+  return { blob, ...fiche };
 }
 
 /* Livrer le fichier.
@@ -7015,13 +7175,45 @@ function accordDuMouvement(precedent, plan) {
    sources de même énergie et de même note se relayaient dans un ordre
    parfaitement cyclique — p0 p1 p2 p3 p4, quinze fois de suite —, et le montage
    se voyait. La valeur reste sous le plus petit écart qui ait un sens. */
-function grainDeSable(id, rang) {
-  let a = 0x811c9dc5 ^ rang;
+function grainDeSable(id, rang, graine = 0) {
+  let a = (0x811c9dc5 ^ rang ^ Math.imul(graine, 0x9e3779b1)) >>> 0;
   for (const c of String(id)) { a ^= c.charCodeAt(0); a = Math.imul(a, 0x01000193) >>> 0; }
   return (a % 100) / 400;
 }
 
-function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0) {
+/* L'humeur du jour.
+
+   Deux automatisations sur la même musique rendaient exactement le même
+   montage — mêmes plans, mêmes coupes, dans le même ordre. C'est logique : tout
+   le barème est déterministe, et rien ne distinguait un essai du suivant. C'est
+   aussi inutilisable : relancer devait donner une autre lecture de la même
+   chanson, pas une photocopie.
+
+   On tire donc, à chaque montage, une préférence propre à cet essai-là : quatre
+   points de faveur ou de défaveur par source. C'est assez pour rebattre l'ordre
+   des candidats à énergie égale — et donc changer entièrement quels plans
+   tombent où — sans jamais franchir les règles dures : l'unicité coûte cent
+   points, le budget d'épisode soixante, un cran d'énergie six.
+
+   Le grain de sable, lui, garde son rôle : départager ce qui reste
+   rigoureusement à égalité, sans jamais peser assez pour déranger un vrai
+   choix. */
+function humeur(id, graine, pris = 0) {
+  if (!graine) return 0;
+  let a = Math.imul(graine, 0x9e3779b1) >>> 0;
+  for (const c of String(id)) { a ^= c.charCodeAt(0); a = Math.imul(a, 0x01000193) >>> 0; }
+  /* La faveur s'émousse à mesure qu'une source sert.
+
+     Mesuré : à pleine force sur tous les emplois, elle déséquilibrait le
+     réemploi quand les sources manquent — vingt sources pour soixante-quinze
+     coupes donnaient de un à onze emplois selon la faveur du jour, là où
+     l'usure les répartissait à trois ou quatre. Or l'humeur doit décider quelle
+     scène neuve va où, pas monopoliser la piste quand il n'y a plus le choix.
+     Divisée par le nombre d'emplois, elle laisse l'usure reprendre la main. */
+  return (((a % 1000) / 1000) * 8 - 4) / (1 + pris);
+}
+
+function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0, graine = 0) {
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
   const derniereFois = vus.get(plan.id);
   const fraicheur = derniereFois === undefined ? 0 : Math.max(0, 6 - (rang - derniereFois));
@@ -7035,7 +7227,13 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
      une scène neuve, c'est elle qui sort. Une même scène deux fois dans un AMV
      se remarque plus que n'importe quel défaut d'accord. */
   const deja = (plan.__pris || 0) > 0 ? 100 : 0;
-  const usure = Math.min(4, plan.__pris || 0) * 0.5;
+  /* L'usure devait rester légère tant qu'aucun essai ne favorisait personne.
+     Depuis qu'une humeur du jour distingue les sources, il lui faut de quoi
+     rééquilibrer le réemploi : mesuré, vingt sources pour soixante-quinze
+     coupes donnaient de un à onze emplois avec une usure plafonnée à deux
+     points, et de trois à cinq une fois portée à six. Elle reste bornée — sans
+     borne, elle finissait par l'emporter sur l'accord d'énergie. */
+  const usure = Math.min(6, plan.__pris || 0) * 1;
 
   /* L'accord aux paroles, quand il existe. Il pèse assez pour l'emporter sur un
      écart d'énergie — c'est bien le but : un plan de pluie sur un vers de pluie
@@ -7072,7 +7270,8 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
   return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole
     + accordDuMouvement(precedent, plan)
     + enchainement(precedent, plan, serie)
-    + grainDeSable(plan.id, rang)
+    + humeur(plan.id, graine, plan.__pris || 0)
+    + grainDeSable(plan.id, rang, graine)
     - (plan.score || 0) / 100;
 }
 
@@ -7093,24 +7292,28 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
    côte à côte. */
 const PAS_DOR = 0.6180339887;
 
-function morceauxDe(plan, tenue) {
+function morceauxDe(plan, tenue, graine = 0) {
   const source = dureeSource(plan);
   const combien = Math.max(1, Math.min(24, Math.floor(source / Math.max(tenue, PLAN_MINI))));
-  if (plan.__morceaux?.combien === combien) return plan.__morceaux;
+  if (plan.__morceaux?.combien === combien && plan.__morceaux.graine === graine) return plan.__morceaux;
   const pas = source / combien;
   const ordre = [];
   const vus = new Set();
+  /* Le départ de la marche dépend de l'essai : sans cela, une même source
+     rendait toujours ses morceaux dans le même ordre, et deux montages de la
+     même chanson montraient les mêmes secondes des mêmes plans. */
+  const depart = graine ? (humeur(plan.id, graine) + 4) / 8 : 0;
   for (let k = 0; ordre.length < combien && k < combien * 8; k += 1) {
-    const place = Math.floor(((k * PAS_DOR) % 1) * combien);
+    const place = Math.floor(((depart + k * PAS_DOR) % 1) * combien);
     if (!vus.has(place)) { vus.add(place); ordre.push(place); }
   }
   // Ce que le pas d'or aurait manqué, on le complète dans l'ordre naturel.
   for (let k = 0; k < combien; k += 1) if (!vus.has(k)) ordre.push(k);
-  plan.__morceaux = { combien, pas, ordre };
+  plan.__morceaux = { combien, pas, ordre, graine };
   return plan.__morceaux;
 }
 
-function fenetreDans(plan, duree, viserLePic = false) {
+function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
   const source = dureeSource(plan);
   if (!(source > 0) || source < PLAN_MINI) return null;
   const tenue = Math.min(duree, Math.max(PLAN_MINI, source));
@@ -7128,7 +7331,7 @@ function fenetreDans(plan, duree, viserLePic = false) {
     return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
   }
 
-  const { combien, pas, ordre } = morceauxDe(plan, tenue);
+  const { combien, pas, ordre } = morceauxDe(plan, tenue, graine);
   const place = ordre[pris % combien];
   // Centré dans sa case : un morceau collé au bord en mordrait un autre.
   const milieu = place * pas + pas / 2;
@@ -7148,7 +7351,7 @@ function fenetreDans(plan, duree, viserLePic = false) {
 const parChronologie = (a, b) =>
   (Number(a.episode) || 0) - (Number(b.episode) || 0) || String(a.id).localeCompare(String(b.id));
 
-function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
+function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 } = {}) {
   const rythme = projet.rythme;
   /* Les sources, et non les blocs déjà posés. Monter une seconde fois sur le
      résultat de la première prendrait chaque rush autant de fois qu'il y a été
@@ -7230,13 +7433,13 @@ function construireMontage(projet, { ordre = "libre", depuis = null } = {}) {
           // Un rush trop court pour la case n'est pas disqualifié — il n'y en
           // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
           const court = dureeSource(plan) < vise ? 3 : 0;
-          const note = noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie) + court;
+          const note = noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie, graine) + court;
           if (note < meilleure) { meilleure = note; choix = plan; }
         }
       }
       if (!choix) break;
 
-      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu);
+      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu, graine);
       if (!bornes) break;
       // Combien de plans d'affilée dans la même famille : c'est ce qui rend le
       // sur-place de plus en plus coûteux.
@@ -7541,7 +7744,7 @@ function monterSurLaMusique(bouton) {
     return;
   }
 
-  const montage = construireMontage(projet, { ordre: projet.amv?.ordre });
+  const montage = construireMontage(projet, { ordre: projet.amv?.ordre, graine: nouvelleGraine() });
   if (!montage) {
     alert("Rien à poser — les durées des rushs n'ont pas encore été mesurées, réessaie dans un instant.");
     return;
@@ -8172,6 +8375,14 @@ function ouvrirAssistant(etape = "musique") {
 /* L'arrêt en cours de route. Une automatisation qui lit quarante plans dure
    plusieurs minutes ; ne pas pouvoir l'interrompre, c'est devoir fermer
    l'application. Le drapeau est lu entre chaque étape et à chaque plan. */
+/* Une graine par essai.
+
+   Elle est tirée au sort, mais tenue pour toute la durée d'une automatisation :
+   le second montage — celui qui profite de ce que l'IA a vu — doit être le
+   même essai, affiné, et non un troisième inconnu. C'est pourquoi elle ne se
+   retire pas à chaque appel de « poser ». */
+const nouvelleGraine = () => (Math.floor(Math.random() * 0xffffffff) || 1) >>> 0;
+
 const automate = { encours: false, arret: false };
 
 function arreterAutomate() { automate.arret = true; }
@@ -8208,9 +8419,10 @@ async function automatiserAmv(bouton) {
   // Fixée avant le premier montage : c'est elle qu'on remonte ensuite, jamais
   // le montage lui-même.
   let socle = null;
+  const graine = nouvelleGraine();
   const poser = () => {
     if (!socle) socle = [...new Map(projet.plans.map((plan) => [String(plan.id), plan])).values()];
-    const montage = construireMontage(projet, { ordre: amv.ordre, depuis: socle });
+    const montage = construireMontage(projet, { ordre: amv.ordre, depuis: socle, graine });
     if (!montage) return 0;
     projet.plans = montage;
     sauver();
