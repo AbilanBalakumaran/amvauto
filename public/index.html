@@ -3738,10 +3738,50 @@ function ordonnancerBandes() {
   prechaufferVisible();
 }
 
+/* Une seule repeinte par image d'écran, jamais plus.
+
+   Chaque imagette capturée demandait une repeinte complète de la pellicule
+   visible. La sonde en capture une vingtaine par seconde pendant qu'elle
+   constitue sa réserve, et chaque repeinte redessine une vingtaine de blocs :
+   mesuré, quatre cent cinquante « drawImage » par seconde sur une application
+   qui, à l'écran, ne bouge pas. Douze pour cent d'un cœur au repos sur une
+   machine de bureau — sur un téléphone, c'est la moitié de la chaleur dont il
+   se plaint.
+
+   Les regrouper à l'image d'écran ne suffisait pas : la sonde en capture assez
+   pour qu'il y en ait une à chaque image, et l'on repeignait encore quatre cent
+   soixante-cinq fois par seconde. Une pellicule qui se remplit n'a pas besoin
+   de soixante rafraîchissements par seconde — quatre suffisent largement à voir
+   les images apparaître. Le dernier appel est toujours honoré : la pellicule
+   finit toujours complète. */
+const RYTHME_BANDES = 250;
+let bandesPrevues = null;
+let bandesDerniere = 0;
+
+function redessinerBandes() {
+  const maintenant = performance.now();
+  const reste = RYTHME_BANDES - (maintenant - bandesDerniere);
+  if (reste > 0) {
+    if (!bandesPrevues) bandesPrevues = setTimeout(() => { bandesPrevues = null; redessinerBandes(); }, reste);
+    return;
+  }
+  if (bandesPrevues) { clearTimeout(bandesPrevues); bandesPrevues = null; }
+  bandesDerniere = maintenant;
+  peindreBandes();
+}
+
+/* Certains gestes veulent la pellicule tout de suite — un zoom, un défilement,
+   un bloc qu'on vient de déplacer. Ceux-là ne passent pas par la file. */
+function redessinerBandesMaintenant() {
+  if (bandesPrevues) { clearTimeout(bandesPrevues); bandesPrevues = null; }
+  bandesDerniere = performance.now();
+  peindreBandes();
+}
+
 /* Peint la partie visible de chaque bloc. Chaque colonne de 96 px porte
    l'image de l'instant qu'elle occupe : plus on zoome, plus les colonnes
    couvrent un temps court, donc plus on voit d'images. */
-function redessinerBandes() {
+function peindreBandes() {
   const projet = projetActif();
   const rail = $("rail");
   const cadre = $("piste");
@@ -5619,9 +5659,38 @@ function finirVeille(prets, total) {
   }).catch(() => {});
 }
 
+/* Rafraîchir l'avancement, mais pas à chaque bloc d'octets.
+
+   La barre de progression était repeinte à chaque morceau reçu du flux : sur un
+   fichier de dix mégaoctets découpé en blocs de seize kilo-octets, cela fait six
+   cents rafraîchissements par fichier — et chacun parcourt tous les blocs de la
+   piste, recompte les durées, refait le bilan du projet. Sur cent
+   soixante-quinze plans, c'est plus de cent mille recalculs complets pour un
+   seul téléchargement. Mesuré : quatorze pour cent d'un cœur pendant une heure,
+   sur une machine de bureau — sur un téléphone, c'est la chaleur dont il se
+   plaint.
+
+   Quatre fois par seconde suffisent à l'œil. Le dernier appel est toujours
+   honoré, pour que la barre finisse bien à cent pour cent. */
+const RYTHME_IMPORTS = 250;
+let majPrevue = null;
+let majDerniere = 0;
+
+function majImports() {
+  const maintenant = performance.now();
+  const reste = RYTHME_IMPORTS - (maintenant - majDerniere);
+  if (reste > 0) {
+    if (!majPrevue) majPrevue = setTimeout(() => { majPrevue = null; majImports(); }, reste);
+    return;
+  }
+  if (majPrevue) { clearTimeout(majPrevue); majPrevue = null; }
+  majDerniere = maintenant;
+  peindreImports();
+}
+
 // L'interface reflète l'avancement, et le plan courant bascule sur sa copie
 // locale dès qu'elle est prête.
-function majImports() {
+function peindreImports() {
   if ($("vue-projet")?.hidden) return;
   const projet = projetActif();
   const rail = $("rail");

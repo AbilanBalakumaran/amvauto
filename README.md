@@ -1458,6 +1458,36 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+### Le téléphone chauffait pour repeindre ce qui ne bougeait pas
+
+« La prévisualisation fait chauffer le téléphone. » En mesurant le temps de
+tâche cumulé — ce qui chauffe, littéralement — on trouve deux boucles qui
+travaillaient pour rien.
+
+**La barre d'avancement, repeinte à chaque bloc d'octets.** Un fichier de dix
+mégaoctets arrive en blocs de seize kilo-octets : six cents rafraîchissements
+par fichier, et chacun parcourt tous les blocs de la piste, recompte les durées,
+refait le bilan du projet. Sur cent soixante-quinze plans, plus de cent mille
+recalculs complets pour un seul téléchargement. Quatre fois par seconde
+suffisent à l'œil.
+
+**La pellicule, repeinte à chaque imagette capturée.** La sonde en capture une
+vingtaine par seconde pendant qu'elle constitue sa réserve, et chaque repeinte
+redessine une vingtaine de blocs : **quatre cent cinquante `drawImage` par
+seconde sur une application qui, à l'écran, ne bouge pas**. Regrouper à l'image
+d'écran ne suffisait pas — il y avait une capture à chaque image. Une pellicule
+qui se remplit n'a pas besoin de soixante rafraîchissements par seconde.
+
+| | avant | après |
+| --- | --- | --- |
+| au repos, tout rapatrié | 12 % d'un cœur | **7 %** |
+| pendant le rapatriement (175 plans) | 14 % | **5 %** |
+| dessins par seconde au repos | 455 | **120** |
+
+Ce sont des chiffres de machine de bureau ; sur un téléphone, ils se paient
+trois à quatre fois plus cher. La lecture, elle, reste à une vingtaine de pour
+cent : c'est le décodage vidéo, et il n'y a rien à y retrancher.
+
 ### Deux fois la même chanson, deux montages différents
 
 Relancer l'automatisation sur la même musique rendait exactement le même
