@@ -2690,6 +2690,36 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Ce n'était pas la fabrication, c'était ce qu'elle donnait à voir
+
+Le signalement s'est précisé : « quand j'appuie sur préparer l'aperçu fluide,
+puisque c'est du temps réel, je vois tout le bloc de la vidéo d'origine qui est
+lancé et non que la partie découpée ». Ce n'est pas ce que la fabrication
+encode — cela avait été vérifié, mesuré, et revérifié depuis l'extérieur. C'est
+ce qu'elle **montre**.
+
+Le lecteur qui alimente le rendu avait été rendu visible, en grand, sur le
+moniteur — pour une bonne raison : un lecteur d'un pixel sur un et presque
+transparent est un lecteur que le navigateur estime inutile, et Safari en
+ralentit le rendu, ce qui avait coûté les quarante minutes. Mais le montrer,
+lui, était une mauvaise idée. Ce qu'il donne à voir, c'est le rush d'origine tel
+qu'il se déroule : ses sauts d'un plan à l'autre, et l'image d'ouverture de
+chaque fichier le temps qu'un déplacement aboutisse. On croyait donc voir la
+fabrication lire les rushs entiers, alors qu'elle n'encodait bien que les
+parties coupées. Un défaut d'affichage qui se lisait comme un défaut de fond —
+et qui a coûté deux allers-retours.
+
+Le montage en train de se construire était pourtant déjà dessiné : c'est la toile
+qu'on encode. Elle est désormais recopiée sur le moniteur à chaque image, et le
+lecteur source garde sa taille réelle — donc sa vitesse de décodage — mais passe
+dessous. Ce qu'on voit pendant une fabrication est maintenant exactement ce qui
+part dans le fichier.
+
+Vérifié en interrogeant la page pendant qu'elle fabrique : soixante-treize images
+de la toile encodée recopiées sur le moniteur, **zéro** image du lecteur source
+peinte directement, et l'élément visible au centre de l'écran est bien le
+moniteur.
+
 ### Corriger ne suffit pas : encore faut-il que la correction arrive
 
 Même signalement, mot pour mot, après le déploiement du correctif : « il rend

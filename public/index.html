@@ -651,7 +651,17 @@ main {
   overflow: hidden;
   border: 1px solid var(--trait);
 }
-.moniteur { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
+.moniteur {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+  object-fit: contain;
+  /* Au-dessus du lecteur du rendu : celui-ci doit rester à sa taille réelle pour
+     que le navigateur le décode à pleine vitesse, mais il n'a pas à être vu. */
+  position: relative;
+  z-index: 2;
+}
 /* Le lecteur qui fabrique l'aperçu, lui, se montre : il occupe le moniteur le
    temps de la fabrication. Un navigateur ralentit le rendu d'une vidéo qu'on ne
    voit pas, et c'est justement sa vitesse qu'on lui demande ici. */
@@ -662,7 +672,7 @@ main {
   height: 100%;
   object-fit: contain;
   background: #000;
-  z-index: 5;
+  z-index: 1;
   pointer-events: none;
 }
 
@@ -812,6 +822,8 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .ecran-vide {
   position: absolute;
   inset: 0;
+  /* Au-dessus du moniteur, qui est lui-même au-dessus du lecteur du rendu. */
+  z-index: 3;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -827,9 +839,9 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
    c'en est un quand rien ne le dit. */
 .preparation {
   position: absolute;
-  /* Derrière le lecteur du rendu : pendant une fabrication, c'est le montage
-     qu'on regarde, pas un bandeau posé par-dessus. */
-  z-index: 1;
+  /* Au-dessus du moniteur : il doit se lire. Pendant une fabrication il est
+     rangé, ce n'est pas le moment de poser un bandeau sur le montage. */
+  z-index: 3;
   left: 8px;
   right: 8px;
   bottom: 8px;
@@ -1535,7 +1547,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-23 23:33";
+const VERSION_PAGE = "2026-08-23 23:44";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3486,7 +3498,8 @@ function ajusterMoniteur(toile) {
 }
 
 function dessinerMoniteur() {
-  if (fluide.construction) return;
+  // Pendant un rendu image par image, c'est lui qui peint : la toile encodée.
+  if (fluide.construction || rendu.parImage) return;
   const toile = $("moniteur");
   if (!toile) return;
   ajusterMoniteur(toile);
@@ -7256,7 +7269,7 @@ function formatRendu() {
    remplacer, et le moniteur y est recopié à l'identique à chaque image — même
    taille, donc aucune perte. */
 const toileRendu = document.createElement("canvas");
-const rendu = { encours: false, enregistreur: null, surveille: null, veille: null };
+const rendu = { encours: false, parImage: false, enregistreur: null, surveille: null, veille: null };
 
 // Ce qui n'est pas encore sur l'appareil sortira noir : autant le savoir avant.
 /* Ce qui manquera à l'image, au moment de rendre.
@@ -8163,16 +8176,21 @@ async function rendreImages(projet, reglages) {
      restait donc bloquée à un pour cent, chaque image attendant en vain les deux
      secondes de son garde-fou. */
   const lecteur = document.createElement("video");
-  /* Et il est visible, en grand, sur le moniteur.
+  /* Il occupe tout le moniteur, mais on ne le voit pas : le moniteur est peint
+     par-dessus lui.
 
-     Un lecteur d'un pixel sur un, presque transparent, est un lecteur que le
-     navigateur estime inutile : Safari ralentit le rendu des vidéos qu'on ne
-     voit pas, et l'aperçu se fabriquait alors une image par seconde — quarante
-     -trois minutes annoncées pour un montage d'une minute quarante. À taille
-     réelle, il décode comme n'importe quelle vidéo qu'on regarde.
+     Il lui faut sa taille réelle, parce qu'un lecteur d'un pixel sur un, presque
+     transparent, est un lecteur que le navigateur estime inutile — Safari
+     ralentit le rendu des vidéos qu'on ne voit pas, et l'aperçu se fabriquait
+     alors une image par seconde. Mais le montrer, lui, était une mauvaise idée :
+     ce qu'il donne à voir, c'est le rush d'origine tel qu'il se déroule, avec
+     ses sauts d'un plan à l'autre et l'image d'ouverture de chaque fichier le
+     temps qu'un déplacement aboutisse. On croyait donc voir la fabrication lire
+     les rushs entiers, alors qu'elle n'encodait bien que les parties coupées.
 
-     Et l'on regarde justement : le montage se construit sous les yeux, ce qui
-     vaut mieux qu'un pourcentage. */
+     C'est le montage en train de se construire qu'il faut montrer, et il est
+     déjà dessiné : c'est la toile qu'on encode. On la recopie sur le moniteur à
+     chaque image. */
   lecteur.className = "lecteur-rendu";
   lecteur.muted = true;
   lecteur.setAttribute("muted", "");
@@ -8224,6 +8242,7 @@ async function rendreImages(projet, reglages) {
     ...(codec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
 
   const depart = performance.now();
+  rendu.parImage = true;
   /* L'allure de lecture s'ajuste à ce que l'appareil sait tenir.
 
      Quatre fois la vitesse normale sur un ordinateur, oui. Sur un téléphone qui
@@ -8284,6 +8303,13 @@ async function rendreImages(projet, reglages) {
         const h = lecteur.videoHeight * f;
         ctx.drawImage(lecteur, (largeur - l) / 2, (hauteur - h) / 2, l, h);
       }
+      /* La toile qu'on encode, recopiée sur le moniteur : ce qu'on voit pendant
+         une fabrication est exactement ce qui part dans le fichier. */
+      const vue = $("moniteur");
+      if (vue) {
+        const ctxV = vue.getContext("2d");
+        if (ctxV) ctxV.drawImage(toile, 0, 0, vue.width, vue.height);
+      }
       const image = new VideoFrame(toile, {
         timestamp: Math.round((i * 1e6) / cadence),
         duration: Math.round(1e6 / cadence),
@@ -8319,6 +8345,7 @@ async function rendreImages(projet, reglages) {
   } catch (erreur) {
     return { echec: erreur.name || "erreur" };
   } finally {
+    rendu.parImage = false;
     lecteur.removeAttribute("src");
     lecteur.load();
     lecteur.remove();
