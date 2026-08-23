@@ -652,7 +652,7 @@ main {
   border: 1px solid var(--trait);
 }
 .moniteur { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
-/* Les deux lecteurs alimentent le moniteur : ils ne sont jamais montrés, mais
+/* Les lecteurs du vivier alimentent le moniteur : ils ne sont jamais montrés, mais
    restent dans le document — un média retiré du DOM est déchargé. */
 .lecteur-cache {
   position: absolute;
@@ -2954,10 +2954,10 @@ function editeur(projet) {
      création du contexte, d'où sa place ici. */
   moniteur.getContext("2d", { alpha: false });
 
-  // Deux lecteurs qui alternent : pendant qu'un plan passe, le suivant est
-  // déjà chargé et placé au début. C'est ce qui supprime le trou noir au
-  // changement de plan.
-  const lecteurs = [creerLecteur("a"), creerLecteur("b")];
+  // Un vivier de lecteurs qui se relaient : pendant qu'un plan passe, les
+  // suivants sont déjà chargés et placés sur leur point d'entrée. C'est ce qui
+  // supprime le trou noir au changement de plan.
+  const lecteurs = NOMS_LECTEURS.map(creerLecteur);
 
   const vide = document.createElement("div");
   vide.className = "ecran-vide";
@@ -2972,7 +2972,7 @@ function editeur(projet) {
   preparationDit.id = "preparation-dit";
   preparation.append(preparationDit, boutonVeille());
 
-  ecran.append(moniteur, lecteurs[0], lecteurs[1], vide, preparation);
+  ecran.append(moniteur, ...lecteurs, vide, preparation);
   bloc.append(ecran, transport(), pisteComplete(projet));
   lecture.actif = 0;
   reveillerMoniteur(1500);
@@ -3044,8 +3044,42 @@ function creerLecteur(nom) {
   return video;
 }
 
-const elementActif = () => document.getElementById(`lecteur-${lecture.actif ? "b" : "a"}`);
-const elementAttente = () => document.getElementById(`lecteur-${lecture.actif ? "a" : "b"}`);
+/* Combien de lecteurs, et combien de plans d'avance.
+
+   Il y en avait deux, qui alternaient : un plan à l'écran, un plan préparé.
+   Un seul plan d'avance, c'est trop court pour un montage qui coupe toutes les
+   secondes. À chaque coupe, le lecteur qui venait d'être libéré devait aussitôt
+   charger le plan d'après, se placer sur son point d'entrée et remplir son
+   tampon — le tout dans l'intervalle d'un plan. Quand le plan était court, la
+   préparation n'était pas finie à la coupe suivante, et la lecture s'arrêtait
+   le temps qu'elle le soit. C'est exactement la pause décrite : « quand on passe
+   d'un bloc de vidéo à un autre y a une pause comme si l'autre devait se
+   charger ».
+
+   Avec quatre lecteurs, la tête de lecture a deux plans d'avance en permanence,
+   et il reste un lecteur pour le plan sortant pendant son relais. Un plan
+   dispose donc de deux plans de temps pour se préparer au lieu d'un, et rien
+   n'a plus à être chargé au moment de la coupe. */
+const NOMS_LECTEURS = ["a", "b", "c", "d"];
+const AVANCE_PLANS = 2;
+
+const lecteurDe = (nom) => document.getElementById(`lecteur-${nom}`);
+const vivier = () => NOMS_LECTEURS.map(lecteurDe).filter(Boolean);
+const elementActif = () => lecteurDe(NOMS_LECTEURS[lecture.actif] || NOMS_LECTEURS[0]);
+
+/* Le lecteur qui tient déjà ce plan, chargé et placé — s'il y en a un.
+
+   C'est la question que posait « le lecteur en attente » quand il n'y en avait
+   qu'un : elle ne dépend plus d'une place dans une alternance, mais du contenu
+   des lecteurs. */
+function lecteurTenant(plan) {
+  if (!plan) return null;
+  const source = sourceDe(plan);
+  return vivier().find((v) => v.dataset.plan === plan.id && v.dataset.source === source) || null;
+}
+
+// Le lecteur du plan à venir : celui sur lequel la prochaine coupe basculera.
+const elementAttente = () => lecteurTenant(projetActif()?.plans[lecture.index + 1]);
 
 // Le moniteur dessine, image par image, ce que la séquence doit montrer : la
 // vidéo du plan courant si elle a quelque chose à donner, sa vignette sinon.
@@ -3412,9 +3446,21 @@ function dessinerMoniteur() {
      refaire le même travail. L'arrondi porte sur le temps du média, pas sur
      celui de l'horloge : le résultat est le même sur tous les appareils, quel
      que soit leur écran. */
-  const instant = !source || source !== video ? -1
-    : lecture.demande ? Math.round(video.currentTime * 30) / 30
-    : video.currentTime;
+  /* L'instant se lit sur la source réellement montrée, pas sur le lecteur actif.
+
+     C'était le défaut du relais : pendant qu'il couvre la bascule, la source est
+     le lecteur sortant, et l'instant comparé restait celui du lecteur entrant —
+     figé, puisqu'il n'a encore rien décodé. Les deux valeurs ne bougeaient donc
+     pas, la comparaison concluait « rien de neuf » et le moniteur ne repeignait
+     plus. Le sortant continuait pourtant de jouer : on montrait un arrêt sur
+     image de quatre dixièmes de seconde à chaque coupe couverte, alors que
+     l'image existait et bougeait. Mesuré sur seize coupes : trois arrêts de 335
+     à 400 ms. C'est très exactement la « pause comme si l'autre devait se
+     charger ». */
+  const lu = source && source.tagName === "VIDEO" ? source : null;
+  const instant = !lu ? -1
+    : lecture.demande ? Math.round(lu.currentTime * 30) / 30
+    : lu.currentTime;
   // La toile elle-même fait partie de la comparaison : revenir dans la vue du
   // projet en reconstruit une, vierge, et croire l'avoir déjà peinte la
   // laissait noire.
@@ -3692,7 +3738,7 @@ function servirImagettes() {
   if (sondeOccupee) return;
   /* Pendant la lecture, la sonde se tait.
 
-     Elle décode de la vidéo, comme les deux lecteurs du montage — et un
+     Elle décode de la vidéo, comme les lecteurs du montage — et un
      téléphone n'a que quelques décodeurs. Mesuré sur une capture d'écran de
      l'application : quatre-vingt-huit plans tous rapatriés, et pourtant une
      seconde et demie d'écran noir au démarrage, puis du noir à presque chaque
@@ -4118,23 +4164,55 @@ function peindreBandes() {
   });
 }
 
-// Prépare un plan sur le lecteur en attente : chargé, placé au début, prêt à
-// prendre la main sans temps mort.
-function preparerSuivant(index) {
-  const plan = projetActif()?.plans[index];
-  const attente = elementAttente();
-  if (!plan || !attente || plan.youtube || !mediaDe(plan)) return;
-  // Même règle qu'à l'affichage : préparer un plan que la réserve rapatrie
-  // reviendrait à télécharger deux fois le même fichier, et à interrompre le
-  // téléchargement du lecteur au changement de plan suivant.
-  if (laisserAuReseau(plan)) return;
+/* Prépare les plans à venir sur les lecteurs disponibles.
+
+   La liste des plans à afficher est connue d'avance : c'est le montage lui-même,
+   dans l'ordre. Il n'y avait donc rien à deviner — ce qui manquait, c'était la
+   place pour s'en servir. On regarde ici les « AVANCE_PLANS » plans qui suivent
+   la tête de lecture, on garde ceux qu'un lecteur tient déjà, et l'on confie les
+   autres aux lecteurs qui ne servent plus. */
+function preparerSuivants(index) {
+  const projet = projetActif();
+  if (!projet) return;
+  /* Deux lecteurs sont intouchables : celui qu'on regarde, et le sortant qui
+     couvre la bascule en cours. Le second n'était pas protégé — il n'y avait pas
+     de quoi — et préparer la suite lui coupait son relais en plein milieu. */
+  const gardes = new Set([elementActif(), lecture.bascule?.sortant]);
+  const manquants = [];
+  for (let i = index + 1; i <= index + AVANCE_PLANS && i < projet.plans.length; i += 1) {
+    const plan = projet.plans[i];
+    if (!plan || plan.youtube || !mediaDe(plan)) continue;
+    // Même règle qu'à l'affichage : préparer un plan que la réserve rapatrie
+    // reviendrait à télécharger deux fois le même fichier, et à interrompre le
+    // téléchargement du lecteur au changement de plan suivant.
+    if (laisserAuReseau(plan)) continue;
+    const tenu = lecteurTenant(plan);
+    if (tenu) gardes.add(tenu);
+    else manquants.push(plan);
+  }
+  if (!manquants.length) return;
+  // Les lecteurs libres vont aux plans les plus proches en premier.
+  const libres = vivier().filter((v) => !gardes.has(v));
+  for (const plan of manquants) {
+    const libre = libres.shift();
+    if (!libre) return;
+    preparerPlan(libre, plan);
+  }
+}
+
+// Un plan sur un lecteur : chargé, placé sur son point d'entrée, prêt à prendre
+// la main sans temps mort.
+function preparerPlan(video, plan) {
   const source = sourceDe(plan);
-  if (attente.dataset.plan === plan.id && attente.dataset.source === source) return;
-  attente.dataset.plan = plan.id;
-  attente.dataset.source = source;
-  attente.muted = true;
-  attente.src = source;
-  attente.load();
+  if (video.dataset.plan === plan.id && video.dataset.source === source) return;
+  // Ce lecteur pouvait encore rouler — un sortant dont le relais est fini. Le
+  // laisser courir, c'est un décodage pour une image que personne ne regarde.
+  video.pause();
+  video.dataset.plan = plan.id;
+  video.dataset.source = source;
+  video.muted = true;
+  video.src = source;
+  video.load();
   // Et garé sur son point d'entrée, pas au début du fichier : à la bascule, le
   // lecteur devient visible immédiatement, et il montrait jusqu'ici les
   // premières images du fichier — celles-là mêmes qui avaient été coupées — le
@@ -4149,14 +4227,25 @@ function preparerSuivant(index) {
      quelques dizaines de millisecondes — invisible — alors qu'un déplacement se
      voit. On ne le replace donc plus quand il roule déjà au bon endroit. */
   const avance = Math.min(AVANCE_BASCULE, entreeDe(plan));
-  attente.dataset.avance = String(avance);
-  attente.dataset.amorce = "";
-  const garer = () => demanderPosition(attente, entreeDe(plan) - avance);
-  attente.addEventListener("loadedmetadata", garer, { once: true });
-  if (attente.readyState >= 1) garer();
+  video.dataset.avance = String(avance);
+  video.dataset.amorce = "";
+  const garer = () => demanderPosition(video, entreeDe(plan) - avance);
+  video.addEventListener("loadedmetadata", garer, { once: true });
+  if (video.readyState >= 1) garer();
 }
 
-/* De combien on lance le lecteur en attente avant la coupe. Assez pour qu'il
+/* La copie locale de ce plan vient d'arriver : les lecteurs qui l'avaient
+   préparé pointent encore vers le relais. On oublie leur source pour qu'ils le
+   reprennent du fichier de l'appareil, qui ne peut ni patiner ni s'interrompre.
+   Le lecteur visible est traité à part, par « poserPlan ». */
+function oublierSourceReseau(plan) {
+  const actif = elementActif();
+  for (const autre of vivier()) {
+    if (autre !== actif && autre.dataset.plan === plan.id) autre.dataset.source = "";
+  }
+}
+
+/* De combien on lance le lecteur du plan à venir avant la coupe. Assez pour qu'il
    ait produit une image et rempli son tampon, assez peu pour qu'un plan très
    court ne soit pas entamé. */
 const AVANCE_BASCULE = 0.35;
@@ -4168,9 +4257,21 @@ const RELAIS_SORTANT = 400;
 /* Lancer le plan suivant juste avant qu'on en ait besoin, en sourdine : c'est
    la piste son du montage qu'on entend, jamais celle des rushs. */
 function amorcerSuivant(reste) {
-  if (!lecture.demande || reste > AVANCE_BASCULE) return;
+  if (!lecture.demande) return;
   const attente = elementAttente();
   if (!attente || attente.dataset.amorce === "oui" || !attente.dataset.plan) return;
+  /* On lance le lecteur d'exactement ce qu'on l'a garé en avance — pas d'une
+     valeur fixe.
+
+     Un plan qui commence au tout début de son fichier n'a aucune marge : on ne
+     peut pas le garer avant zéro. Il était pourtant lancé un tiers de seconde
+     trop tôt comme les autres, si bien qu'à la coupe il avait déjà dépassé son
+     point d'entrée — et la bascule le renvoyait en arrière. Ce déplacement-là
+     coûtait trois cent cinquante millisecondes, pendant lesquelles rien de neuf
+     ne s'affichait. Ces plans-là ne sont donc plus amorcés : ils démarrent à la
+     coupe, mais depuis la bonne image, sans aucun déplacement. */
+  const avance = Number(attente.dataset.avance);
+  if (!(avance > 0.05) || reste > avance) return;
   if (attente.readyState < 2) return;
   attente.dataset.amorce = "oui";
   attente.muted = true;
@@ -4968,7 +5069,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   if (!lecture.demande) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
   reveillerMoniteur(1500);
   const plan = projet.plans[index];
-  // « let » : la bascule A/B peut changer de lecteur en cours de route.
+  // « let » : la bascule peut changer de lecteur en cours de route.
   let video = elementActif();
   const vide = $("ecran-vide");
   if (!video) return;
@@ -4985,17 +5086,24 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   }
 
   vide.hidden = true;
-  // Si le lecteur en attente porte déjà ce plan, on bascule sur lui : c'est
-  // tout l'intérêt d'en avoir deux, le fichier est déjà chargé.
-  const attente = elementAttente();
-  if (video.dataset.plan !== plan.id && attente?.dataset.plan === plan.id
-      && attente.dataset.source === sourceDe(plan)) {
+  const source = sourceDe(plan);
+  /* Si un lecteur du vivier porte déjà ce plan, on bascule sur lui : c'est tout
+     l'intérêt d'en avoir plusieurs, le fichier est chargé et placé. Ce n'est
+     plus forcément « le suivant dans l'alternance » — un saut dans la piste
+     peut retomber sur n'importe lequel d'entre eux. */
+  const pret = video.dataset.plan === plan.id ? -1 : NOMS_LECTEURS.findIndex((nom) => {
+    const autre = lecteurDe(nom);
+    return autre && autre !== video && autre.dataset.plan === plan.id && autre.dataset.source === source;
+  });
+  if (pret >= 0) {
     /* Le sortant est mis en sourdine tout de suite — deux lecteurs qui
-       s'entendent en même temps, jamais — mais il continue de jouer un court
+       s'entendraient en même temps, jamais — mais il continue de jouer un court
        instant. C'est lui que le moniteur montre pendant que le nouveau produit
        sa première image : une coupe qui arrive un souffle en retard se voit
        infiniment moins qu'un arrêt sur image. Il s'arrête tout seul juste
-       après, ou plus tôt si on lui donne un autre plan à préparer. */
+       après. Il est désormais tenu à l'écart de la préparation tant que dure
+       son relais : avec deux lecteurs seulement, le plan suivant lui était
+       confié aussitôt et le relais tombait avant d'avoir servi. */
     video.muted = true;
     const sortant = video;
     /* Arrêté dès que le relais est fini — et sans faute, même si une autre
@@ -5007,14 +5115,13 @@ function poserPlan(index, decalage = 0, enchainer = false) {
       sortant.pause();
       if (lecture.bascule?.sortant === sortant) lecture.bascule = null;
     }, RELAIS_SORTANT);
-    lecture.actif = lecture.actif ? 0 : 1;
+    lecture.actif = pret;
     video = elementActif();
     /* On note l'instant de la bascule et la position de départ du nouveau
        lecteur : tant qu'il n'a pas avancé, c'est qu'il n'a encore rien décodé,
        et c'est le sortant qu'il faut montrer. */
     lecture.bascule = { quand: performance.now(), depart: video.currentTime, sortant };
   }
-  const source = sourceDe(plan);
   const change = video.dataset.plan !== plan.id || video.dataset.source !== source;
   /* Le fichier est en route par la réserve : on ne le redemande pas au lecteur.
      On laisse en place ce qu'il montrait — le moniteur tient la dernière image
@@ -5026,7 +5133,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
        décodage qui continue pour une image que le moniteur ne montre plus — et
        le son du fichier d'avant qui traîne. On l'arrête. */
     video.pause();
-    preparerSuivant(index + 1);
+    preparerSuivants(index);
     prioriserImports(index);
     majTransport();
     return;
@@ -5073,7 +5180,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   video.addEventListener("loadedmetadata", demarrer, { once: true });
   video.addEventListener("canplay", demarrer, { once: true });
 
-  preparerSuivant(index + 1);
+  preparerSuivants(index);
   prioriserImports(index);
   majTransport();
   majPreparation(projet);
@@ -5083,7 +5190,7 @@ function planSuivant() {
   const projet = projetActif();
   if (!projet) return;
   if (lecture.index + 1 < projet.plans.length) {
-    // Le plan suivant est déjà chargé sur le lecteur en attente : la bascule
+    // Le plan suivant est déjà chargé sur un lecteur du vivier : la bascule
     // se fait dans poserPlan, sans temps mort.
     /* « lecture.demande || true » valait toujours vrai — un ou logique dont le
        second terme est une constante. Le plan suivant s'enchaînait donc en
@@ -5109,13 +5216,13 @@ function basculerLecture() {
        La musique continuait de jouer après un appui sur pause : ce branchement
        arrêtait le lecteur vidéo et oubliait la bande son. À l'usage, on appuie,
        l'image se fige, la chanson continue — et l'on croit que le bouton ne fait
-       pas son travail. Le lecteur en attente est arrêté lui aussi : il peut
-       avoir été lancé pour préparer la bascule, et lui seul resterait à jouer. */
+       pas son travail. Tout le vivier est arrêté, pas seulement le lecteur
+       visible : l'un d'eux a pu être lancé en sourdine pour préparer la
+       bascule, et lui seul resterait à jouer. */
     lecture.demande = false;
     lecture.jouant = false;
     lecture.horloge = null;
-    video.pause();
-    elementAttente()?.pause();
+    for (const lecteur of vivier()) lecteur.pause();
     arreterSon();
     majTransport();
     reveillerMoniteur();
@@ -5146,7 +5253,7 @@ function basculerLecture() {
 
   lecture.demande = true;
   /* La sonde à imagettes lâche son décodeur avant qu'on démarre : sur un
-     téléphone, il n'y en a qu'une poignée, et les deux lecteurs du montage en
+     téléphone, il n'y en a qu'une poignée, et les lecteurs du montage en
      ont besoin tout de suite. */
   libererSondeBande();
   // Arrivé au bout, « lecture » reprend depuis le début : sinon le bouton ne
@@ -5180,7 +5287,7 @@ function basculerLecture() {
     video.src = source;
   }
   viser(video, entreeDe(cible.plan) + cible.dans, cible.plan);
-  preparerSuivant(cible.index + 1);
+  preparerSuivants(cible.index);
 
   deverrouille = true;
   const essai = video.play();
@@ -5201,9 +5308,8 @@ function arreter() {
   lecture.horloge = null;
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   lecture.boucle = null;
-  // Les deux lecteurs : celui qui montre, et celui qui préparait la suite.
-  elementActif()?.pause();
-  elementAttente()?.pause();
+  // Tout le vivier : celui qui montre, et ceux qui préparaient la suite.
+  for (const lecteur of vivier()) lecteur.pause();
   arreterSon();
   // La réserve reprend : elle se taisait pour laisser le lien à l'aperçu.
   lancerImport();
@@ -6063,8 +6169,7 @@ function apresImport(plan) {
       poserPlan(lecture.index, Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)));
     }
   }
-  const attente = elementAttente();
-  if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
+  oublierSourceReseau(plan);
   redessinerPisteDifferee();
   // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
   redessinerBandes();
@@ -6091,8 +6196,7 @@ function retrouveLocalement(plan) {
       poserPlan(lecture.index, Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)));
     }
   }
-  const attente = elementAttente();
-  if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
+  oublierSourceReseau(plan);
   redessinerBandes();
   prechaufferPlusTard();
 }

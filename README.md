@@ -1814,6 +1814,10 @@ millisecondes, et la bascule doit alors le replacer — un déplacement coûte p
 cher que le démarrage qu'on voulait éviter. L'essai est resté dans le code sous
 forme de commentaire, pour que personne ne le retente.
 
+*Suite : il a fini par réussir, une fois qu'on a cessé de replacer un lecteur qui
+roulait déjà au bon endroit — puis qu'on a cessé de l'amorcer quand il n'avait
+aucune marge devant lui. Voir « Enchaîner les plans sans marquer le pas ».*
+
 Le contournement est celui des bancs de montage professionnels : **on juge sur
 un rendu**. Un montage joué depuis ses rushs hoquette à chaque coupe ; le rendu,
 lui, est un seul fichier et se lit comme n'importe quelle vidéo. Il s'ouvre donc
@@ -2434,11 +2438,126 @@ Cinq changements, tous invisibles à l'usage :
 La sonde à imagettes relâche par ailleurs sa source trois secondes après la
 dernière capture : elle gardait un fichier ouvert et décodé pour rien.
 
+## Enchaîner les plans sans marquer le pas
+
+La demande était : « il faut trouver un moyen pour que l'outil arrive à mieux
+enchaîner les plans lors de la prévisualisation — peut-être envoyer un texte avec
+le nom de chaque clip, comme ça il pourra savoir à l'avance les plans à
+afficher. »
+
+L'intuition est juste, la pièce jointe inutile : **la liste des plans est déjà
+connue d'avance**, c'est le montage lui-même, dans l'ordre, en mémoire. Rien
+n'était à deviner. Ce qui manquait, c'était la place pour s'en servir — et deux
+défauts qui annulaient le travail déjà fait. Mesuré, corrigé, remesuré.
+
+### Le relais montrait un arrêt sur image
+
+Le moniteur ne repeint que si quelque chose a changé : même source, même instant,
+mêmes pixels — on n'y touche pas. C'est ce qui fait qu'un projet à l'arrêt ne
+coûte rien. Or l'instant comparé était pris **sur le lecteur actif**, jamais sur
+l'image réellement montrée.
+
+Pendant le relais — le court moment où le plan sortant couvre la bascule — la
+source est le lecteur sortant, et le lecteur actif, lui, n'a encore rien décodé :
+son temps ne bouge pas. La comparaison concluait donc « rien de neuf » à chaque
+image, et le moniteur peignait le sortant **une seule fois**. Le sortant
+continuait pourtant de jouer : on avait sous les yeux un arrêt sur image de
+quatre dixièmes de seconde, alors que l'image existait et bougeait.
+
+Trois arrêts de 335 à 400 ms sur seize coupes. C'est très exactement « une pause
+comme si l'autre devait se charger ». L'instant se lit désormais sur la source
+montrée, quelle qu'elle soit.
+
+### Un plan qui commence à zéro était lancé trop tôt
+
+Le lecteur à venir est garé un peu avant son point d'entrée, puis lancé en
+silence juste avant la coupe : à la bascule il est déjà en mouvement, il n'a rien
+à démarrer. Sauf qu'on ne peut pas garer un plan avant le début de son fichier.
+Un plan qui commence à zéro n'a aucune marge — et il était pourtant lancé un
+tiers de seconde en avance comme les autres. À la coupe, il avait donc déjà
+dépassé son point d'entrée, et la bascule le renvoyait en arrière : trois cent
+cinquante millisecondes de déplacement, pendant lesquelles rien de neuf ne
+s'affiche. Précisément le coût qu'on cherchait à éviter.
+
+L'avance du lancement est maintenant celle du garage, plan par plan. Un plan sans
+marge n'est plus amorcé : il démarre à la coupe, mais depuis la bonne image, sans
+aucun déplacement.
+
+### Un seul plan d'avance, c'était trop court
+
+Il y avait deux lecteurs qui alternaient : un plan à l'écran, un plan préparé. À
+chaque coupe, le lecteur libéré devait aussitôt charger le plan suivant, se
+placer sur son point d'entrée et remplir son tampon — le tout dans l'intervalle
+d'un plan. Sur des coupes d'une seconde, la préparation n'était pas finie à temps.
+Et le plan sortant, faute d'un troisième lecteur, était celui à qui l'on confiait
+la suite : son relais tombait avant d'avoir servi.
+
+Ils sont désormais quatre. La tête de lecture a **deux plans d'avance en
+permanence**, et il reste un lecteur pour le sortant pendant son relais. Le choix
+du lecteur ne dépend plus d'une place dans une alternance mais de son contenu :
+on cherche celui qui tient déjà le plan demandé, ce qui vaut aussi pour un saut
+n'importe où dans la piste.
+
+### Ce que ça donne
+
+Seize coupes de 1,6 s, tous les fichiers sur l'appareil :
+
+```
+                            avant    après
+images vivantes peintes    29,4/s   30,5/s
+bouche-trous (image tenue)      3        0
+interruptions > 60 ms          17        9
+au-dessus de 100 ms             2        0
+la plus longue             108 ms    95 ms
+```
+
+Le même montage, processeur bridé quatre fois — un téléphone, pas un ordinateur :
+
+```
+                            avant    après
+images vivantes peintes    24,9/s   27,5/s
+bouche-trous                    4        2
+interruptions > 60 ms          37       22
+au-dessus de 100 ms             4        0
+la plus longue             130 ms    94 ms
+```
+
+Et le cas le plus dur — vingt-quatre coupes de 0,8 s, processeur bridé quatre
+fois, c'est-à-dire un montage plus rapide que ce que l'automate produit. Ce
+régime-là est bruyant : les deux versions ont donc été jouées en alternance,
+quatre fois chacune, et voici les médianes.
+
+```
+                            avant    après
+images vivantes peintes    22,2/s   22,6/s
+bouche-trous                   16        1
+interruptions > 60 ms          50       63
+au-dessus de 100 ms            18        8
+```
+
+Là, le résultat est franc sur un point et nul sur un autre, et les deux méritent
+d'être dits. Les images tenues — les vraies « frames qui ne sont pas là » —
+passent de seize à une, et les à-coups visibles, ceux qui dépassent la
+dixième de seconde, sont divisés par deux. En revanche les petits à-coups de
+soixante à cent millisecondes ne baissent pas : à ce régime la machine est
+saturée, et aucun agencement de lecteurs n'y change quoi que ce soit. Pour une
+lecture sans le moindre à-coup, il reste le rendu — un seul fichier.
+
+Le coût processeur ne bouge pas : 8 % d'un cœur pendant le rapatriement, contre
+9 % avant. Quatre lecteurs qui attendent ne décodent rien ; seul celui qu'on
+regarde travaille.
+
+Le parcours complet — musique, automatisation, prévisualisation, rendu,
+téléchargement — passe sans un seul souci : trente et une images par seconde,
+**aucun bouche-trou**, neuf hoquets contre dix-sept, et un MP4 de 10,8 Mo livré
+au premier appui.
+
 ## Comment la lecture est construite
 
 L'aperçu n'est pas un lecteur : c'est un **moniteur** dessiné image par image sur une toile,
-alimenté par deux lecteurs qui alternent — pendant qu'un plan passe, le suivant est déjà
-chargé, donc la jointure ne marque pas.
+alimenté par un vivier de quatre lecteurs — pendant qu'un plan passe, les deux suivants sont
+déjà chargés et garés sur leur point d'entrée, donc la jointure ne marque pas. Le quatrième
+sert au plan sortant, qui couvre la coupe le temps que l'entrant produise sa première image.
 
 Le temps, lui, vient d'une **horloge de transport**, pas du lecteur. C'est le fonctionnement
 d'un banc de montage : l'horloge avance, l'image suit comme elle peut. La tête de lecture
