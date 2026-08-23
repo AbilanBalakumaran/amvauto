@@ -2690,6 +2690,52 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Les contrôles flottants sont supprimés, et l'attente est plafonnée
+
+Troisième retour d'appareil, sur le même montage. Les deux corrections
+précédentes n'avaient pas tenu, et pour deux raisons distinctes.
+
+**Les contrôles flottants sur l'image sont retirés, pas réparés.** Le garde-fou
+posé la fois d'avant ne s'exécutait qu'au rafraîchissement du transport — c'est
+-à-dire jamais pendant une fabrication d'aperçu, qui est précisément le moment
+où on les voyait. Plutôt que d'ajouter un garde-fou au garde-fou : le transport
+sous l'écran fait déjà tout ce qu'ils faisaient. Ils disparaissent, et il ne
+reste que la croix qui sort du plein écran, qui n'a d'équivalent nulle part
+ailleurs. Tout reste éventuel est retiré, quel qu'en soit le chemin.
+
+**Et l'attente d'une image était calculée à l'envers.** Elle était proportionnée
+au retard à rattraper : plus l'appareil traînait, plus on l'attendait. Sur un
+téléphone, le retard s'accumulait jusqu'à une seconde et demie et l'attente
+montait avec lui, jusqu'à deux secondes et demie par image. D'où les vingt-six
+minutes annoncées pour un montage d'une minute quarante — et d'où le fait que le
+plafond, censé tout borner, ne bornait rien.
+
+Le plafond est désormais **plat : cent soixante-dix millisecondes, quoi qu'il
+arrive**. Deux fois l'intervalle d'une image à douze par seconde. Aucune image ne
+peut coûter davantage, donc aucune fabrication ne peut s'emballer, sur aucun
+appareil.
+
+Une allure trop ambitieuse a aussi été essayée — descendre après cinq retards au
+lieu de trois, remonter après huit images à l'heure au lieu de vingt — en se
+disant qu'un téléphone tient sûrement la double vitesse. Mesuré, c'était plus
+lent : vingt-six secondes au lieu de seize sur processeur bridé quatre fois.
+S'obstiner à une allure que l'appareil ne tient pas fait buter chaque image sur
+le plafond, et le plafond coûte plus cher que l'allure ne rapporte. On descend
+donc vite et l'on remonte lentement.
+
+```
+                         pour 25,6 s de montage
+processeur ×1                        10 s
+processeur ×4 (un téléphone)         26 s
+processeur ×8 (le pire cas)          43 s
+lecture impossible (repli)            9 s
+```
+
+Soit, pour un montage d'une minute quarante-trois, de l'ordre de deux à trois
+minutes au lieu de vingt-six. Le plancher, lui, est celui du décodage : produire
+mille deux cents images tirées de quatre-vingt-huit fichiers demande de les
+décoder, et un téléphone n'ira pas beaucoup plus vite que la durée du montage.
+
 ### Quarante-trois minutes annoncées, et deux boutons de lecture
 
 Deuxième retour d'appareil, sur un vrai montage : quatre-vingt-huit plans, 456 Mo

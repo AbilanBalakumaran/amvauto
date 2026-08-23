@@ -774,50 +774,40 @@ body.ecran-plein .ecran {
 body.ecran-plein .ecran video { object-fit: contain; }
 body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px); right: 14px; }
 
-/* Contrôles de lecture en plein écran : on ne quitte plus l'écran pour mettre
-   en pause. Ils s'effacent au bout de trois secondes sans geste, comme dans un
-   lecteur vidéo, et reviennent au moindre contact. */
-.plein-transport {
+.sortie-plein {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
-  z-index: 6;
-  display: flex;
-  align-items: center;
-  gap: var(--e4);
-  padding: var(--e2) var(--e4);
-  border-radius: 999px;
-  background: rgba(0, 0, 0, .62);
-  backdrop-filter: blur(8px);
-  transition: opacity .25s;
-}
-.plein-transport.efface { opacity: 0; pointer-events: none; }
-.plein-transport button {
+  top: 12px;
+  right: 12px;
+  z-index: 5;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, .12);
+  background: rgba(0, 0, 0, .65);
   color: #fff;
   cursor: pointer;
 }
-.plein-transport button.lecture {
-  width: 56px;
-  height: 56px;
-  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+.sortie-plein svg { width: 20px; height: 20px; }
+
+/* Repli quand le navigateur refuse le plein écran natif (Safari iPhone). */
+body.ecran-plein .ecran {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  /* Sans neutraliser le format 16/9, la hauteur reste calculée sur la largeur
+     et l'écran ne couvre qu'un quart de la page. */
+  aspect-ratio: auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  border: 0;
+  background: #000;
 }
-.plein-transport button svg { width: 22px; height: 22px; }
-.plein-transport button.lecture svg { width: 26px; height: 26px; }
-.plein-timecode {
-  font: 700 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  color: #fff;
-  padding: 0 4px;
-}
+body.ecran-plein .ecran video { object-fit: contain; }
+body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px); right: 14px; }
 
 .ecran-vide {
   position: absolute;
@@ -1542,7 +1532,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-23 08:06";
+const VERSION_PAGE = "2026-08-23 08:32";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4685,7 +4675,6 @@ function entrerPleinEcranCss() {
     sortie.addEventListener("click", quitterPleinEcranCss);
     $("ecran").append(sortie);
   }
-  poserTransportPlein();
 }
 
 function quitterPleinEcranCss() {
@@ -4709,87 +4698,28 @@ const enPleinEcran = () => {
   return Boolean(natif) && (natif === ecran || ecran.contains(natif));
 };
 
-// Le plein écran natif (ordinateur) mérite les mêmes contrôles que le repli CSS.
+// Sortir du plein écran, par quelque chemin que ce soit, retire la croix.
 for (const nom of ["fullscreenchange", "webkitfullscreenchange"]) {
-  document.addEventListener(nom, () => {
-    if (enPleinEcran()) poserTransportPlein();
-    else retirerTransportPlein();
-  });
+  document.addEventListener(nom, () => { if (!enPleinEcran()) retirerTransportPlein(); });
 }
 
-/* Transport du plein écran : lecture, retour au début, et le timecode. Sans
-   lui, il fallait sortir du plein écran pour mettre en pause. */
-let effacementPlein = null;
+/* Plus de contrôles flottants sur l'image.
 
-function poserTransportPlein() {
-  const ecran = $("ecran");
-  if (!ecran || $("plein-transport") || !enPleinEcran()) return;
+   Il y en avait : lecture, retour au début et timecode, posés sur le moniteur
+   en plein écran. Ils se sont révélés impossibles à tenir à leur place. Ils
+   apparaissaient dès que n'importe quoi passait en plein écran — sur iPhone,
+   le lecteur vidéo du système suffisait — et restaient ensuite collés sur
+   l'image, par-dessus le montage : deux boutons de lecture pour un seul
+   montage. Un filet devait les retirer, mais il ne s'exécutait qu'au
+   rafraîchissement du transport, c'est-à-dire jamais pendant une fabrication
+   d'aperçu, qui est précisément le moment où on les voyait.
 
-  const barre = document.createElement("div");
-  barre.className = "plein-transport";
-  barre.id = "plein-transport";
-
-  const bouton = (nom, titre, action, classe = "") => {
-    const element = document.createElement("button");
-    element.type = "button";
-    if (classe) element.className = classe;
-    element.innerHTML = icone(nom);
-    element.title = titre;
-    element.setAttribute("aria-label", titre);
-    element.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      action();
-      reveillerTransportPlein();
-    });
-    return element;
-  };
-
-  const jouer = bouton("play", "Lecture ou pause", basculerLecture, "lecture");
-  jouer.id = "plein-lecture";
-
-  const code = document.createElement("span");
-  code.className = "plein-timecode";
-  code.id = "plein-timecode";
-
-  barre.append(
-    bouton("stop", "Revenir au début et arrêter", () => { arreter(); allerA(0); }),
-    jouer,
-    code,
-  );
-  ecran.append(barre);
-
-  // Un contact sur l'image rappelle les contrôles ; ils s'effacent ensuite.
-  ecran.addEventListener("pointerdown", reveillerTransportPlein);
-  reveillerTransportPlein();
-  majTransport();
-}
-
+   Le transport sous l'écran fait déjà tout ce qu'ils faisaient. On garde donc
+   la seule chose qui n'a pas d'équivalent ailleurs : la croix qui sort du plein
+   écran. Et l'on retire tout reste, quel qu'en soit le chemin. */
 function retirerTransportPlein() {
-  clearTimeout(effacementPlein);
-  effacementPlein = null;
-  $("ecran")?.removeEventListener("pointerdown", reveillerTransportPlein);
   $("plein-transport")?.remove();
-  $("sortie-plein")?.remove();
-}
-
-/* Filet : des contrôles de plein écran hors du plein écran n'ont pas lieu
-   d'être, quelle qu'en soit la cause. On le vérifie à chaque rafraîchissement
-   du transport, ce qui coûte une comparaison et répare tous les chemins — y
-   compris ceux qu'on n'a pas prévus. */
-function verifierTransportPlein() {
-  if (enPleinEcran()) return;
-  if ($("plein-transport") || $("sortie-plein")) retirerTransportPlein();
-}
-
-function reveillerTransportPlein() {
-  const barre = $("plein-transport");
-  if (!barre) return;
-  barre.classList.remove("efface");
-  clearTimeout(effacementPlein);
-  // Jamais pendant une pause : on laisse les contrôles sous la main.
-  effacementPlein = setTimeout(() => {
-    if (lecture.demande) barre.classList.add("efface");
-  }, 3000);
+  if (!document.body.classList.contains("ecran-plein")) $("sortie-plein")?.remove();
 }
 
 document.addEventListener("keydown", (evt) => {
@@ -6737,7 +6667,7 @@ function positionCourante() {
 
 function majTransport() {
   const projet = projetActif();
-  verifierTransportPlein();
+  if (!enPleinEcran()) retirerTransportPlein();
   if (!projet || !$("timecode")) return;
   const position = positionCourante();
   // Zoomé au-delà du dixième, la tête bouge sans que le timecode change : il
@@ -6749,13 +6679,12 @@ function majTransport() {
   ecrire($("timecode"), `${horloge(position, lecture.echelle > 300 ? 2 : 1)} / ${horloge(total(projet))}`);
   const enLecture = lecture.demande || lecture.jouant;
   const forme = enLecture ? "pause" : "play";
-  for (const bouton of [$("lecture"), $("plein-lecture")]) {
+  for (const bouton of [$("lecture")]) {
     if (bouton && bouton.dataset.forme !== forme) {
       bouton.dataset.forme = forme;
       bouton.innerHTML = icone(forme);
     }
   }
-  ecrire($("plein-timecode"), `${horloge(position, 1)} / ${horloge(total(projet))}`);
 
   const tete = $("tete");
   if (tete) {
@@ -7908,6 +7837,11 @@ async function choisirCodec(liste, config) {
    Laisser le lecteur jouer, au contraire, décode chaque image une fois et une
    seule. On ne le déplace donc que pour entrer dans un plan ; à l'intérieur, on
    le laisse courir et on prend au passage l'image de chaque instant voulu. */
+/* Le plafond d'attente d'une image, pendant une fabrication. Deux fois
+   l'intervalle d'une image à douze par seconde : de quoi laisser le décodeur
+   arriver quand il le peut, jamais de quoi bloquer la fabrication. */
+const PATIENCE_IMAGE = 170;
+
 async function avancerVers(video, cible, allure) {
   /* Et si la lecture ne prend pas, on repasse aux déplacements pour de bon.
 
@@ -7938,12 +7872,19 @@ async function avancerVers(video, cible, allure) {
     }
   }
   const depart = video.currentTime;
-  /* On n'attend jamais longtemps une image. Passé ce délai, on prend celle qu'on
-     a — une image tenue une fraction de seconde dans un aperçu ne se voit
-     guère, alors qu'une fabrication qui annonce quarante-trois minutes pour un
-     montage d'une minute quarante ne sert à personne. */
-  const patience = Math.max(140, (ecart / Math.max(1, allure.taux)) * 1000 * 1.6);
-  const limite = performance.now() + patience;
+  /* L'attente est plate, courte, et ne dépend de rien.
+
+     Elle était calculée sur le retard à rattraper — donc plus l'appareil
+     traînait, plus on l'attendait : exactement l'inverse de ce qu'il faut. Sur
+     un téléphone, le retard s'accumulait jusqu'à une seconde et demie et
+     l'attente montait avec lui, jusqu'à deux secondes et demie par image. Un
+     montage d'une minute quarante annonçait vingt-six minutes de fabrication.
+
+     Un plafond fixe borne tout : aucune image ne peut coûter plus que cela, donc
+     aucune fabrication ne peut s'emballer, quel que soit l'appareil. Ce qu'on
+     perd, c'est une image tenue de temps à autre dans l'aperçu — invisible à
+     côté d'une attente qui se compte en dizaines de minutes. */
+  const limite = performance.now() + PATIENCE_IMAGE;
   while (video.currentTime < cible && !video.ended && performance.now() < limite) {
     /* L'attente d'une image ne peut jamais être la seule issue.
 
@@ -7973,6 +7914,14 @@ async function avancerVers(video, cible, allure) {
   if (video.currentTime < cible) {
     allure.avances = 0;
     allure.retards += 1;
+    /* Descendre vite, remonter lentement.
+
+       L'inverse a été essayé — descendre après cinq retards, remonter après huit
+       images à l'heure — en se disant qu'un téléphone tient sûrement la double
+       vitesse. Mesuré, c'était plus lent : sur processeur bridé quatre fois,
+       vingt-six secondes au lieu de seize. S'obstiner à une allure que
+       l'appareil ne tient pas fait buter chaque image sur le plafond d'attente,
+       et ce plafond coûte plus cher que l'allure ne rapporte. */
     if (allure.retards >= 3 && allure.taux > 1) {
       allure.taux = allure.taux > 2 ? 2 : 1;
       allure.retards = 0;
@@ -8132,6 +8081,29 @@ async function rendreImages(projet, reglages) {
   lecteur.preload = "auto";
   ($("ecran") || document.body).append(lecteur);
 
+  /* Un second lecteur, caché, qui charge le plan suivant pendant qu'on rend le
+     courant. Sur quatre-vingt-huit plans, l'ouverture d'un fichier se paie
+     quatre-vingt-huit fois, et chaque ouverture est un temps mort où rien n'est
+     encodé. Là, elle a lieu pendant qu'on travaille. */
+  const suivant = document.createElement("video");
+  suivant.className = "lecteur-cache";
+  suivant.muted = true;
+  suivant.setAttribute("muted", "");
+  suivant.defaultMuted = true;
+  suivant.playsInline = true;
+  suivant.setAttribute("playsinline", "");
+  suivant.preload = "auto";
+  ($("ecran") || document.body).append(suivant);
+  const prevoir = (index) => {
+    const plan = projet.plans[index];
+    if (!plan || plan.youtube) return;
+    const adresse = sourceDe(plan);
+    if (!adresse || suivant.dataset.source === adresse) return;
+    suivant.dataset.source = adresse;
+    suivant.src = adresse;
+    suivant.load();
+  };
+
   const pisteVideo = { id: 1, type: "video", codec, echelle, largeur, hauteur,
     description: null, echantillons: [] };
   const encodeur = new VideoEncoder({
@@ -8175,6 +8147,9 @@ async function rendreImages(projet, reglages) {
         if (lecteur.dataset.source !== adresse) {
           lecteur.dataset.source = adresse;
           lecteur.src = adresse;
+          /* Le lecteur de devant a déjà ouvert ce fichier : les octets et le
+             démuxage sont chauds, l'ouverture ici est presque immédiate. On
+             l'attend quand même — un lecteur pas prêt ne sait rien montrer. */
           await new Promise((suite) => {
             const fait = () => suite();
             lecteur.addEventListener("loadeddata", fait, { once: true });
@@ -8182,6 +8157,7 @@ async function rendreImages(projet, reglages) {
             setTimeout(fait, 4000);
           });
         }
+        prevoir(index + 1);
       }
 
       const dans = entreeDe(plan) + Math.max(0, t - (debuts[index] || 0));
@@ -8235,6 +8211,9 @@ async function rendreImages(projet, reglages) {
     lecteur.removeAttribute("src");
     lecteur.load();
     lecteur.remove();
+    suivant.removeAttribute("src");
+    suivant.load();
+    suivant.remove();
   }
 }
 
