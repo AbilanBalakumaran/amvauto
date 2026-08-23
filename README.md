@@ -2690,6 +2690,60 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Le vrai coupable : un retour en arrière par image
+
+Quatrième retour d'appareil, même montage : toujours quarante minutes annoncées.
+Le plafond d'attente n'était donc pas le fond du problème — il n'était même pas
+atteint. En instrumentant la fabrication, le compte est sans appel : **trois cent
+cinq déplacements francs pour trois cent sept images**. Un par image.
+
+Deux causes, dont l'une était de mon fait la veille.
+
+**Le plafond plat coupait la lecture avant qu'elle ait commencé.** Une lecture
+qui démarre met plus longtemps que les suivantes : le décodeur s'amorce. Avec
+cent soixante-dix millisecondes pour tout délai, la toute première image d'une
+fabrication concluait « ce navigateur ne sait pas jouer » — et les mille
+suivantes se faisaient à coups de déplacements. Le démarrage a maintenant son
+propre délai, huit dixièmes de seconde, et l'on ne renonce à la lecture qu'après
+dix échecs francs d'affilée, pas un.
+
+**Et le seuil de retour en arrière était plus petit que le dépassement.** Le
+lecteur avance pendant qu'on l'attend : à quadruple vitesse et cent soixante-dix
+millisecondes, il dépasse l'instant voulu de sept dixièmes de seconde. Le seuil
+au-delà duquel on le renvoyait en arrière était à un quart de seconde. Chaque
+image déclenchait donc un retour en arrière, et un retour en arrière est un
+redécodage depuis la dernière image-clé — sur un ordinateur cela ne coûte rien
+et ne se voit pas ; sur un téléphone qui décode du 720p, c'est une seconde par
+image. Mille deux cents images plus tard, on annonce quarante minutes.
+
+Le seuil est passé à une seconde deux. Et surtout, **l'allure se règle désormais
+sur le dépassement**, pas sur le retard : on ralentit dès que le lecteur dépasse
+trop, on accélère quand il traîne. C'est l'inverse de l'intuition — traîner veut
+dire qu'il faut couvrir plus de terrain à chaque attente — mais c'est ce que la
+mesure dit.
+
+```
+                      déplacements francs, pour 307 images
+avant                                 305
+après                          4 (processeur ×4)
+                              26 (processeur ×8)
+```
+
+```
+                         pour 25,6 s de montage
+processeur ×1                        11 s
+processeur ×4 (un téléphone)         15 s
+processeur ×8 (le pire cas)          27 s
+lecture impossible (repli)           18 s
+```
+
+Soit, pour un montage d'une minute quarante-trois, **de l'ordre d'une à deux
+minutes** au lieu de quarante.
+
+Enfin, le bandeau d'avancement des téléchargements se range pendant une
+fabrication : il se pose au bas du moniteur, c'est-à-dire là où l'on regarde le
+montage se construire.
+
 ### Les contrôles flottants sont supprimés, et l'attente est plafonnée
 
 Troisième retour d'appareil, sur le même montage. Les deux corrections

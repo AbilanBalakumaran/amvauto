@@ -827,6 +827,9 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
    c'en est un quand rien ne le dit. */
 .preparation {
   position: absolute;
+  /* Derrière le lecteur du rendu : pendant une fabrication, c'est le montage
+     qu'on regarde, pas un bandeau posé par-dessus. */
+  z-index: 1;
   left: 8px;
   right: 8px;
   bottom: 8px;
@@ -1532,7 +1535,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-23 08:32";
+const VERSION_PAGE = "2026-08-23 09:00";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4593,6 +4596,12 @@ async function construireFluide(projet) {
   fluide.construction = true;
   fluide.arret = false;
   let compteRendu;
+  /* Le bandeau d'avancement des téléchargements n'a rien à dire pendant une
+     fabrication, et il se pose au bas du moniteur — là où l'on regarde
+     justement le montage se construire. On le range le temps qu'il faut. */
+  const bandeau = $("preparation");
+  const bandeauMontre = bandeau && !bandeau.hidden;
+  if (bandeau) bandeau.hidden = true;
   // La lecture sur les rushs libérerait des décodeurs dont le rendu a besoin.
   arreter();
   majBandeauFluide("Préparation…");
@@ -4636,6 +4645,7 @@ async function construireFluide(projet) {
   } finally {
     fluide.construction = false;
     fluide.arret = false;
+    if (bandeau && bandeauMontre) bandeau.hidden = false;
     majBandeauFluide(compteRendu);
     reveillerMoniteur(1500);
   }
@@ -7842,6 +7852,10 @@ async function choisirCodec(liste, config) {
    arriver quand il le peut, jamais de quoi bloquer la fabrication. */
 const PATIENCE_IMAGE = 170;
 
+/* Et le délai laissé à une lecture qui démarre, plus généreux : c'est une fois
+   par plan, pas une fois par image. */
+const PATIENCE_DEMARRAGE = 800;
+
 async function avancerVers(video, cible, allure) {
   /* Et si la lecture ne prend pas, on repasse aux déplacements pour de bon.
 
@@ -7852,22 +7866,32 @@ async function avancerVers(video, cible, allure) {
   if (video.dataset.sansLecture === "oui") { await attendreImage(video, cible); return; }
   const ecart = cible - video.currentTime;
   /* Un vrai saut — en arrière, ou loin devant — mérite un déplacement franc.
+     Un dépassement, non.
 
-     Mais un petit dépassement, non : en lecture accélérée, le lecteur passe
-     l'instant voulu de une ou deux images avant qu'on ait la main. Le renvoyer
-     en arrière pour cela annulerait tout le bénéfice — c'est précisément le
-     déplacement qu'on cherche à éviter, et il reviendrait à chaque image. On
-     prend donc l'image qu'on a sous la main : à deux centièmes de seconde près,
-     personne ne fait la différence dans un aperçu. */
-  if (ecart < -0.25 || ecart > 1.5) {
+     C'est ici que se jouaient les quarante minutes. En lecture accélérée, le
+     lecteur passe l'instant voulu avant qu'on ait la main : à quatre fois la
+     vitesse et cent soixante-dix millisecondes d'attente, il peut le dépasser
+     de plus d'une demi-seconde. Le seuil était à un quart de seconde — donc
+     chaque image déclenchait un retour en arrière, et chaque retour en arrière
+     est un déplacement, c'est-à-dire un redécodage depuis la dernière image-clé.
+     Sur un ordinateur cela ne coûte rien et ne se voit pas ; sur un téléphone
+     qui décode du 720p, c'est une seconde par image. Mille deux cents images
+     plus tard, on annonce quarante minutes.
+
+     On ne revient donc en arrière que pour un vrai décrochage. En deçà, on prend
+     l'image qu'on a sous la main : à une demi-seconde près dans un aperçu de
+     douze images par seconde, cela vaut infiniment mieux qu'un déplacement. */
+  if (ecart < -1.2 || ecart > 1.5) {
     video.pause();
     await attendreImage(video, cible);
     return;
   }
   if (ecart <= 0.001) return;
+  let demarrage = false;
   if (video.paused || video.playbackRate !== allure.taux) {
     video.playbackRate = allure.taux;
     if (video.paused) {
+      demarrage = true;
       try { await video.play(); } catch { await attendreImage(video, cible); return; }
     }
   }
@@ -7884,7 +7908,11 @@ async function avancerVers(video, cible, allure) {
      aucune fabrication ne peut s'emballer, quel que soit l'appareil. Ce qu'on
      perd, c'est une image tenue de temps à autre dans l'aperçu — invisible à
      côté d'une attente qui se compte en dizaines de minutes. */
-  const limite = performance.now() + PATIENCE_IMAGE;
+  /* Une lecture qui démarre met plus longtemps que les suivantes : le décodeur
+     s'amorce, la première image met un peu à venir. Lui appliquer le plafond
+     ordinaire revenait à conclure, dès la première image d'un plan, que ce
+     navigateur ne sait pas jouer. */
+  const limite = performance.now() + (demarrage ? PATIENCE_DEMARRAGE : PATIENCE_IMAGE);
   while (video.currentTime < cible && !video.ended && performance.now() < limite) {
     /* L'attente d'une image ne peut jamais être la seule issue.
 
@@ -7903,36 +7931,53 @@ async function avancerVers(video, cible, allure) {
     });
   }
   if (video.currentTime <= depart + 0.001 && !video.ended) {
-    // La lecture n'a pas bougé du tout : ce navigateur ne veut pas d'elle ici.
-    video.dataset.sansLecture = "oui";
-    video.pause();
+    /* La lecture n'a pas bougé d'un pouce. Une fois, cela ne prouve rien — un
+       décodeur qui s'amorce, une image qui tarde. Renoncer sur un seul essai a
+       été essayé et c'était le pire des deux mondes : la toute première image
+       d'une fabrication déclenchait le repli, et les mille suivantes se
+       faisaient à coups de déplacements, chacun redécodant le plan depuis sa
+       dernière image-clé. Mesuré : trois cent cinq déplacements sur trois cent
+       sept images. On ne renonce donc qu'après une série d'échecs francs. */
+    allure.morts = (allure.morts || 0) + 1;
+    if (allure.morts >= 10) {
+      video.dataset.sansLecture = "oui";
+      video.pause();
+    }
     await attendreImage(video, cible);
     return;
   }
-  /* Le lecteur a-t-il tenu l'allure ? Trois retards de suite et l'on descend
-     d'un cran ; vingt images dans les temps et l'on retente plus vite. */
-  if (video.currentTime < cible) {
+  allure.morts = 0;
+  /* L'allure se règle sur le dépassement, pas sur le retard.
+
+     Le lecteur avance pendant qu'on l'attend : plus il va vite, plus il a passé
+     l'instant voulu quand on reprend la main. À quadruple vitesse et cent
+     soixante-dix millisecondes d'attente, il le dépasse de sept dixièmes de
+     seconde — assez pour que l'image suivante soit déjà loin derrière lui, et
+     pour qu'on soit tenté de le renvoyer en arrière. Or un retour en arrière est
+     un redécodage depuis la dernière image-clé : sur un téléphone, une seconde.
+     C'est là que se fabriquaient les quarante minutes.
+
+     On ralentit donc dès que le dépassement devient gros, et on accélère quand
+     le lecteur traîne — ce qui est l'inverse de l'intuition, mais c'est ainsi :
+     traîner veut dire qu'il faut couvrir plus de terrain à chaque attente. */
+  const depasse = video.currentTime - cible;
+  if (depasse > 0.35) {
     allure.avances = 0;
     allure.retards += 1;
-    /* Descendre vite, remonter lentement.
-
-       L'inverse a été essayé — descendre après cinq retards, remonter après huit
-       images à l'heure — en se disant qu'un téléphone tient sûrement la double
-       vitesse. Mesuré, c'était plus lent : sur processeur bridé quatre fois,
-       vingt-six secondes au lieu de seize. S'obstiner à une allure que
-       l'appareil ne tient pas fait buter chaque image sur le plafond d'attente,
-       et ce plafond coûte plus cher que l'allure ne rapporte. */
-    if (allure.retards >= 3 && allure.taux > 1) {
+    if (allure.retards >= 2 && allure.taux > 1) {
       allure.taux = allure.taux > 2 ? 2 : 1;
       allure.retards = 0;
     }
-  } else {
+  } else if (depasse < 0) {
     allure.retards = 0;
     allure.avances += 1;
-    if (allure.avances >= 20 && allure.taux < 4) {
+    if (allure.avances >= 4 && allure.taux < 4) {
       allure.taux = allure.taux < 2 ? 2 : 4;
       allure.avances = 0;
     }
+  } else {
+    allure.retards = 0;
+    allure.avances = 0;
   }
 }
 
