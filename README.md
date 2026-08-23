@@ -2599,12 +2599,103 @@ téléchargement — passe sans un seul souci : trente et une images par seconde
 **aucun bouche-trou**, neuf hoquets contre dix-sept, et un MP4 de 10,8 Mo livré
 au premier appui.
 
+## L'aperçu fluide : un seul fichier
+
+Après tout ce qui précède — les lecteurs préparés d'avance, le relais du plan
+sortant, le silence imposé aux rushs — la réponse est restée la même : « toujours
+pas ». Il fallait le dire clairement plutôt que de continuer à gratter.
+
+**Lire cent soixante-quinze fichiers à la file dans un navigateur de téléphone
+hoquettera toujours.** Chaque coupe demande à un décodeur de démarrer, et cela
+coûte de cinquante à deux cents millisecondes. Les correctifs précédents ont fait
+passer les mesures de dix-sept à neuf à-coups sur seize coupes, et supprimé les
+dépassements de cent millisecondes sur un ordinateur ; ils n'ont pas supprimé le
+principe. Aucun réglage ne le supprimera.
+
+C'est pourquoi aucun banc de montage ne juge sur les rushs. Ils fabriquent tous
+un fichier intermédiaire — un « proxy », un « cache de rendu » — et c'est lui
+qu'on regarde. L'outil le fait maintenant aussi.
+
+**Le bouton « Préparer l'aperçu fluide »**, sous le transport, fabrique le
+montage en un seul fichier de 640 × 360, sans son — c'est la musique de la page
+qu'on entend par-dessus, comme toujours. Une fois qu'il existe, c'est lui que
+l'aperçu lit : un fichier, un décodeur, aucune coupe. La tête de lecture suit ce
+fichier au lieu de tenir une horloge, la piste reste cliquable, le doigt déplace
+la tête comme avant.
+
+Il se périme tout seul. Son empreinte est celle du montage — l'ordre des plans et
+leurs points d'entrée et de sortie. Le moindre rognage la change : la barre le
+dit, la lecture repasse par les rushs, et « Annuler » suffit à retrouver
+l'aperçu. Il survit à la fermeture de la page : il est rangé sur l'appareil, à
+côté des rushs.
+
+```
+                              rushs à la file    aperçu fluide
+processeur ×1, 16 coupes
+  interruptions > 60 ms                 9                  0
+processeur ×4, 24 coupes de 0,8 s
+  interruptions > 60 ms            40 à 91                  0
+  au-dessus de 100 ms               8 à 18                  0
+  images tenues                          1                  0
+```
+
+### Fabriquer en moins de temps qu'il n'en dure
+
+Le premier jet mettait quarante-six secondes pour vingt-cinq secondes de
+montage. Mesuré, quatre-vingt-cinq pour cent de ce temps était passé à **chercher
+les images**, et pas du tout à les encoder — l'encodage tient en quatre
+centièmes de seconde pour six cents images.
+
+Chercher une image dans un fichier vidéo ne coûte pas ce qu'on croit : le
+décodeur repart de la dernière image-clé et redécode tout ce qui l'en sépare.
+Avancer d'une image à la fois en déplaçant le lecteur revient donc à redécoder
+le plan depuis son début à chaque image. Cela se voit dans les chiffres : dix-neuf
+millisecondes pour la deuxième image d'un plan, quarante-quatre pour la
+trentième.
+
+Trois changements, mesurés l'un après l'autre :
+
+- **La sonde à imagettes se tait pendant un rendu.** Elle décodait de la vidéo
+  pour la pellicule pendant que le rendu essayait de décoder la sienne.
+  46 s → 34 s. L'export en profite aussi : 30 s → 24 s sur le même montage.
+- **On laisse le lecteur jouer au lieu de le déplacer.** À l'intérieur d'un plan,
+  le décodeur avance tout seul et décode chaque image une fois. On ne le déplace
+  plus que pour entrer dans un plan. Lecture à quatre fois la vitesse normale, ce
+  qu'un rush muet supporte sans peine.
+- **Un petit dépassement n'est pas rattrapé.** En lecture accélérée, le lecteur
+  passe l'instant voulu d'une image ou deux avant qu'on ait la main. Le renvoyer
+  en arrière pour cela annulait tout le bénéfice — c'était exactement le
+  déplacement qu'on venait de supprimer, et il revenait à chaque image. À deux
+  centièmes de seconde près, personne ne fait la différence dans un aperçu.
+  Sans cette tolérance : 28 s. Avec : **10 s**.
+
+```
+                        pour 25,6 s de montage
+premier jet                        46 s
+sonde à imagettes muette           34 s
+lecture au lieu de recherche       28 s
+petit dépassement toléré           10 s
+```
+
+Dix secondes pour vingt-cinq, soit un peu moins de la moitié de la durée du
+montage. Sur un processeur bridé quatre fois — l'ordre de grandeur d'un
+téléphone — vingt-six secondes pour dix-neuf, soit un peu plus. Compte donc à
+peu près la durée de ta musique, une fois, et l'aperçu se lit ensuite sans un
+à-coup.
+
+L'export, lui, reste sur le parcours image par image : il vise l'exactitude,
+pas la vitesse.
+
 ## Comment la lecture est construite
 
 L'aperçu n'est pas un lecteur : c'est un **moniteur** dessiné image par image sur une toile,
 alimenté par un vivier de quatre lecteurs — pendant qu'un plan passe, les deux suivants sont
 déjà chargés et garés sur leur point d'entrée, donc la jointure ne marque pas. Le quatrième
 sert au plan sortant, qui couvre la coupe le temps que l'entrant produise sa première image.
+
+C'est la lecture depuis les rushs, celle qui sert à monter. Quand un aperçu fluide a été
+fabriqué, c'est lui qui prend la place de tout cela : une seule source, aucune coupe à
+couvrir, aucune position à rattraper.
 
 Le temps, lui, vient d'une **horloge de transport**, pas du lecteur. C'est le fonctionnement
 d'un banc de montage : l'horloge avance, l'image suit comme elle peut. La tête de lecture

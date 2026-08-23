@@ -920,6 +920,36 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .transport { display: flex; align-items: center; gap: var(--e3); }
 .transport-cote { flex: 1; display: flex; gap: 8px; }
 .transport-cote.fin { justify-content: flex-end; }
+
+/* La barre de l'aperçu fluide : un bouton et une phrase qui dit où l'on en est.
+   Elle tient sur une ligne quand il y a la place, sur deux sinon. */
+.barre-fluide {
+  display: flex;
+  align-items: center;
+  gap: var(--e2);
+  flex-wrap: wrap;
+  margin-top: var(--e2);
+}
+.fluide-action {
+  flex: none;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--trait);
+  background: var(--surface);
+  color: var(--texte);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.fluide-action:disabled { opacity: 0.45; cursor: default; }
+.fluide-action.stop { border-color: #e0603f; color: #e0603f; }
+.fluide-dit {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: var(--doux);
+}
 .rond {
   display: grid;
   place-items: center;
@@ -2972,9 +3002,25 @@ function editeur(projet) {
   preparationDit.id = "preparation-dit";
   preparation.append(preparationDit, boutonVeille());
 
-  ecran.append(moniteur, ...lecteurs, vide, preparation);
-  bloc.append(ecran, transport(), pisteComplete(projet));
+  /* Le lecteur de l'aperçu fluide : un seul fichier, donc un seul élément, qui
+     ne sert que quand ce fichier existe et correspond au montage. */
+  const doublure = document.createElement("video");
+  doublure.id = "apercu-fluide";
+  doublure.className = "lecteur-cache";
+  doublure.playsInline = true;
+  doublure.preload = "auto";
+  doublure.muted = true;
+  doublure.setAttribute("muted", "");
+  doublure.defaultMuted = true;
+  doublure.addEventListener("ended", () => { if (fluideDispo()) terminerLecture(); });
+
+  ecran.append(moniteur, ...lecteurs, doublure, vide, preparation);
+  bloc.append(ecran, transport(), barreFluide(), pisteComplete(projet));
   lecture.actif = 0;
+  fluide.video = null;
+  fluide.empreinte = null;
+  if (fluide.url) { URL.revokeObjectURL(fluide.url); fluide.url = null; }
+  reprendreFluide(projet).catch(() => {});
   reveillerMoniteur(1500);
   // Le battement de repos ne se met en route qu'une fois, et ne s'arrête plus :
   // c'est lui qui repère le retour dans la vue du projet.
@@ -3060,6 +3106,87 @@ function creerLecteur(nom) {
     arreterSon();
   });
   return video;
+}
+
+/* --- l'aperçu fluide -------------------------------------------------
+
+   Le mur, mesuré et remesuré : lire cent soixante-quinze fichiers à la file
+   dans un navigateur de téléphone hoquettera toujours. Chaque coupe demande à
+   un décodeur de démarrer, et cela coûte de cinquante à deux cents
+   millisecondes. On peut réduire — les lecteurs préparés d'avance, le relais du
+   plan sortant, le silence imposé aux rushs — on ne peut pas supprimer. C'est le
+   prix d'un montage joué depuis ses rushs, dans un navigateur.
+
+   La réponse est celle des bancs de montage : on ne juge pas sur les rushs, on
+   juge sur un rendu. L'outil fabrique donc, une fois, un fichier unique en
+   basse définition — un « proxy » — et c'est lui que l'aperçu lit. Un seul
+   fichier, un seul décodeur, aucune coupe : la lecture est aussi fluide que
+   n'importe quelle vidéo, parce que c'en est une.
+
+   Il est sans son : c'est la musique de la page qu'on entend par-dessus, comme
+   toujours. Cela évite d'encoder du son pour rien et va d'autant plus vite.
+
+   Il se périme tout seul. Son empreinte est celle du montage : l'ordre des
+   plans et leurs points d'entrée et de sortie. Le moindre rognage change
+   l'empreinte, l'aperçu fluide cesse d'être proposé, et la lecture revient aux
+   rushs le temps qu'on en refasse un. */
+const fluide = { empreinte: null, url: null, video: null, construction: false, arret: false };
+
+/* Tout ce qui, s'il change, périme le fichier fabriqué. La musique n'en fait
+   pas partie : elle n'y est pas. */
+function empreinteMontage(projet) {
+  if (!projet?.plans?.length) return "";
+  return projet.plans
+    .map((plan) => `${plan.id}@${entreeDe(plan).toFixed(2)}-${sortieDe(plan).toFixed(2)}`)
+    .join("|");
+}
+
+/* Le lecteur de l'aperçu fluide, s'il correspond bien au montage affiché.
+   Renvoie null sinon — et tout le reste de la lecture reprend alors son cours
+   habituel, sur les rushs. */
+function fluideDispo() {
+  const projet = projetActif();
+  if (!fluide.video || !fluide.empreinte || !projet) return null;
+  return fluide.empreinte === empreinteMontage(projet) ? fluide.video : null;
+}
+
+const CLE_FLUIDES = "amvauto-apercus";
+const cleFluide = (projet) => `apercu:${projet.id}`;
+const lireFichesFluide = () => {
+  try { return JSON.parse(localStorage.getItem(CLE_FLUIDES) || "{}"); } catch { return {}; }
+};
+
+async function garderFluide(projet, blob, empreinte) {
+  try {
+    await ecrireBase(cleFluide(projet), blob);
+    const fiches = lireFichesFluide();
+    fiches[projet.id] = { quand: Date.now(), taille: blob.size, empreinte };
+    localStorage.setItem(CLE_FLUIDES, JSON.stringify(fiches));
+  } catch { /* stockage plein : l'aperçu vaut pour cette séance, pas au-delà */ }
+}
+
+/* Retrouver l'aperçu d'un projet qu'on rouvre. On ne lit le fichier que si son
+   empreinte correspond encore : inutile de sortir de la réserve un rendu d'un
+   montage qui n'existe plus. */
+async function reprendreFluide(projet) {
+  const fiche = lireFichesFluide()[projet.id];
+  if (!fiche || fiche.empreinte !== empreinteMontage(projet)) return;
+  const blob = await lireBase(cleFluide(projet));
+  if (!(blob instanceof Blob) || !blob.size) return;
+  poserFluide(blob, fiche.empreinte);
+  majBandeauFluide();
+}
+
+function poserFluide(blob, empreinte) {
+  if (fluide.url) URL.revokeObjectURL(fluide.url);
+  fluide.url = URL.createObjectURL(blob);
+  fluide.empreinte = empreinte;
+  const video = $("apercu-fluide");
+  if (video) {
+    video.src = fluide.url;
+    video.load();
+    fluide.video = video;
+  }
 }
 
 /* Combien de lecteurs, et combien de plans d'avance.
@@ -3303,6 +3430,7 @@ function ajusterMoniteur(toile) {
 }
 
 function dessinerMoniteur() {
+  if (fluide.construction) return;
   const toile = $("moniteur");
   if (!toile) return;
   ajusterMoniteur(toile);
@@ -3315,12 +3443,18 @@ function dessinerMoniteur() {
 
   const ctx = toile.getContext("2d");
   const plan = projetActif()?.plans[lecture.index];
-  const video = elementActif();
+  /* L'aperçu fluide court-circuite tout : une seule source, jamais de coupe à
+     couvrir, jamais de position à rattraper. Le lecteur du fichier est aussi
+     celui qui donne l'heure — on le dessine tel quel. */
+  const doublure = fluideDispo();
+  const video = doublure || elementActif();
   // La position demandée est reprise ici, à chaque image : c'est ce qui garantit
   // que l'image finit par correspondre au curseur, quoi qu'il arrive aux
   // événements du lecteur.
-  rattraperPosition(video);
-  veillerCoherence(video, plan);
+  if (!doublure) {
+    rattraperPosition(video);
+    veillerCoherence(video, plan);
+  }
 
   // Resynchronisation : si le fichier tourne réellement alors que
   // l'application se croit à l'arrêt, la tête de lecture resterait figée. On
@@ -3348,7 +3482,12 @@ function dessinerMoniteur() {
      de la pellicule, en basse définition mais immédiate — et l'image pleine
      reprend la main dès que le doigt s'arrête. C'est ainsi qu'un banc de
      montage donne l'impression de faire défiler les images. */
-  if (lecture.scrub) {
+  if (lecture.scrub && doublure) {
+    const vise = Math.min(lecture.position, doublure.duration || lecture.position);
+    if (Math.abs(doublure.currentTime - vise) > 0.05 && !doublure.seeking) {
+      try { doublure.currentTime = vise; } catch { /* pas encore prêt */ }
+    }
+  } else if (lecture.scrub) {
     const cible = positionCible();
     if (cible && !cible.plan.youtube) {
       const temps = entreeDe(cible.plan) + cible.dans;
@@ -3363,7 +3502,13 @@ function dessinerMoniteur() {
     }
   }
 
-  if (source) {
+  if (doublure) {
+    /* Un déplacement sur un fichier unique aboutit en quelques images : on le
+       montre dès qu'il a quelque chose, et l'on tient la dernière image sinon —
+       pas d'imagettes, pas de vignette, rien à bricoler. */
+    if (doublure.readyState >= 2 && doublure.videoWidth) source = doublure;
+    else if (derniereImage.toile.width) source = derniereImage.toile;
+  } else if (source) {
     // une imagette de défilement a déjà été retenue
   } else if (lecture.demande && lecture.bascule
              && performance.now() - lecture.bascule.quand < RELAIS_SORTANT
@@ -3765,8 +3910,16 @@ function servirImagettes() {
      manque, c'est le fil d'exécution qui est pris ailleurs.
 
      Les imagettes servent à se repérer quand on cherche ; elles ne servent à
-     rien pendant qu'on regarde. Elles attendent donc la fin de la lecture. */
-  if (lecture.demande) return;
+     rien pendant qu'on regarde. Elles attendent donc la fin de la lecture.
+
+     Et rien du tout pendant un rendu. Mesuré sur la fabrication d'un aperçu
+     fluide de vingt-cinq secondes : quarante-trois secondes, dont trente-six
+     passées à attendre que le lecteur du rendu arrive sur l'image demandée. Ce
+     n'est pas le fichier qui traîne — un déplacement d'une image dans un
+     fichier déjà en mémoire coûte trois dixièmes de milliseconde quand la page
+     ne fait rien d'autre. C'est la sonde à imagettes qui, à côté, décodait de
+     la vidéo pour la pellicule et retenait le décodeur. */
+  if (lecture.demande || rendu.encours || fluide.construction) return;
   /* L'ordre de service compte autant que la capture elle-même.
 
      La file se servait par la fin, et les colonnes sont demandées de gauche à
@@ -4335,6 +4488,101 @@ function transport() {
 
   barre.append(gauche, jouer, droite);
   return barre;
+}
+
+/* La barre de l'aperçu fluide : un bouton et une phrase, sous le transport. */
+function barreFluide() {
+  const barre = document.createElement("div");
+  barre.className = "barre-fluide";
+  barre.id = "barre-fluide";
+
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.id = "btn-fluide";
+  bouton.className = "fluide-action";
+  bouton.addEventListener("click", () => {
+    if (fluide.construction) { fluide.arret = true; return; }
+    const projet = projetActif();
+    if (projet) construireFluide(projet);
+  });
+
+  const dit = document.createElement("span");
+  dit.className = "fluide-dit";
+  dit.id = "fluide-dit";
+
+  barre.append(bouton, dit);
+  return barre;
+}
+
+function majBandeauFluide(texte) {
+  const bouton = $("btn-fluide");
+  const dit = $("fluide-dit");
+  if (!bouton || !dit) return;
+  const projet = projetActif();
+  const pret = Boolean(fluideDispo());
+  const libelle = fluide.construction ? "Arrêter"
+    : pret ? "Refaire l'aperçu fluide" : "Préparer l'aperçu fluide";
+  if (bouton.textContent !== libelle) bouton.textContent = libelle;
+  bouton.classList.toggle("stop", fluide.construction);
+  bouton.disabled = !projet?.plans?.length;
+  const poser = (quoi) => { if (dit.textContent !== quoi) dit.textContent = quoi; };
+  if (texte != null) { poser(texte); return; }
+  poser(fluide.construction ? ""
+    : pret
+      ? "Aperçu fluide prêt : la lecture se fait sur un seul fichier, sans coupe."
+      : fluide.empreinte
+        ? "Le montage a changé depuis le dernier aperçu fluide — la lecture repasse par les rushs."
+        : "La lecture enchaîne les rushs un par un, et marque à chaque coupe. "
+          + "Un aperçu fluide fabrique le montage en un seul fichier, une fois, et se lit d'une traite.");
+}
+
+/* Fabriquer l'aperçu : le même rendu que l'export, mais petit et sans son. */
+async function construireFluide(projet) {
+  if (fluide.construction || rendu.encours) return;
+  libererSondeBande();
+  const empreinte = empreinteMontage(projet);
+  if (!empreinte) return;
+  fluide.construction = true;
+  fluide.arret = false;
+  let compteRendu;
+  // La lecture sur les rushs libérerait des décodeurs dont le rendu a besoin.
+  arreter();
+  majBandeauFluide("Préparation…");
+  try {
+    const fait = await rendreImages(projet, {
+      largeur: 640, hauteur: 360,
+      debit: Math.round(5e6 * ((640 * 360) / (1280 * 720))),
+      avecSon: false,
+      /* L'aperçu se fabrique en laissant jouer les rushs, pas en les
+         parcourant : c'est ce qui fait la différence entre une fabrication plus
+         longue que le montage et une fabrication plus courte. L'export, lui,
+         reste sur le parcours image par image — il vise l'exactitude, pas la
+         vitesse. */
+      parLecture: true,
+      rythme: 4,
+      arrete: () => fluide.arret,
+      dire: (pourcent, reste) => majBandeauFluide(
+        `Aperçu fluide — ${pourcent} %${reste ? `, encore ${minutage(reste)}` : ""}`
+        + " · l'application doit rester ouverte",
+      ),
+    });
+    if (fait.echec === "codec") {
+      majBandeauFluide("Ce navigateur ne sait pas fabriquer d'aperçu fluide.");
+      return;
+    }
+    if (fait.echec === "arret") { majBandeauFluide("Aperçu fluide arrêté."); return; }
+    if (fait.echec) { majBandeauFluide(`L'aperçu fluide a échoué (${fait.echec}).`); return; }
+    poserFluide(fait.blob, empreinte);
+    await garderFluide(projet, fait.blob, empreinte);
+    fluide.construction = false;
+    compteRendu = `Aperçu fluide prêt en ${minutage(Math.round(fait.secondes))} — `
+      + `${(fait.blob.size / 1e6).toFixed(1)} Mo, lu d'une traite.`;
+  } finally {
+    fluide.construction = false;
+    fluide.arret = false;
+    majBandeauFluide(compteRendu);
+    reveillerMoniteur(1500);
+  }
 }
 
 // Safari sur iPhone n'expose pas requestFullscreen sur un élément quelconque.
@@ -5062,6 +5310,8 @@ function redessinerPiste() {
   const projet = projetActif();
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
+  // Le moindre rognage périme l'aperçu fluide : la barre doit le dire.
+  majBandeauFluide();
   purgerBandes();
   ancienne.closest(".piste-enveloppe").replaceWith(pisteComplete(projet));
   // La carte du projet porte la durée totale : elle vieillit dès qu'une durée
@@ -5083,6 +5333,21 @@ function redessinerPiste() {
 function poserPlan(index, decalage = 0, enchainer = false) {
   const projet = projetActif();
   if (!projet || !projet.plans[index]) return;
+  /* Aperçu fluide : il n'y a pas de rush à poser, seulement une tête à déplacer
+     dans le fichier unique. */
+  const doublure = fluideDispo();
+  if (doublure) {
+    lecture.index = index;
+    lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
+    selectionner(index);
+    try {
+      doublure.currentTime = Math.min(lecture.position, doublure.duration || lecture.position);
+    } catch { /* pas encore prêt */ }
+    if (enchainer || lecture.jouant) doublure.play().catch(() => {});
+    reveillerMoniteur(1500);
+    majTransport();
+    return;
+  }
   lecture.index = index;
   if (!lecture.demande) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
   reveillerMoniteur(1500);
@@ -5226,8 +5491,10 @@ function planSuivant() {
 }
 
 function basculerLecture() {
-  const video = elementActif();
   const projet = projetActif();
+  const doublure = fluideDispo();
+  if (doublure && projet) return basculerFluide(doublure, projet);
+  const video = elementActif();
   if (!video || !projet) return;
   if (lecture.demande) {
     /* Tout s'arrête, pas seulement l'image.
@@ -5325,7 +5592,40 @@ function basculerLecture() {
   suivreTete();
 }
 
+/* Lire l'aperçu fluide : un fichier, un lecteur, rien à enchaîner. La tête de
+   lecture suit ce fichier au lieu de suivre une horloge — c'est lui la vérité,
+   et il ne peut pas prendre de retard sur lui-même. */
+function basculerFluide(video, projet) {
+  if (lecture.demande) {
+    lecture.demande = false;
+    lecture.jouant = false;
+    lecture.horloge = null;
+    video.pause();
+    arreterSon();
+    majTransport();
+    reveillerMoniteur();
+    lancerImport();
+    servirImagettes();
+    if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); }
+    return;
+  }
+  // Arrivé au bout, « lecture » reprend depuis le début.
+  if (lecture.position >= total(projet) - IMAGE) { lecture.position = 0; lecture.index = 0; }
+  lecture.demande = true;
+  lecture.jouant = true;
+  libererSondeBande();
+  // Les lecteurs de rushs n'ont plus rien à faire : ils gardaient un décodeur.
+  for (const lecteur of vivier()) lecteur.pause();
+  try { video.currentTime = Math.min(lecture.position, video.duration || lecture.position); } catch { /* pas encore prêt */ }
+  demarrerHorloge();
+  demarrerSon();
+  video.play().catch(() => { lecture.demande = false; lecture.jouant = false; majTransport(); });
+  majTransport();
+  suivreTete();
+}
+
 function arreter() {
+  $("apercu-fluide")?.pause();
   lecture.demande = false;
   lecture.jouant = false;
   lecture.horloge = null;
@@ -5546,6 +5846,21 @@ function appliquerSeek(jouer = false) {
   let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
   if (index < 0) index = projet.plans.length - 1;
   const dans = Math.max(0, lecture.position - debuts[index]);
+
+  const doublure = fluideDispo();
+  if (doublure) {
+    lecture.index = index;
+    selectionner(index);
+    try { doublure.currentTime = Math.min(lecture.position, doublure.duration || lecture.position); } catch { /* pas encore prêt */ }
+    if (jouer) doublure.play().catch(() => {});
+    if (lecture.audio) {
+      lecture.audio.currentTime = Math.min(lecture.position, lecture.audio.duration || 0);
+      if (jouer) lecture.audio.play().catch(() => {});
+    }
+    reveillerMoniteur();
+    majTransport();
+    return;
+  }
 
   const video = elementActif();
   const plan = projet.plans[index];
@@ -6279,7 +6594,17 @@ function positionCourante() {
   const duree_totale = total(projet);
 
   // Le doigt prime sur tout le reste.
-  if (lecture.scrub || !lecture.demande || !lecture.horloge) return lecture.position;
+  if (lecture.scrub || !lecture.demande) return lecture.position;
+  /* Aperçu fluide : la tête suit le fichier. Il n'y a pas de coupe à rattraper
+     ni d'horloge à tenir — le temps du fichier est le temps du montage. */
+  const doublure = fluideDispo();
+  if (doublure) {
+    const position = Math.min(doublure.currentTime, duree_totale);
+    lecture.position = position;
+    if (position >= duree_totale - 0.02) { terminerLecture(); return duree_totale; }
+    return position;
+  }
+  if (!lecture.horloge) return lecture.position;
 
   const ecoule = (performance.now() - lecture.horloge.debut) / 1000;
   let position = lecture.horloge.depart + ecoule;
@@ -6350,6 +6675,7 @@ function terminerLecture() {
   lecture.horloge = null;
   if (projet) lecture.position = total(projet);
   elementActif()?.pause();
+  $("apercu-fluide")?.pause();
   arreterSon();
   majTransport();
   reveillerMoniteur();
@@ -6366,7 +6692,14 @@ function suivreTete() {
     // Le changement de plan est décidé par l'horloge, pas par la fin d'un
     // fichier : un plan dont la lecture patine n'immobilise plus le montage.
     const projet = projetActif();
-    if (lecture.demande && projet) {
+    /* Sur l'aperçu fluide, il n'y a rien à enchaîner : on tient seulement la
+       sélection à jour, pour que la piste montre le plan qu'on regarde. */
+    if (lecture.demande && projet && fluideDispo()) {
+      const debuts = offsets(projet.plans);
+      let index = debuts.findIndex((d, k) => lecture.position < d + duree(projet.plans[k]));
+      if (index < 0) index = projet.plans.length - 1;
+      if (index !== lecture.index) { lecture.index = index; selectionner(index); }
+    } else if (lecture.demande && projet) {
       const plan = projet.plans[lecture.index];
       const debuts = offsets(projet.plans);
       const fin = (debuts[lecture.index] || 0) + duree(plan);
@@ -7455,6 +7788,49 @@ async function choisirCodec(liste, config) {
    dizaines de millisecondes par image. On évite donc de se déplacer quand on est
    déjà à la bonne image — d'une image à la suivante dans le même plan, le
    lecteur avance souvent tout seul. */
+/* Amener le lecteur sur une image, sans la chercher.
+
+   Un déplacement dans un fichier vidéo ne coûte pas ce qu'on croit : le
+   décodeur doit repartir de la dernière image-clé et redécoder tout ce qui
+   sépare celle-ci de l'image demandée. Avancer d'une image à la fois en
+   déplaçant le lecteur revient donc à redécoder le plan depuis son début à
+   chaque image — un travail qui grossit à mesure qu'on avance. Mesuré sur la
+   fabrication d'un aperçu : dix-neuf millisecondes pour la deuxième image d'un
+   plan, quarante-quatre pour la trentième, et vingt-sept secondes de recherche
+   sur trente-deux secondes de fabrication.
+
+   Laisser le lecteur jouer, au contraire, décode chaque image une fois et une
+   seule. On ne le déplace donc que pour entrer dans un plan ; à l'intérieur, on
+   le laisse courir et on prend au passage l'image de chaque instant voulu. */
+async function avancerVers(video, cible, rythme) {
+  const ecart = cible - video.currentTime;
+  /* Un vrai saut — en arrière, ou loin devant — mérite un déplacement franc.
+
+     Mais un petit dépassement, non : en lecture accélérée, le lecteur passe
+     l'instant voulu de une ou deux images avant qu'on ait la main. Le renvoyer
+     en arrière pour cela annulerait tout le bénéfice — c'est précisément le
+     déplacement qu'on cherche à éviter, et il reviendrait à chaque image. On
+     prend donc l'image qu'on a sous la main : à deux centièmes de seconde près,
+     personne ne fait la différence dans un aperçu. */
+  if (ecart < -0.25 || ecart > 1.5) {
+    video.pause();
+    await attendreImage(video, cible);
+    return;
+  }
+  if (ecart <= 0.001) return;
+  if (video.paused) {
+    video.playbackRate = rythme;
+    try { await video.play(); } catch { await attendreImage(video, cible); return; }
+  }
+  const limite = performance.now() + 2000;
+  while (video.currentTime < cible && !video.ended && performance.now() < limite) {
+    await new Promise((suite) => {
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => suite());
+      else setTimeout(suite, 8);
+    });
+  }
+}
+
 function attendreImage(video, temps) {
   return new Promise((suite) => {
     if (Math.abs(video.currentTime - temps) < 0.008 && video.readyState >= 2) { suite(); return; }
@@ -7529,17 +7905,37 @@ async function encoderLeSon(pistes, longueur, dire) {
   if (piste.echantillons.length) pistes.push(piste);
 }
 
-async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
-  const taille = tailleRendu();
-  const largeur = taille.largeur - (taille.largeur % 2);
-  const hauteur = taille.hauteur - (taille.hauteur % 2);
-  const codec = await choisirCodec(CODECS_VIDEO,
-    { width: largeur, height: hauteur, bitrate: Math.round(5e6 * ((largeur * hauteur) / (1280 * 720))),
-      framerate: IMAGES_PAR_SECONDE, avc: { format: "avc" } });
-  if (!codec) {
-    etat.textContent = "Ce navigateur ne sait pas encoder image par image. Le rendu en temps réel reste disponible.";
-    return;
+/* Fabriquer un MP4 du montage, image par image.
+
+   Le cœur est partagé par deux usages qui n'ont pas les mêmes exigences :
+   l'export, qui veut la meilleure définition et la piste son ; et l'aperçu
+   fluide, qui veut aller vite, tient dans un mouchoir et se passe de son —
+   c'est la musique de la page qu'on entend par-dessus. Un seul chemin, donc,
+   qui a déjà fait ses preuves, et deux réglages. */
+/* Rendre les décodeurs au système avant un rendu.
+
+   Les quatre lecteurs du montage gardent chacun un fichier ouvert et décodé,
+   prêt à jouer. C'est ce qui rend l'aperçu fluide entre deux coupes — et c'est
+   exactement ce qu'il ne faut pas pendant un rendu, où un seul lecteur travaille
+   et doit se déplacer six cents fois. Un téléphone n'a qu'une poignée de
+   décodeurs : les laisser occupés, c'est faire attendre celui qui travaille. */
+function libererVivier() {
+  for (const lecteur of vivier()) {
+    lecteur.pause();
+    lecteur.removeAttribute("src");
+    lecteur.load();
+    lecteur.dataset.plan = "";
+    lecteur.dataset.source = "";
   }
+}
+
+async function rendreImages(projet, reglages) {
+  const { largeur, hauteur, debit, avecSon, dire, arrete, parLecture, rythme } = reglages;
+  libererVivier();
+  const codec = await choisirCodec(CODECS_VIDEO,
+    { width: largeur, height: hauteur, bitrate: debit,
+      framerate: IMAGES_PAR_SECONDE, avc: { format: "avc" } });
+  if (!codec) return { echec: "codec" };
 
   const debuts = offsets(projet.plans);
   const longueur = total(projet);
@@ -7571,19 +7967,15 @@ async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
     error: (erreur) => { rendu.erreur = String(erreur); },
   });
   encodeur.configure({ codec, width: largeur, height: hauteur, framerate: IMAGES_PAR_SECONDE,
-    bitrate: Math.round(5e6 * ((largeur * hauteur) / (1280 * 720))),
+    bitrate: debit,
     ...(codec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
 
-  rendu.encours = true;
-  rendu.arret = false;
-  bouton.textContent = "Arrêter le rendu";
-  bouton.classList.add("stop");
   const depart = performance.now();
 
   try {
     let planCourant = null;
     for (let i = 0; i < combien; i += 1) {
-      if (rendu.arret) break;
+      if (arrete()) break;
       const t = i / IMAGES_PAR_SECONDE;
       let index = debuts.findIndex((d, k) => t < d + duree(projet.plans[k]));
       if (index < 0) index = projet.plans.length - 1;
@@ -7591,6 +7983,7 @@ async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
 
       if (plan !== planCourant) {
         planCourant = plan;
+        lecteur.pause();
         const adresse = sourceDe(plan);
         if (lecteur.dataset.source !== adresse) {
           lecteur.dataset.source = adresse;
@@ -7605,7 +7998,9 @@ async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
       }
 
       const dans = entreeDe(plan) + Math.max(0, t - (debuts[index] || 0));
-      await attendreImage(lecteur, Math.min(dans, Math.max(0, (lecteur.duration || dans) - 0.02)));
+      const vise = Math.min(dans, Math.max(0, (lecteur.duration || dans) - 0.02));
+      if (parLecture) await avancerVers(lecteur, vise, rythme || 2);
+      else await attendreImage(lecteur, vise);
 
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, largeur, hauteur);
@@ -7626,9 +8021,7 @@ async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
         const fait = i / combien;
         const passe = (performance.now() - depart) / 1000;
         const reste = fait > 0.02 ? Math.round((passe / fait) * (1 - fait)) : 0;
-        etat.textContent = `Rendu image par image — ${Math.round(fait * 100)} %`
-          + (reste ? `, encore ${minutage(reste)}` : "")
-          + "\nL'application doit rester ouverte, mais l'écran peut s'éteindre.";
+        dire(Math.round(fait * 100), reste);
         // Une respiration : sans elle, l'interface se fige et le bouton d'arrêt
         // ne répond plus.
         await new Promise((suite) => setTimeout(suite, 0));
@@ -7640,30 +8033,66 @@ async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
     await encodeur.flush();
     encodeur.close();
 
-    if (rendu.arret || !pisteVideo.echantillons.length) {
-      etat.textContent = rendu.arret ? "Rendu arrêté." : "Aucune image n'a pu être produite.";
-      return;
+    if (arrete() || !pisteVideo.echantillons.length) {
+      return { echec: arrete() ? "arret" : "vide" };
     }
 
     const pistes = [pisteVideo];
-    await encoderLeSon(pistes, longueur, (quoi) => { etat.textContent = quoi; });
+    if (avecSon) await encoderLeSon(pistes, longueur, (quoi) => dire(null, 0, quoi));
 
-    const blob = ecrireMp4(pistes);
-    const secondes = (performance.now() - depart) / 1000;
-    etat.textContent = `Rendu terminé en ${minutage(Math.round(secondes))} — `
-      + `${pisteVideo.echantillons.length} images à ${IMAGES_PAR_SECONDE} par seconde, sans un saut.`;
-    await garderRendu(projet, blob, "mp4");
-    offrir(blob, "mp4", IMAGES_PAR_SECONDE);
+    return { blob: ecrireMp4(pistes), images: pisteVideo.echantillons.length,
+      secondes: (performance.now() - depart) / 1000 };
   } catch (erreur) {
-    etat.textContent = `Le rendu image par image a échoué (${erreur.name}). `
-      + "Le rendu en temps réel reste disponible.";
+    return { echec: erreur.name || "erreur" };
+  } finally {
+    lecteur.removeAttribute("src");
+    lecteur.load();
+  }
+}
+
+/* L'export : la meilleure définition que l'appareil accepte, et la piste son. */
+async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
+  const taille = tailleRendu();
+  const largeur = taille.largeur - (taille.largeur % 2);
+  const hauteur = taille.hauteur - (taille.hauteur % 2);
+
+  rendu.encours = true;
+  rendu.arret = false;
+  bouton.textContent = "Arrêter le rendu";
+  bouton.classList.add("stop");
+  try {
+    const fait = await rendreImages(projet, {
+      largeur, hauteur,
+      debit: Math.round(5e6 * ((largeur * hauteur) / (1280 * 720))),
+      avecSon: true,
+      arrete: () => rendu.arret,
+      dire: (pourcent, reste, texte) => {
+        etat.textContent = texte != null ? texte
+          : `Rendu image par image — ${pourcent} %`
+            + (reste ? `, encore ${minutage(reste)}` : "")
+            + "\nL'application doit rester ouverte, mais l'écran peut s'éteindre.";
+      },
+    });
+    if (fait.echec === "codec") {
+      etat.textContent = "Ce navigateur ne sait pas encoder image par image. Le rendu en temps réel reste disponible.";
+      return;
+    }
+    if (fait.echec === "arret") { etat.textContent = "Rendu arrêté."; return; }
+    if (fait.echec === "vide") { etat.textContent = "Aucune image n'a pu être produite."; return; }
+    if (fait.echec) {
+      etat.textContent = `Le rendu image par image a échoué (${fait.echec}). `
+        + "Le rendu en temps réel reste disponible.";
+      return;
+    }
+    etat.textContent = `Rendu terminé en ${minutage(Math.round(fait.secondes))} — `
+      + `${fait.images} images à ${IMAGES_PAR_SECONDE} par seconde, sans un saut.`;
+    await garderRendu(projet, fait.blob, "mp4");
+    offrir(fait.blob, "mp4", IMAGES_PAR_SECONDE);
   } finally {
     rendu.encours = false;
     rendu.arret = false;
     bouton.textContent = "Rendre la vidéo";
     bouton.classList.remove("stop");
-    lecteur.removeAttribute("src");
-    lecteur.load();
   }
 }
 
