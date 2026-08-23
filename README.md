@@ -2690,6 +2690,57 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### L'aperçu montrait les rushs entiers, pas le montage
+
+Retour d'appareil, et cette fois ce n'est plus une question de vitesse mais de
+contenu : « il rend tout le bloc de vidéo d'origine et non seulement la partie
+découpée ». C'était exact, et cela expliquait aussi une bonne part du temps
+perdu.
+
+Le lecteur qui alimente la fabrication joue en accéléré, et **on ne l'arrêtait
+jamais**. Une fois qu'il avait dépassé l'instant voulu, la fonction repartait
+aussitôt sans rien lui dire — et il continuait de tourner pendant qu'on dessine,
+qu'on encode et qu'on souffle, c'est-à-dire pendant l'essentiel du temps. Il
+franchissait donc le point de sortie du plan et lisait la suite du rush, celle
+qu'on venait justement de couper. Mesuré : **jusqu'à une seconde deux au-delà de
+la coupe**, sur des plans d'une seconde six.
+
+Deux corrections :
+
+- **On entre dans un plan par un déplacement, toujours.** Un plan dont le point
+  d'entrée tombait dans la première seconde et demie du fichier était atteint en
+  lisant : on décodait tout ce qui précède l'entrée, c'est-à-dire la partie qu'on
+  vient de couper.
+- **Le lecteur est arrêté dès qu'il devance la grille d'images**, sur tous les
+  chemins — y compris celui où il a déjà dépassé l'instant voulu, qui était
+  précisément celui qu'on empruntait le plus souvent. Arrêté, il ne dérive plus ;
+  il repart tout seul dès que la grille l'a rattrapé.
+
+La tolérance a été réglée par la mesure. À cinq centièmes de seconde, la
+fabrication est correcte mais un tiers plus lente — on arrête et relance le
+lecteur à chaque image. À un quart de seconde, elle dépasse la coupe de six
+dixièmes. À **douze centièmes**, elle est à la fois juste et la plus rapide des
+trois.
+
+```
+                                     avant      après
+source réellement parcourue          ≈ rushs    24,7 s
+  (montage de 25,6 s ; les seize      entiers
+   rushs entiers font 162 s)
+images prises au-delà de la coupe        74         19
+dépassement maximal                  1,19 s     0,12 s
+```
+
+Et la fabrication n'y perd rien, au contraire — décoder ce qu'on a coupé était du
+temps perdu deux fois :
+
+```
+                         pour 25,6 s de montage
+processeur ×1                         9 s
+processeur ×4 (un téléphone)         17 s
+processeur ×8 (le pire cas)          25 s
+```
+
 ### Le vrai coupable : un retour en arrière par image
 
 Quatrième retour d'appareil, même montage : toujours quarante minutes annoncées.

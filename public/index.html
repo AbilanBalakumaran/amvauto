@@ -1535,7 +1535,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-23 09:00";
+const VERSION_PAGE = "2026-08-23 13:32";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7856,7 +7856,15 @@ const PATIENCE_IMAGE = 170;
    par plan, pas une fois par image. */
 const PATIENCE_DEMARRAGE = 800;
 
-async function avancerVers(video, cible, allure) {
+/* De combien le lecteur a le droit de devancer la grille d'images avant d'être
+   arrêté. Une image ou deux à douze par seconde : assez peu pour qu'il ne
+   franchisse pas le point de sortie du plan, assez pour ne pas l'arrêter et le
+   relancer à chaque image. Mesuré à 0,05 s, la fabrication est correcte mais un
+   tiers plus lente ; à 0,25 s, elle dépasse la coupe de six dixièmes de seconde.
+   Entre les deux, elle est à la fois juste et la plus rapide des trois. */
+const AVANCE_TOLEREE = 0.12;
+
+async function avancerVers(video, cible, allure, fin) {
   /* Et si la lecture ne prend pas, on repasse aux déplacements pour de bon.
 
      Un navigateur peut refuser de jouer, ou jouer sans avancer : sur un appareil
@@ -7864,7 +7872,26 @@ async function avancerVers(video, cible, allure) {
      fabrication n'avancerait plus. On s'en aperçoit à la première image et l'on
      renonce — la fabrication est alors plus lente, mais elle aboutit. */
   if (video.dataset.sansLecture === "oui") { await attendreImage(video, cible); return; }
+
+  /* Le point de sortie du plan est une frontière dure : au-delà, ce qui reste
+     dans le fichier a été coupé et n'a rien à faire dans l'aperçu. */
+  const borne = Number.isFinite(fin) ? fin : Infinity;
   const ecart = cible - video.currentTime;
+
+  /* Le lecteur est arrêté dès qu'il a de l'avance — y compris ici, avant même
+     de se demander quoi faire.
+
+     C'était le trou. Quand il avait déjà dépassé l'instant voulu, on repartait
+     aussitôt sans rien lui dire, et il continuait de tourner pendant qu'on
+     dessine, qu'on encode et qu'on souffle — c'est-à-dire pendant l'essentiel du
+     temps. Il franchissait ainsi le point de sortie du plan et lisait la suite
+     du rush, celle qu'on venait justement de couper : mesuré, jusqu'à une
+     seconde deux au-delà de la coupe. L'aperçu montrait les rushs d'origine
+     plutôt que le montage, et ce décodage-là était du temps perdu deux fois.
+
+     Arrêté, il ne peut plus dériver, et il repart tout seul dès que la grille
+     d'images l'a rattrapé. */
+  if (!video.paused && (video.currentTime >= borne || ecart < -AVANCE_TOLEREE)) video.pause();
   /* Un vrai saut — en arrière, ou loin devant — mérite un déplacement franc.
      Un dépassement, non.
 
@@ -7914,6 +7941,7 @@ async function avancerVers(video, cible, allure) {
      navigateur ne sait pas jouer. */
   const limite = performance.now() + (demarrage ? PATIENCE_DEMARRAGE : PATIENCE_IMAGE);
   while (video.currentTime < cible && !video.ended && performance.now() < limite) {
+    if (video.currentTime >= borne) { video.pause(); break; }
     /* L'attente d'une image ne peut jamais être la seule issue.
 
        « requestVideoFrameCallback » ne se déclenche que si le lecteur présente
@@ -7961,6 +7989,7 @@ async function avancerVers(video, cible, allure) {
      le lecteur traîne — ce qui est l'inverse de l'intuition, mais c'est ainsi :
      traîner veut dire qu'il faut couvrir plus de terrain à chaque attente. */
   const depasse = video.currentTime - cible;
+  if (depasse > AVANCE_TOLEREE || video.currentTime >= borne) video.pause();
   if (depasse > 0.35) {
     allure.avances = 0;
     allure.retards += 1;
@@ -8202,12 +8231,22 @@ async function rendreImages(projet, reglages) {
             setTimeout(fait, 4000);
           });
         }
+        /* On entre dans un plan par un déplacement, toujours.
+
+           Sans cela, un plan dont le point d'entrée tombe dans la première
+           seconde et demie du fichier était atteint en lisant : on décodait donc
+           tout ce qui précède l'entrée — la partie qu'on vient justement de
+           couper. Multiplié par quatre-vingt-huit plans, c'est du temps dépensé
+           à fabriquer ce que personne ne verra. */
+        lecteur.pause();
+        const entree = Math.min(entreeDe(plan), Math.max(0, (lecteur.duration || 0) - 0.02));
+        await attendreImage(lecteur, entree);
         prevoir(index + 1);
       }
 
       const dans = entreeDe(plan) + Math.max(0, t - (debuts[index] || 0));
       const vise = Math.min(dans, Math.max(0, (lecteur.duration || dans) - 0.02));
-      if (parLecture) await avancerVers(lecteur, vise, allure);
+      if (parLecture) await avancerVers(lecteur, vise, allure, sortieDe(plan));
       else await attendreImage(lecteur, vise);
 
       ctx.fillStyle = "#000";
