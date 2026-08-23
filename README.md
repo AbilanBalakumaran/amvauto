@@ -1458,6 +1458,81 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+## Le parcours complet, cinq fois de suite
+
+Se mettre à la place de quelqu'un qui ouvre l'application, automatise un AMV, le
+regarde et le télécharge — et recommencer cinq fois. Quatre défauts sont sortis,
+dont deux qu'aucun test unitaire n'aurait attrapés.
+
+### La toute première ouverture était cassée
+
+```js
+$("btn-export").disabled = !projet.plans.length;
+
+if (!projet) {          // trois lignes plus bas
+```
+
+Sur un appareil vierge il n'y a par définition **aucun** projet. L'onglet Projet
+levait donc une erreur et ne s'affichait pas du tout. Trois lignes plus bas, le
+code savait très bien traiter ce cas — il n'y arrivait jamais.
+
+Et une fois l'erreur corrigée, le premier écran disait : « Aucun projet. Ouvre un
+dossier, puis « + » sur un plan pour en démarrer un. » C'est la marche à suivre
+du montage à la main, c'est-à-dire exactement ce que l'outil sait faire seul. Il
+propose maintenant **« Créer un AMV »**.
+
+### Tout le montage croyait que les rushs faisaient deux secondes
+
+Le plus grave. Une durée mesurée était posée sur l'objet qu'on avait sous la
+main — mais le montage remplace la piste par des copies, et la mesure arrivait
+quelques secondes plus tard, sur des objets que plus personne ne regardait.
+
+```
+diagnostic : { vivier: 16, vivierMesure: 0, sansDuree: 40 }
+```
+
+Quarante coupes, pas une seule durée connue. Le montage entier était donc bâti
+sur `DUREE_DEFAUT` — **deux secondes** — alors que les rushs en font huit ou dix.
+Chaque plan était coupé dans ses deux premières secondes, toujours les mêmes, et
+la dispersion dans le fichier ne pouvait pas fonctionner : c'est une bonne part
+des images manquantes et des scènes qui se ressemblent.
+
+La durée appartient au fichier, pas à l'objet : elle est désormais rangée par
+adresse, et toute copie en profite aussitôt.
+
+### La recherche mixte rendait quatre scènes sur vingt
+
+Les cinq ambiances se recoupent — un plan étiqueté à la fois « combat » et
+« effets » revient deux fois — et l'entrelacement comptait les **lignes
+ramenées**, pas les scènes distinctes. On s'arrêtait donc à vingt lignes qui ne
+faisaient que quatre scènes, et le montage se répétait faute de matière. On
+compte maintenant en scènes.
+
+### Le vivier était jeté après le premier montage
+
+Une fois la piste posée, les scènes non retenues disparaissaient du projet :
+vingt-quatre rushs cherchés, seize employés, huit perdus pour de bon. Relancer le
+montage ne pouvait plus que rebattre les survivants. Le vivier est gardé à part,
+tel que la recherche l'a rapporté.
+
+S'y ajoute un dernier montage, tout seul, quand la dernière durée est tombée —
+jamais pendant une lecture, et seulement s'il emploie plus de scènes que le
+précédent.
+
+### Cinq tours, après correction
+
+```
+tour 1  40 coupes · 24 scènes · aperçu 28,8 i/s · rendu 16,2 Mo · 0 souci
+tour 2  40 coupes · 24 scènes · aperçu 28,5 i/s · rendu 16,3 Mo · 0 souci
+tour 3  40 coupes · 24 scènes · aperçu 28,8 i/s · rendu 16,2 Mo · 0 souci
+tour 4  40 coupes · 24 scènes · aperçu 28,8 i/s · rendu 16,2 Mo · 0 souci
+tour 5  40 coupes · 24 scènes · aperçu 28,7 i/s · rendu 16,3 Mo · 0 souci
+```
+
+Les cinq fichiers font 30 s pour 30 s de musique, en 1280×720, avec deux canaux
+de son à niveau réel — et **cinq empreintes différentes** : même chanson, cinq
+montages.
+
 ### « 0/175 » sur un projet déjà rapatrié
 
 Rouvrir un projet donnait l'impression que tout recommençait : le bandeau

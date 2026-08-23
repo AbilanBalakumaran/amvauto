@@ -2465,13 +2465,14 @@ function mesurerSuivant() {
     sondeActive = false;
     // Un souffle entre deux sondes : le décodeur a le temps de se libérer.
     setTimeout(mesurerSuivant, 80);
+    reposerQuandToutEstMesure();
   };
 
   const abandon = setTimeout(finir, 12000);
   sonde.addEventListener("loadedmetadata", () => {
     clearTimeout(abandon);
     if (Number.isFinite(sonde.duration) && sonde.duration > 0) {
-      plan.duree = Math.round(sonde.duration * 100) / 100;
+      retenirDuree(plan, Math.round(sonde.duration * 100) / 100);
       sauver();
       if (!$("vue-projet").hidden && !lecture.jouant) {
         // Les durées changent la longueur du montage : sans réajuster, la piste
@@ -2487,6 +2488,46 @@ function mesurerSuivant() {
   }, { once: true });
   sonde.addEventListener("error", () => { clearTimeout(abandon); finir(); }, { once: true });
   sonde.src = sourceDe(plan);
+}
+
+/* Reposer le montage quand la dernière durée est connue.
+
+   Un plan dont la durée est inconnue ne peut pas être découpé : il est écarté du
+   choix. Or l'automatisation ne peut pas attendre que cent soixante-quinze
+   fichiers aient livré leurs métadonnées — elle serait interminable. Elle bâtit
+   donc sur ce qu'elle sait, et c'est ce qui la rend immédiate.
+
+   Mesuré : sur vingt-quatre rushs, le montage n'en employait que seize et
+   répétait des scènes alors qu'il en restait huit inutilisées. Le reste des
+   durées arrivait quelques dizaines de secondes plus tard, sans que personne ne
+   s'en serve.
+
+   On repose donc une dernière fois, tout seul, quand la dernière mesure est
+   tombée — jamais pendant une lecture, ce qui ferait sauter l'image sous les
+   yeux, et seulement si l'utilisateur n'a pas retouché le montage depuis. */
+let reposPrevu = null;
+function reposerQuandToutEstMesure() {
+  if (reposPrevu) clearTimeout(reposPrevu);
+  reposPrevu = setTimeout(() => {
+    reposPrevu = null;
+    const projet = projetActif();
+    if (!projet || attenteMesure.length || sondeActive) return;
+    if (lecture.demande || automate.encours || !projet.__automate) return;
+    if (projet.plans.some((plan) => dureeSource(plan) < PLAN_MINI)) return;
+    const montage = construireMontage(projet, { ordre: projet.amv?.ordre, graine: projet.__graine || 0 });
+    if (!montage) return;
+    /* On ne compare pas le nombre de coupes — il est presque toujours le même,
+       puisqu'il vient de la musique. Ce qui doit avoir changé, c'est le nombre de
+       scènes différentes employées : c'est tout l'objet de ce dernier passage. */
+    const avant = new Set(projet.plans.map((plan) => String(plan.id))).size;
+    const apres = new Set(montage.map((plan) => String(plan.id))).size;
+    if (apres <= avant) return;
+    projet.plans = montage;
+    sauver();
+    enregistrer(projet);
+    rendreProjet();
+    rendre();
+  }, 1200);
 }
 
 const secondes = (valeur) => `${valeur.toFixed(2).replace(".", ",")} s`;
@@ -2545,7 +2586,39 @@ const xDeSeconde = (valeur) => valeur * lecture.echelle;
 const IMAGE = 1 / IMAGES_PAR_SECONDE;
 const PLAN_MINI = 4 * IMAGE;   // en deçà, un plan n'est plus lisible à l'écran
 
-const dureeSource = (plan) => plan?.duree || DUREE_DEFAUT;
+/* Les durées mesurées, rangées par adresse de fichier.
+
+   Une durée était posée sur l'objet qu'on avait sous la main. Or le montage
+   remplace la piste par des copies : la mesure arrivait quelques secondes plus
+   tard, sur des objets que plus personne ne regardait. Résultat, tout le montage
+   était bâti et figé sur la durée par défaut — deux secondes — alors que les
+   rushs en font huit ou dix. Chaque plan était donc coupé dans ses deux
+   premières secondes, toujours les mêmes, et la dispersion dans le fichier ne
+   pouvait pas fonctionner.
+
+   La durée appartient au fichier, pas à l'objet : elle est donc gardée par
+   adresse, et toute copie en profite aussitôt. */
+const dureesConnues = new Map();
+
+const dureeSource = (plan) => {
+  if (plan?.duree) return plan.duree;
+  const adresse = plan && mediaDe(plan);
+  return (adresse && dureesConnues.get(adresse)) || DUREE_DEFAUT;
+};
+
+/* Une mesure vaut pour tous les blocs qui viennent du même fichier, et pour le
+   vivier : un rush coupé en cinq morceaux n'est mesuré qu'une fois. */
+function retenirDuree(plan, valeur) {
+  const adresse = mediaDe(plan);
+  if (!adresse || !(valeur > 0)) return;
+  dureesConnues.set(adresse, valeur);
+  plan.duree = valeur;
+  for (const projet of state.projets || []) {
+    for (const liste of [projet.plans, projet.rushs]) {
+      for (const autre of liste || []) if (mediaDe(autre) === adresse) autre.duree = valeur;
+    }
+  }
+}
 const entreeDe = (plan) => Math.max(0, Math.min(plan?.entree || 0, dureeSource(plan) - PLAN_MINI));
 const sortieDe = (plan) => Math.min(dureeSource(plan), Math.max(plan?.sortie ?? dureeSource(plan), entreeDe(plan) + PLAN_MINI));
 const rogne = (plan) => entreeDe(plan) > 0.001 || sortieDe(plan) < dureeSource(plan) - 0.001;
@@ -2619,10 +2692,25 @@ function rendreProjet() {
      vit la sauvegarde en ligne, et un projet vide est justement celui d'où l'on
      part. L'export, lui, n'aurait rien à écrire — il se grise. */
   $("app-actions").hidden = !projet;
-  $("btn-export").disabled = !projet.plans.length;
+  /* L'ordre compte : trois lignes plus bas, on sait traiter l'absence de projet
+     — mais celle-ci lisait « projet.plans » avant d'y arriver. Sur un appareil
+     vierge, où il n'y a par définition aucun projet, l'onglet Projet levait donc
+     une erreur et ne s'affichait pas du tout : la toute première ouverture de
+     l'application était cassée. */
+  $("btn-export").disabled = !projet?.plans.length;
 
   if (!projet) {
-    morceaux.push(note("Aucun projet. Ouvre un dossier, puis « + » sur un plan pour en démarrer un."));
+    morceaux.push(note("Aucun projet pour l'instant."));
+    /* La toute première chose qu'on voit en ouvrant l'application. Elle disait
+       « ouvre un dossier, puis « + » sur un plan » — la marche à suivre du
+       montage à la main, c'est-à-dire exactement ce que l'outil sait faire tout
+       seul. On propose donc d'abord ce pour quoi on est venu. */
+    const commencer = document.createElement("button");
+    commencer.type = "button";
+    commencer.className = "note-action";
+    commencer.textContent = "Créer un AMV";
+    commencer.addEventListener("click", () => { creerProjet(); rendreProjet(); rendre(); ouvrirAssistant("musique"); });
+    morceaux.push(commencer);
     /* Un appareil sans projet est exactement celui qui a besoin de récupérer :
        téléphone neuf, application réinstallée, stockage effacé. Le panneau de
        sauvegarde vit d'ordinaire derrière le bouton Réglages, lequel n'apparaît
@@ -7574,7 +7662,17 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
      résultat de la première prendrait chaque rush autant de fois qu'il y a été
      employé : en chronologie, cela donnait dix blocs du même épisode à la
      suite. On repart donc de la liste d'origine, dédoublonnée. */
-  const socle = depuis || projet.plans;
+  /* Le vivier, et non la piste.
+
+     Une fois le montage posé, « projet.plans » ne contient plus que les scènes
+     retenues : celles que le montage a laissées de côté ont disparu du projet.
+     Mesuré, c'est loin d'être marginal — sur vingt-quatre rushs cherchés, seize
+     employés, huit perdus pour de bon. Relancer le montage ne pouvait alors que
+     rebattre les survivants, et les redites venaient de là.
+
+     Le vivier est donc gardé à part, tel que la recherche l'a rapporté, et c'est
+     lui qui sert de base à tout montage ultérieur. */
+  const socle = depuis || (projet.rushs?.length ? projet.rushs : projet.plans);
   const sources = [...new Map(socle
     .filter((plan) => dureeSource(plan) >= PLAN_MINI)
     .map((plan) => [String(plan.id), plan])).values()];
@@ -7731,7 +7829,10 @@ const RUSHS_MAX = 240;
 const AMBIANCES_LIBRES = ["combat", "effets", "vitesse", "acting", "hype"];
 
 async function chercherPartout(voulues) {
-  const parAmbiance = Math.ceil(voulues / AMBIANCES_LIBRES.length);
+  // On demande large : les cinq ambiances se recoupent — un plan étiqueté à la
+  // fois « combat » et « effets » revient deux fois — et c'est après
+  // dédoublonnage qu'il faut avoir le compte.
+  const parAmbiance = Math.ceil(voulues / 2);
   const lots = await Promise.all(AMBIANCES_LIBRES.map(async (ambiance) => {
     try {
       const reponse = await fetch(
@@ -7745,11 +7846,20 @@ async function chercherPartout(voulues) {
     }
   }));
   /* Entrelacés, pas concaténés : couper la liste au plafond ne doit pas
-     supprimer une ambiance entière. */
+     supprimer une ambiance entière. Et l'on compte en scènes distinctes, pas en
+     lignes ramenées : mesuré, cinq ambiances qui rendent les mêmes plans
+     donnaient quatre scènes là où l'on en voulait vingt, et le montage se
+     répétait faute de matière. */
   const melange = [];
-  for (let rang = 0; melange.length < voulues * 2; rang += 1) {
+  const vus = new Set();
+  for (let rang = 0; vus.size < voulues; rang += 1) {
     if (!lots.some((lot) => lot[rang])) break;
-    for (const lot of lots) if (lot[rang]) melange.push(lot[rang]);
+    for (const lot of lots) {
+      const rush = lot[rang];
+      if (!rush || vus.has(String(rush.id))) continue;
+      vus.add(String(rush.id));
+      melange.push(rush);
+    }
   }
   return melange;
 }
@@ -8637,6 +8747,11 @@ async function automatiserAmv(bouton) {
   // le montage lui-même.
   let socle = null;
   const graine = nouvelleGraine();
+  /* Retenus sur le projet : la dernière mesure de durée peut tomber longtemps
+     après la fin de l'automatisation, et c'est elle qui déclenchera un dernier
+     montage — avec la même graine, donc le même essai, simplement complet. */
+  projet.__automate = true;
+  projet.__graine = graine;
   const poser = () => {
     if (!socle) socle = [...new Map(projet.plans.map((plan) => [String(plan.id), plan])).values()];
     const montage = construireMontage(projet, { ordre: amv.ordre, depuis: socle, graine });
@@ -8676,6 +8791,11 @@ async function automatiserAmv(bouton) {
         preparerLocal(plan);
         mesurerDuree(plan);
       });
+      /* Le vivier complet est mis de côté avant que le montage ne remplace la
+         piste : sans cela, les scènes non retenues seraient perdues, et les
+         montages suivants n'auraient plus qu'elles à se répartir. */
+      projet.rushs = [...new Map(projet.plans
+        .map((plan) => [String(plan.id), { ...plan, entree: 0, sortie: null }])).values()];
       sauver();
     }
     if (automate.arret) return;
@@ -8702,6 +8822,26 @@ async function automatiserAmv(bouton) {
     }
     dire(`${premier} coupes posées. Tu peux déjà écouter.` +
       (amv.lire ? "\nL'IA regarde maintenant les plans pour affiner — « Arrêter » garde ce montage-ci." : ""));
+
+    /* Le premier montage est bâti sur les huit durées déjà connues — c'est ce
+       qui le rend immédiat. Mais les autres arrivent dans la seconde qui suit,
+       et un plan dont la durée est inconnue est écarté du choix : mesuré sur
+       vingt-quatre rushs, le montage n'en employait que seize et répétait des
+       scènes alors qu'il en restait huit inutilisées. On attend donc le reste,
+       puis on repose. Avec la lecture par l'IA, cette seconde passe existe déjà
+       plus loin ; sans elle, il n'y en avait aucune. */
+    for (let attente = 0; attente < 40 && !automate.arret; attente += 1) {
+      const manquants = projet.plans.filter((plan) => dureeSource(plan) < PLAN_MINI).length;
+      if (!manquants) break;
+      dire(`${premier} coupes posées. Mesure des ${manquants} plans restants…`);
+      await new Promise((suite) => setTimeout(suite, 300));
+    }
+    if (automate.arret) return;
+    const complet = poser();
+    if (complet && !amv.lire) {
+      const sources = new Set(projetActif()?.plans.map((x) => String(x.id))).size;
+      dire(`${complet} coupes sur ${sources} scènes différentes.`);
+    }
 
     if (!amv.lire) return;
 
