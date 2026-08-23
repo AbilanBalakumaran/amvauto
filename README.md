@@ -1458,6 +1458,62 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+## Ce que montre une capture d'écran
+
+Une capture de six secondes, prise sur l'appareil, en dit plus qu'un rapport.
+Faute de ffmpeg dans l'atelier, les images en ont été tirées avec le binaire
+qu'embarque `imageio-ffmpeg` — le fichier est en HEVC, que Chromium ne décode
+pas sous Linux.
+
+Ce qu'on y lit, image par image :
+
+```
+00:00.3  noir     Plan 01      ⎫
+00:00.4  noir     Plan 01      ⎬ une seconde et demie de temps réel
+00:00.4  noir     Plan 01      ⎭ pour un dixième de seconde de montage
+00:01.7  image    Plan 02
+00:01.8  image    Plan 03
+00:03.2  noir     Plan 04
+00:03.5  image    Plan 05
+00:04.8  noir     Plan 06
+00:04.9  image    Plan 06
+```
+
+Deux choses sautent aux yeux. La barre d'état dit **« 88 plans · 456 Mo · tous
+importés »** : ce n'est donc pas un fichier qui manque. Et surtout, la tête de
+lecture **n'avance pas** pendant la première seconde et demie, puis rattrape
+d'un coup — la signature d'un fil d'exécution occupé ailleurs, pas d'une vidéo
+lente.
+
+Trois charges ont été retirées de la boucle de lecture.
+
+**La sonde à imagettes se tait.** Elle décode de la vidéo, comme les deux
+lecteurs du montage, et un téléphone n'a qu'une poignée de décodeurs. Les
+imagettes servent à se repérer quand on cherche ; elles ne servent à rien
+pendant qu'on regarde.
+
+**La pellicule ne se repeint plus.** Elle ne change pas pendant la lecture —
+seul le curseur avance, et il est dessiné ailleurs. Repeindre quatre-vingt-huit
+blocs coûte cher, et ce coût tombait précisément dans la boucle qui doit
+produire l'image suivante.
+
+**La tenue d'image se compte depuis la perte, pas depuis la copie.** La copie de
+sauvegarde est faite au plus une fois par demi-seconde ; au moment où l'image
+manquait, la moitié du budget de sept cents millisecondes était déjà consommée
+sans que rien ne se soit passé.
+
+S'y ajoute une correction du tout premier instant : au démarrage il n'y a aucune
+image tenue, et le moniteur restait noir le temps du premier décodage. Là, et là
+seulement, une imagette floue vaut mieux que du noir.
+
+Une honnêteté nécessaire : **l'atelier ne reproduit pas son blocage**.
+Quatre-vingt-huit plans sur un processeur bridé six fois donnent 263, 865 et
+514 ms avant la première image sur trois passages identiques — du bruit, et
+jamais de trou de plus de dix images. Un iPhone XR de 2018 est plus faible
+qu'un cœur de bureau divisé par six, et surtout iOS limite bien plus durement le
+nombre de décodeurs vidéo simultanés. Les trois charges retirées sont justes en
+soi ; leur effet chez lui reste à vérifier par lui.
+
 ## Le parcours complet, cinq fois de suite
 
 Se mettre à la place de quelqu'un qui ouvre l'application, automatise un AMV, le

@@ -3286,10 +3286,11 @@ function dessinerMoniteur() {
     // fraction de seconde pendant qu'un plan se met en place.
     source = video;
     derniereImage.plan = plan?.id || null;
+    derniereImage.vivante = performance.now();
   } else if (derniereImage.plan && derniereImage.plan === plan?.id && derniereImage.toile.width) {
     source = derniereImage.toile;
   } else if (derniereImage.toile.width
-             && (performance.now() - derniereImage.quand < TENUE_TRANSITION
+             && (performance.now() - derniereImage.vivante < TENUE_TRANSITION
                || (plan && laisserAuReseau(plan)))) {
     /* Le plan a changé et le nouveau n'a pas encore d'image : on tient la
        dernière décodée, quel que soit son plan d'origine.
@@ -3328,7 +3329,14 @@ function dessinerMoniteur() {
     const cible = positionCible();
     const dans = cible && cible.plan.id === plan.id ? cible.dans : 0;
     const instant = entreeDe(plan) + dans;
-    source = lecture.demande
+    /* Au tout premier instant d'une lecture, il n'y a aucune image tenue : le
+       moniteur est noir le temps que le premier plan se décode — un tiers de
+       seconde sur une machine de bureau, bien plus sur un téléphone, et c'est
+       la première chose qu'on voit en appuyant sur lecture. Là, et là
+       seulement, une imagette floue vaut mieux que du noir. Ensuite, l'image
+       tenue prend le relais et la réserve redevient inutile. */
+    const rienDuTout = !derniereImage.toile.width;
+    source = lecture.demande && !rienDuTout
       ? imagetteLaPlusProche(bandeDe(plan), instant, 0.4)
       : imagetteLaPlusProche(bandeDe(plan), instant, 1.5)
         || bandeDe(plan).couverture?.image
@@ -3400,7 +3408,15 @@ function dessinerMoniteur() {
 // Combien de temps une image peut survivre à son plan, le temps que le suivant
 // arrive. Au-delà, ce n'est plus une transition, c'est un mensonge.
 const TENUE_TRANSITION = 700;
-const derniereImage = { plan: null, quand: 0, toile: document.createElement("canvas") };
+/* « quand » date la dernière copie, « vivante » le dernier instant où le
+   moniteur avait vraiment une image du lecteur.
+
+   La tenue se comptait depuis la copie, faite au plus une fois par demi-seconde
+   pendant la lecture : au moment où l'image manquait, la moitié du budget de
+   sept cents millisecondes était déjà consommée sans que rien ne se soit passé.
+   Elle se compte maintenant depuis le moment où l'image a été perdue, ce qui
+   est le seul instant qui ait un sens. */
+const derniereImage = { plan: null, quand: 0, vivante: 0, toile: document.createElement("canvas") };
 
 /* --- pellicule ---------------------------------------------------------
    La bande d'images d'un banc de montage montre ce qu'il y a sous le curseur,
@@ -3607,6 +3623,19 @@ const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" 
 
 function servirImagettes() {
   if (sondeOccupee) return;
+  /* Pendant la lecture, la sonde se tait.
+
+     Elle décode de la vidéo, comme les deux lecteurs du montage — et un
+     téléphone n'a que quelques décodeurs. Mesuré sur une capture d'écran de
+     l'application : quatre-vingt-huit plans tous rapatriés, et pourtant une
+     seconde et demie d'écran noir au démarrage, puis du noir à presque chaque
+     coupe. La tête de lecture elle-même s'arrêtait — 00:00.3, 00:00.4, 00:00.4
+     pendant une seconde et demie de temps réel : ce n'est pas un fichier qui
+     manque, c'est le fil d'exécution qui est pris ailleurs.
+
+     Les imagettes servent à se repérer quand on cherche ; elles ne servent à
+     rien pendant qu'on regarde. Elles attendent donc la fin de la lecture. */
+  if (lecture.demande) return;
   /* L'ordre de service compte autant que la capture elle-même.
 
      La file se servait par la fin, et les colonnes sont demandées de gauche à
@@ -3852,8 +3881,17 @@ function ordonnancerBandes() {
 const RYTHME_BANDES = 250;
 let bandesPrevues = null;
 let bandesDerniere = 0;
+let bandesEnAttente = false;
 
 function redessinerBandes() {
+  /* Pendant la lecture, la pellicule ne se repeint pas.
+
+     Elle ne change pas — seul le curseur avance, et il est dessiné ailleurs.
+     Or repeindre quatre-vingt-huit blocs coûte cher sur un téléphone, et ce
+     coût tombe précisément dans la boucle qui doit produire l'image suivante.
+     On note qu'il y avait quelque chose à faire, et on le fera à l'arrêt. */
+  if (lecture.demande) { bandesEnAttente = true; return; }
+
   const maintenant = performance.now();
   const reste = RYTHME_BANDES - (maintenant - bandesDerniere);
   if (reste > 0) {
@@ -4967,6 +5005,9 @@ function basculerLecture() {
     reveillerMoniteur();
     // La réserve, mise en sourdine pendant la lecture, reprend ici.
     lancerImport();
+    // Et la pellicule peut se remplir, puis se repeindre, de nouveau.
+    servirImagettes();
+    if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); }
     return;
   }
   /* Rien de prêt, rien à lire.
@@ -4988,6 +5029,10 @@ function basculerLecture() {
   }
 
   lecture.demande = true;
+  /* La sonde à imagettes lâche son décodeur avant qu'on démarre : sur un
+     téléphone, il n'y en a qu'une poignée, et les deux lecteurs du montage en
+     ont besoin tout de suite. */
+  libererSondeBande();
   // Arrivé au bout, « lecture » reprend depuis le début : sinon le bouton ne
   // ferait rien, ou pire, le lecteur repartirait sur ce qui a été coupé.
   if (lecture.position >= total(projet) - IMAGE) {
@@ -5046,6 +5091,8 @@ function arreter() {
   arreterSon();
   // La réserve reprend : elle se taisait pour laisser le lien à l'aperçu.
   lancerImport();
+  servirImagettes();
+  if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); }
 }
 
 // La tête suit le doigt à la milliseconde : la position du montage est tenue
