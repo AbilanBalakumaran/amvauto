@@ -5,7 +5,7 @@
   "description": "Propose des rushs sakuga exploitables pour monter un AMV, à partir d'un nom d'animé.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "node tools/stamp.mjs && wrangler deploy"
+    "deploy": "node tools/stamp.mjs && npx wrangler deploy"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

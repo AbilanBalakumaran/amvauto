@@ -10,11 +10,17 @@ const version =
   `${deuxChiffres(maintenant.getUTCDate())} ${deuxChiffres(maintenant.getUTCHours())}:` +
   `${deuxChiffres(maintenant.getUTCMinutes())}`;
 
+/* On vérifie que le motif existe, pas que le contenu a changé.
+
+   La garde d'avant confondait deux choses très différentes : « la marque est
+   introuvable, ce fichier n'est pas estampillable » et « la marque porte déjà
+   cette valeur ». Or deux déploiements dans la même minute produisent le même
+   horodatage : le second échouait donc en annonçant une estampille introuvable,
+   alors que tout allait bien. */
 const remplacer = (chemin, motif, remplacement) => {
   const avant = readFileSync(chemin, "utf8");
-  const apres = avant.replace(motif, remplacement);
-  if (avant === apres) throw new Error(`estampille introuvable dans ${chemin}`);
-  writeFileSync(chemin, apres);
+  if (!motif.test(avant)) throw new Error(`estampille introuvable dans ${chemin}`);
+  writeFileSync(chemin, avant.replace(motif, remplacement));
 };
 
 remplacer("worker/src/version.js", /export const VERSION = "[^"]*";/, `export const VERSION = "${version}";`);

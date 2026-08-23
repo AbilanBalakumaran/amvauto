@@ -109,6 +109,17 @@ qui prend la main aussitôt et fait recharger la page. Le nom du cache porte l'h
 posé par `tools/stamp.mjs`, donc **aucun numéro à incrémenter à la main** — l'oublier une
 fois figerait l'application chez l'utilisateur.
 
+> **Déployer passe obligatoirement par `npm run deploy`**, jamais par `wrangler deploy`
+> seul : c'est le script npm qui appelle `tools/stamp.mjs` avant de publier. L'oubli ne
+> casse rien de visible et c'est bien le problème — plusieurs déploiements de suite ont été
+> publiés avec un `sw.js` inchangé à l'octet près. Aucun nouveau service worker ne
+> s'installait, donc aucun rechargement automatique et aucun renouvellement du cache de la
+> coquille ; l'application continuait de recevoir le code neuf, mais seulement parce que
+> les pages sont servies par le réseau d'abord. Le bandeau « nouvelle version », lui, ne
+> pouvait plus se déclencher : page et Worker portaient le même horodatage périmé, donc
+> ils étaient d'accord. Et l'ordre compte : on déploie, **puis** on valide les fichiers
+> estampillés, pour que le commit corresponde exactement à ce qui est en ligne.
+
 La page est servie en `no-store` et le Worker s'exécute avant les fichiers statiques
 (`run_worker_first`), sans quoi cet en-tête ne s'appliquerait jamais. Page et Worker portent
 le même horodatage, posé par `tools/stamp.mjs` au déploiement : quand ils diffèrent, la page
