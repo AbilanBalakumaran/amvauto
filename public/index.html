@@ -3279,6 +3279,24 @@ function dessinerMoniteur() {
 
   if (source) {
     // une imagette de défilement a déjà été retenue
+  } else if (lecture.demande && lecture.bascule
+             && performance.now() - lecture.bascule.quand < RELAIS_SORTANT
+             && video && video.currentTime <= lecture.bascule.depart + 0.01
+             && lecture.bascule.sortant && !lecture.bascule.sortant.paused
+             && lecture.bascule.sortant.readyState >= 2 && lecture.bascule.sortant.videoWidth) {
+    /* Le plan qui s'en va, tant que celui qui arrive n'a rien décodé.
+
+       C'est la réponse à « ça marque une pause à chaque bloc ». Le nouveau
+       lecteur met une centaine de millisecondes à produire sa première image ;
+       jusqu'ici le moniteur répétait la dernière image du plan précédent — pas
+       de noir, mais un arrêt sur image bien visible sur une coupe d'une
+       seconde. L'ancien lecteur, lui, est encore en train de jouer : le montrer
+       cent millisecondes de plus ne fige rien du tout.
+
+       La coupe arrive donc un souffle en retard, et ne prend aucun retard sur
+       la musique : l'horloge du montage n'attend personne, seul l'affichage
+       patiente. */
+    source = lecture.bascule.sortant;
   } else if (video && video.readyState >= 2 && video.videoWidth
              && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - 0.15)) {
     // La dernière condition écarte une image située avant le point d'entrée :
@@ -4072,18 +4090,42 @@ function preparerSuivant(index) {
   // lecteur devient visible immédiatement, et il montrait jusqu'ici les
   // premières images du fichier — celles-là mêmes qui avaient été coupées — le
   // temps que la position s'applique.
-  /* Garé pile sur son point d'entrée.
+  /* Garé un peu avant son point d'entrée, et lancé en silence juste avant la
+     coupe : à la bascule, il est déjà en mouvement et n'a rien à démarrer.
 
-     On a essayé de le garer un peu avant et de le lancer en silence juste
-     avant la coupe, pour qu'il soit déjà en mouvement à la bascule. Mesuré,
-     c'était pire : vingt-six interruptions au lieu de vingt et une, et la plus
-     longue passait de cent à cent soixante-six millisecondes. Un lecteur lancé
-     en avance dérive de quelques dizaines de millisecondes, et la bascule doit
-     alors le replacer — un déplacement coûte plus cher que le démarrage qu'on
-     voulait éviter. */
-  const garer = () => demanderPosition(attente, entreeDe(plan));
+     Un premier essai avait échoué et rendu les choses pires. La cause n'était
+     pas l'avance elle-même mais ce qui suivait : la bascule replaçait le
+     lecteur sur son point d'entrée exact, et ce déplacement coûtait plus cher
+     que le démarrage qu'on voulait éviter. Un lecteur déjà lancé dérive de
+     quelques dizaines de millisecondes — invisible — alors qu'un déplacement se
+     voit. On ne le replace donc plus quand il roule déjà au bon endroit. */
+  const avance = Math.min(AVANCE_BASCULE, entreeDe(plan));
+  attente.dataset.avance = String(avance);
+  attente.dataset.amorce = "";
+  const garer = () => demanderPosition(attente, entreeDe(plan) - avance);
   attente.addEventListener("loadedmetadata", garer, { once: true });
   if (attente.readyState >= 1) garer();
+}
+
+/* De combien on lance le lecteur en attente avant la coupe. Assez pour qu'il
+   ait produit une image et rempli son tampon, assez peu pour qu'un plan très
+   court ne soit pas entamé. */
+const AVANCE_BASCULE = 0.35;
+
+/* Combien de temps le plan sortant continue de jouer après la bascule. Le temps
+   que le suivant présente sa première image, pas davantage. */
+const RELAIS_SORTANT = 400;
+
+/* Lancer le plan suivant juste avant qu'on en ait besoin, en sourdine : c'est
+   la piste son du montage qu'on entend, jamais celle des rushs. */
+function amorcerSuivant(reste) {
+  if (!lecture.demande || reste > AVANCE_BASCULE) return;
+  const attente = elementAttente();
+  if (!attente || attente.dataset.amorce === "oui" || !attente.dataset.plan) return;
+  if (attente.readyState < 2) return;
+  attente.dataset.amorce = "oui";
+  attente.muted = true;
+  attente.play().catch(() => { attente.dataset.amorce = ""; });
 }
 
 // Plein écran à gauche, lecture au centre, annuler et rétablir à droite.
@@ -4899,12 +4941,21 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   const attente = elementAttente();
   if (video.dataset.plan !== plan.id && attente?.dataset.plan === plan.id
       && attente.dataset.source === sourceDe(plan)) {
-    // Le sortant est arrêté et mis en sourdine : sans ça deux lecteurs
-    // pourraient se faire entendre en même temps.
-    video.pause();
+    /* Le sortant est mis en sourdine tout de suite — deux lecteurs qui
+       s'entendent en même temps, jamais — mais il continue de jouer un court
+       instant. C'est lui que le moniteur montre pendant que le nouveau produit
+       sa première image : une coupe qui arrive un souffle en retard se voit
+       infiniment moins qu'un arrêt sur image. Il s'arrête tout seul juste
+       après, ou plus tôt si on lui donne un autre plan à préparer. */
     video.muted = true;
+    const sortant = video;
+    setTimeout(() => { if (sortant !== elementActif()) sortant.pause(); }, RELAIS_SORTANT);
     lecture.actif = lecture.actif ? 0 : 1;
     video = elementActif();
+    /* On note l'instant de la bascule et la position de départ du nouveau
+       lecteur : tant qu'il n'a pas avancé, c'est qu'il n'a encore rien décodé,
+       et c'est le sortant qu'il faut montrer. */
+    lecture.bascule = { quand: performance.now(), depart: video.currentTime, sortant };
   }
   const source = sourceDe(plan);
   const change = video.dataset.plan !== plan.id || video.dataset.source !== source;
@@ -4929,9 +4980,17 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     video.src = source;
   }
   video.muted = false;
-  // La position visée est dans le fichier : le décalage est compté depuis le
-  // point d'entrée, pas depuis le début du média.
-  viser(video, entreeDe(plan) + decalage, plan);
+  /* Un lecteur déjà lancé et arrivé au bon endroit n'est pas replacé.
+
+     C'est là que se jouait tout l'intérêt de l'amorce : le replacer annulait
+     l'avance et coûtait le déplacement qu'on cherchait à éviter. Un quart de
+     seconde de tolérance — bien plus que la dérive réelle, bien moins qu'une
+     coupe — et l'enchaînement se fait sans rien redémarrer ni rien déplacer. */
+  const vise = entreeDe(plan) + decalage;
+  const roule = !change && !video.paused && video.readyState >= 2
+    && Math.abs(video.currentTime - vise) < 0.25;
+  if (roule) oublierPosition(video);
+  else viser(video, vise, plan);
   const demarrer = () => {
     /* Ce rappel arrive quand le fichier est prêt — parfois longtemps après
        qu'on a été chercher ce plan. Entre-temps l'utilisateur a pu appuyer sur
@@ -6137,6 +6196,8 @@ function suivreTete() {
       // surveille donc aussi la position du fichier, pas seulement l'horloge —
       // sur le dernier plan, rien n'arrêtait le lecteur et il enchaînait sur la
       // partie retirée.
+      // Le plan suivant se met en route avant qu'on ait à le montrer.
+      amorcerSuivant(fin - lecture.position);
       const auBout = lecture.position >= fin - 0.02
         || (video && !video.paused && video.dataset.plan === plan?.id
             && video.currentTime >= sortieDe(plan) - 0.02);

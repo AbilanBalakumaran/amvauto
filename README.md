@@ -1458,6 +1458,58 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+### La pause à chaque bloc
+
+Deuxième capture, après les correctifs. Mesurée sur la seule zone du moniteur :
+
+```
+avant   63 relevés · 20 noirs (32 %)  dont 1,4 s de noir d'affilée au démarrage
+après   58 relevés ·  1 noir  (2 %)   la toute première image, avant le départ
+```
+
+Le noir avait disparu, mais pas la sensation de pause : « quand on passe d'un
+bloc à un autre, y a une pause comme si l'autre devait se charger ». C'est juste,
+et le moniteur en était la cause.
+
+Le nouveau lecteur met une centaine de millisecondes à produire sa première
+image. Pendant ce temps, le moniteur répétait la **dernière image du plan
+précédent** : pas de noir, mais un arrêt sur image de cent millisecondes sur une
+coupe qui en dure mille. Or l'ancien lecteur, lui, **est encore en train de
+jouer**. Le montrer cent millisecondes de plus ne fige rien du tout.
+
+Trois changements, dans cet ordre :
+
+**Le sortant ne s'arrête plus net.** Il est mis en sourdine à la bascule — deux
+lecteurs qui s'entendent, jamais — mais il continue de jouer quatre centièmes de
+seconde de plus, le temps que le suivant démarre.
+
+**Le moniteur montre le sortant tant que l'entrant n'a rien décodé.** La
+condition est précise : la bascule est fraîche, et la position du nouveau lecteur
+n'a pas encore bougé de son point de départ. La coupe arrive donc un souffle en
+retard, et ne prend aucun retard sur la musique — l'horloge du montage n'attend
+personne, seul l'affichage patiente.
+
+**Le lecteur en attente est lancé avant la coupe**, garé trois dixièmes avant son
+point d'entrée. Ce même essai avait échoué la première fois et rendu les choses
+pires : la cause n'était pas l'avance mais ce qui suivait — la bascule replaçait
+le lecteur sur son point d'entrée exact, et ce déplacement coûtait plus cher que
+le démarrage qu'on voulait éviter. Un lecteur déjà lancé dérive de quelques
+dizaines de millisecondes, ce qui ne se voit pas ; un déplacement, si. On ne le
+replace donc plus quand il roule déjà au bon endroit.
+
+```
+                          avant    après
+interruptions > 60 ms       20       12
+au-dessus de 100 ms          2        0
+la plus longue           104 ms    97 ms
+```
+
+Quarante pour cent d'à-coups en moins et plus aucun dépassement de cent
+millisecondes. Ce n'est pas encore un flux d'une seule traite : quatre-vingt-huit
+fichiers joués bout à bout dans un navigateur ont un coût de passage qu'aucun
+réglage ne supprime. Pour une lecture sans le moindre à-coup, il reste le
+rendu — un seul fichier, qui s'ouvre dans le panneau d'export.
+
 ## Ce que montre une capture d'écran
 
 Une capture de six secondes, prise sur l'appareil, en dit plus qu'un rapport.
