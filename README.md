@@ -1458,6 +1458,58 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+### Un ou logique dont le second terme est vrai
+
+« J'appuie sur pause et ça ne s'arrête pas. » Deux causes, trouvées en lisant.
+
+**La musique n'était pas arrêtée.** Le branchement de mise en pause arrêtait le
+lecteur vidéo et oubliait la bande son : l'image se figeait, la chanson
+continuait. Le lecteur en attente n'était pas arrêté non plus — il peut avoir
+été lancé pour préparer la bascule, et rester seul à jouer.
+
+**Et surtout, ceci :**
+
+```js
+poserPlan(lecture.index + 1, 0, lecture.demande || true);
+```
+
+`lecture.demande || true` vaut **toujours vrai**. Le plan suivant s'enchaînait
+donc en lecture même quand personne n'avait demandé à lire — et un fichier qui
+finissait d'arriver après un appui sur pause relançait la lecture tout seul. Sur
+cent soixante-quinze plans rapatriés en 4G, il en arrive un toutes les quelques
+secondes.
+
+Le rappel qui démarre un plan vérifie maintenant deux choses avant de jouer : que
+la lecture est toujours demandée, et que la tête est toujours sur ce plan-là. Il
+arrive parfois longtemps après qu'on est allé chercher ce plan, et entre-temps
+tout a pu changer.
+
+### Plus de plans noirs pendant que les fichiers arrivent
+
+Lancer l'aperçu avant la fin des téléchargements donnait une succession de plans
+noirs : le lecteur laisse à la file d'import les fichiers qu'elle rapatrie déjà —
+c'est ce qui a supprimé les téléchargements avortés — et le moniteur ne tenait la
+dernière image que sept cents millisecondes.
+
+Cette borne saute dans un cas précis : **quand on sait pourquoi l'image manque**.
+Un fichier encore en route n'est pas un accident, et du noir n'apprendrait rien
+de plus que le bandeau ne dit déjà. L'image précédente est donc tenue jusqu'à ce
+que le plan arrive.
+
+Et si **rien** n'est encore prêt, l'aperçu refuse de commencer plutôt que
+d'avancer sur du vide :
+
+```
+1. rien de prêt
+   « Aucun plan n'est encore sur l'appareil : il n'y a rien à montrer.
+     Les fichiers arrivent — le bandeau en bas dit combien il en reste. »
+   la tête n'avance pas
+
+2. quatre plans prêts sur quatorze, en lecture
+   luminances : 163 166 166 166 166 166 166 166 166 166
+   ✔ jamais de noir
+```
+
 ### Le téléphone chauffait pour repeindre ce qui ne bougeait pas
 
 « La prévisualisation fait chauffer le téléphone. » En mesurant le temps de

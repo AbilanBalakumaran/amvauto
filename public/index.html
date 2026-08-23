@@ -3201,7 +3201,8 @@ function dessinerMoniteur() {
   } else if (derniereImage.plan && derniereImage.plan === plan?.id && derniereImage.toile.width) {
     source = derniereImage.toile;
   } else if (derniereImage.toile.width
-             && performance.now() - derniereImage.quand < TENUE_TRANSITION) {
+             && (performance.now() - derniereImage.quand < TENUE_TRANSITION
+               || (plan && laisserAuReseau(plan)))) {
     /* Le plan a changé et le nouveau n'a pas encore d'image : on tient la
        dernière décodée, quel que soit son plan d'origine.
 
@@ -3211,7 +3212,13 @@ function dessinerMoniteur() {
        l'arrivée n'est pas toujours à l'heure : trouer l'aperçu de noir à chaque
        retard le rend illisible, alors qu'une image tenue une demi-seconde se
        lit comme une coupe un peu lente. Au-delà, le noir redevient honnête —
-       il dit qu'il manque quelque chose. */
+       il dit qu'il manque quelque chose.
+
+       Sauf dans un cas, où la tenue n'a plus de borne : quand on sait pourquoi
+       l'image manque, parce que le fichier de ce plan est encore en route. Là,
+       du noir n'apprendrait rien de plus que le bandeau ne dit déjà, et une
+       image tenue reste lisible. C'est ce qui remplace les « plans noirs » d'un
+       aperçu lancé avant la fin des téléchargements. */
     source = derniereImage.toile;
   } else if (plan) {
     /* Aucune image du lecteur : on puise dans la réserve du plan, à la position
@@ -4791,6 +4798,12 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   // point d'entrée, pas depuis le début du média.
   viser(video, entreeDe(plan) + decalage, plan);
   const demarrer = () => {
+    /* Ce rappel arrive quand le fichier est prêt — parfois longtemps après
+       qu'on a été chercher ce plan. Entre-temps l'utilisateur a pu appuyer sur
+       pause, ou la tête a pu partir ailleurs : on ne relance donc que si la
+       lecture est toujours demandée, et toujours sur ce plan-ci. */
+    if (!lecture.demande) return;
+    if (projetActif()?.plans[lecture.index]?.id !== plan.id) return;
     if (enchainer || lecture.jouant) {
       video.play().catch(() => {
         // Sans cette garde, une lecture interrompue par nos soins — parce qu'on
@@ -4821,7 +4834,14 @@ function planSuivant() {
   if (lecture.index + 1 < projet.plans.length) {
     // Le plan suivant est déjà chargé sur le lecteur en attente : la bascule
     // se fait dans poserPlan, sans temps mort.
-    poserPlan(lecture.index + 1, 0, lecture.demande || true);
+    /* « lecture.demande || true » valait toujours vrai — un ou logique dont le
+       second terme est une constante. Le plan suivant s'enchaînait donc en
+       lecture même quand personne n'avait demandé à lire, et surtout : un
+       fichier qui finissait d'arriver après un appui sur pause relançait la
+       lecture tout seul. Sur cent soixante-quinze plans rapatriés en 4G, il en
+       arrive un toutes les quelques secondes — d'où un montage qui « ne s'arrête
+       pas » quand on appuie sur le bouton. */
+    poserPlan(lecture.index + 1, 0, lecture.demande);
   } else {
     arreter();
     poserPlan(0, 0);
@@ -4833,16 +4853,43 @@ function basculerLecture() {
   const projet = projetActif();
   if (!video || !projet) return;
   if (lecture.demande) {
+    /* Tout s'arrête, pas seulement l'image.
+
+       La musique continuait de jouer après un appui sur pause : ce branchement
+       arrêtait le lecteur vidéo et oubliait la bande son. À l'usage, on appuie,
+       l'image se fige, la chanson continue — et l'on croit que le bouton ne fait
+       pas son travail. Le lecteur en attente est arrêté lui aussi : il peut
+       avoir été lancé pour préparer la bascule, et lui seul resterait à jouer. */
     lecture.demande = false;
     lecture.jouant = false;
     lecture.horloge = null;
     video.pause();
+    elementAttente()?.pause();
+    arreterSon();
     majTransport();
     reveillerMoniteur();
     // La réserve, mise en sourdine pendant la lecture, reprend ici.
     lancerImport();
     return;
   }
+  /* Rien de prêt, rien à lire.
+
+     Appuyer sur lecture alors qu'aucun plan n'est encore sur l'appareil donnait
+     une tête qui avance sur un écran noir : le montage semblait cassé, alors
+     qu'il n'était simplement pas encore arrivé. On refuse donc de commencer, et
+     l'on dit pourquoi — le bandeau donne déjà le compte et l'attente. */
+  const dispo = projet.plans.some((autre) => autre.youtube || !mediaDe(autre) || estLocal(autre));
+  if (!dispo) {
+    const vide = $("ecran-vide");
+    if (vide) {
+      vide.textContent = "Aucun plan n'est encore sur l'appareil : il n'y a rien à montrer. "
+        + "Les fichiers arrivent — le bandeau en bas dit combien il en reste.";
+      vide.hidden = false;
+      setTimeout(() => { if (vide) vide.hidden = true; }, 4000);
+    }
+    return;
+  }
+
   lecture.demande = true;
   // Arrivé au bout, « lecture » reprend depuis le début : sinon le bouton ne
   // ferait rien, ou pire, le lecteur repartirait sur ce qui a été coupé.
@@ -4896,7 +4943,9 @@ function arreter() {
   lecture.horloge = null;
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   lecture.boucle = null;
+  // Les deux lecteurs : celui qui montre, et celui qui préparait la suite.
   elementActif()?.pause();
+  elementAttente()?.pause();
   arreterSon();
   // La réserve reprend : elle se taisait pour laisser le lien à l'aperçu.
   lancerImport();
