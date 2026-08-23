@@ -2679,6 +2679,61 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Quarante-trois minutes annoncées, et deux boutons de lecture
+
+Deuxième retour d'appareil, sur un vrai montage : quatre-vingt-huit plans, 456 Mo
+de rushs, une minute quarante-trois. La barre annonçait **trois pour cent, encore
+43:40** — inutilisable. Et des contrôles de lecture flottaient sur l'image, en
+plus de ceux du transport : deux boutons de lecture pour un seul montage.
+
+**Les contrôles du plein écran n'étaient liés à rien.** Il suffisait que quelque
+chose, n'importe quoi, passe en plein écran pour qu'ils soient posés sur le
+moniteur — sur iPhone, c'est le lecteur vidéo du système qui les déclenchait, et
+ils restaient ensuite collés là. Ils vérifient maintenant que le plein écran est
+bien le nôtre, et un filet les retire à chaque rafraîchissement du transport
+lorsqu'ils n'ont plus lieu d'être. Vérifié dans les deux sens : un autre élément
+passé en plein écran ne les fait plus apparaître, et des contrôles laissés sur
+l'image disparaissent au premier geste.
+
+**Et la fabrication, elle, attendait.** Une image par seconde environ, soit très
+exactement le délai d'abandon de l'attente. Trois causes, dans l'ordre
+d'importance :
+
+- **Un lecteur qu'on ne voit pas est un lecteur qu'on ralentit.** Le lecteur du
+  rendu faisait un pixel sur un et était presque transparent : Safari ralentit le
+  rendu des vidéos invisibles, et c'est justement sa vitesse qu'on lui demandait.
+  Il occupe désormais le moniteur, à taille réelle, pendant la fabrication — ce
+  qui a l'avantage de montrer le montage en train de se construire plutôt qu'un
+  pourcentage.
+- **L'attente d'une image n'était pas bornée.** Elle pouvait durer une seconde
+  et deux dixièmes, à chaque image. Elle est maintenant calculée sur ce que
+  l'image devrait coûter, avec un plancher de cent quarante millisecondes :
+  passé ce délai on prend l'image qu'on a. Tenue une fraction de seconde dans un
+  aperçu, elle ne se voit guère ; une fabrication qui annonce quarante-trois
+  minutes ne sert à personne.
+- **L'allure de lecture s'adapte.** Quatre fois la vitesse normale sur un
+  ordinateur, oui ; sur un téléphone qui décode du 720p, non. Trois retards de
+  suite et l'on descend d'un cran, vingt images dans les temps et l'on retente
+  plus vite.
+
+S'y ajoute une économie de moitié : **l'aperçu se fabrique à douze images par
+seconde**, pas vingt-quatre. Il sert à juger l'enchaînement et le mouvement, pas
+à livrer — et l'animation japonaise est le plus souvent dessinée sur deux ou
+trois images, si bien que douze par seconde est très exactement la cadence de ce
+qu'on regarde. L'export, lui, reste à vingt-quatre.
+
+```
+                         pour 25,6 s de montage
+processeur ×1                        10 s
+processeur ×4 (un téléphone)   26 s → 14 s
+processeur ×8 (le pire cas)          43 s
+lecture impossible (repli)           10 s
+```
+
+Le pire cas mesuré vaut 1,7 fois la durée du montage. Ce qui est borné, désormais,
+c'est le principe : aucune image ne peut coûter plus qu'un délai fixe, donc
+aucune fabrication ne peut s'emballer.
+
 ### Fabriquer en moins de temps qu'il n'en dure
 
 Le premier jet mettait quarante-six secondes pour vingt-cinq secondes de

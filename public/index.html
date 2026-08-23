@@ -652,6 +652,20 @@ main {
   border: 1px solid var(--trait);
 }
 .moniteur { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
+/* Le lecteur qui fabrique l'aperçu, lui, se montre : il occupe le moniteur le
+   temps de la fabrication. Un navigateur ralentit le rendu d'une vidéo qu'on ne
+   voit pas, et c'est justement sa vitesse qu'on lui demande ici. */
+.lecteur-rendu {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  z-index: 5;
+  pointer-events: none;
+}
+
 /* Les lecteurs du vivier alimentent le moniteur : ils ne sont jamais montrés, mais
    restent dans le document — un média retiré du DOM est déchargé. */
 .lecteur-cache {
@@ -4597,13 +4611,21 @@ async function construireFluide(projet) {
       largeur: 640, hauteur: 360,
       debit: Math.round(5e6 * ((640 * 360) / (1280 * 720))),
       avecSon: false,
+      /* Douze images par seconde, pas vingt-quatre.
+
+         L'aperçu sert à juger l'enchaînement et le mouvement, pas à livrer. Or
+         chaque image coûte un décodage : en demander deux fois moins divise la
+         fabrication par deux. Et l'animation japonaise est le plus souvent
+         dessinée sur deux ou trois images — douze par seconde, c'est très
+         exactement la cadence de ce qu'on regarde. L'export, lui, reste à
+         vingt-quatre. */
+      cadence: 12,
       /* L'aperçu se fabrique en laissant jouer les rushs, pas en les
          parcourant : c'est ce qui fait la différence entre une fabrication plus
          longue que le montage et une fabrication plus courte. L'export, lui,
          reste sur le parcours image par image — il vise l'exactitude, pas la
          vitesse. */
       parLecture: true,
-      rythme: 4,
       arrete: () => fluide.arret,
       dire: (pourcent, reste) => majBandeauFluide(
         `Aperçu fluide — ${pourcent} %${reste ? `, encore ${minutage(reste)}` : ""}`
@@ -4672,10 +4694,25 @@ function quitterPleinEcranCss() {
   retirerTransportPlein();
 }
 
+/* Sommes-nous vraiment en plein écran, et sur notre écran à nous ?
+
+   La question n'était pas posée : il suffisait que quelque chose, n'importe
+   quoi, soit passé en plein écran pour que les contrôles flottants soient
+   posés sur le moniteur. Sur iPhone, c'est le lecteur vidéo du système qui les
+   déclenchait — et ils restaient ensuite collés sur l'image, en petit format,
+   par-dessus le montage : deux boutons de lecture pour un seul montage. */
+const enPleinEcran = () => {
+  const ecran = $("ecran");
+  if (!ecran) return false;
+  if (document.body.classList.contains("ecran-plein")) return true;
+  const natif = document.fullscreenElement || document.webkitFullscreenElement;
+  return Boolean(natif) && (natif === ecran || ecran.contains(natif));
+};
+
 // Le plein écran natif (ordinateur) mérite les mêmes contrôles que le repli CSS.
 for (const nom of ["fullscreenchange", "webkitfullscreenchange"]) {
   document.addEventListener(nom, () => {
-    if (document.fullscreenElement || document.webkitFullscreenElement) poserTransportPlein();
+    if (enPleinEcran()) poserTransportPlein();
     else retirerTransportPlein();
   });
 }
@@ -4686,7 +4723,7 @@ let effacementPlein = null;
 
 function poserTransportPlein() {
   const ecran = $("ecran");
-  if (!ecran || $("plein-transport")) return;
+  if (!ecran || $("plein-transport") || !enPleinEcran()) return;
 
   const barre = document.createElement("div");
   barre.className = "plein-transport";
@@ -4732,6 +4769,16 @@ function retirerTransportPlein() {
   effacementPlein = null;
   $("ecran")?.removeEventListener("pointerdown", reveillerTransportPlein);
   $("plein-transport")?.remove();
+  $("sortie-plein")?.remove();
+}
+
+/* Filet : des contrôles de plein écran hors du plein écran n'ont pas lieu
+   d'être, quelle qu'en soit la cause. On le vérifie à chaque rafraîchissement
+   du transport, ce qui coûte une comparaison et répare tous les chemins — y
+   compris ceux qu'on n'a pas prévus. */
+function verifierTransportPlein() {
+  if (enPleinEcran()) return;
+  if ($("plein-transport") || $("sortie-plein")) retirerTransportPlein();
 }
 
 function reveillerTransportPlein() {
@@ -6690,6 +6737,7 @@ function positionCourante() {
 
 function majTransport() {
   const projet = projetActif();
+  verifierTransportPlein();
   if (!projet || !$("timecode")) return;
   const position = positionCourante();
   // Zoomé au-delà du dixième, la tête bouge sans que le timecode change : il
@@ -7860,7 +7908,7 @@ async function choisirCodec(liste, config) {
    Laisser le lecteur jouer, au contraire, décode chaque image une fois et une
    seule. On ne le déplace donc que pour entrer dans un plan ; à l'intérieur, on
    le laisse courir et on prend au passage l'image de chaque instant voulu. */
-async function avancerVers(video, cible, rythme) {
+async function avancerVers(video, cible, allure) {
   /* Et si la lecture ne prend pas, on repasse aux déplacements pour de bon.
 
      Un navigateur peut refuser de jouer, ou jouer sans avancer : sur un appareil
@@ -7883,12 +7931,19 @@ async function avancerVers(video, cible, rythme) {
     return;
   }
   if (ecart <= 0.001) return;
-  if (video.paused) {
-    video.playbackRate = rythme;
-    try { await video.play(); } catch { await attendreImage(video, cible); return; }
+  if (video.paused || video.playbackRate !== allure.taux) {
+    video.playbackRate = allure.taux;
+    if (video.paused) {
+      try { await video.play(); } catch { await attendreImage(video, cible); return; }
+    }
   }
   const depart = video.currentTime;
-  const limite = performance.now() + 1200;
+  /* On n'attend jamais longtemps une image. Passé ce délai, on prend celle qu'on
+     a — une image tenue une fraction de seconde dans un aperçu ne se voit
+     guère, alors qu'une fabrication qui annonce quarante-trois minutes pour un
+     montage d'une minute quarante ne sert à personne. */
+  const patience = Math.max(140, (ecart / Math.max(1, allure.taux)) * 1000 * 1.6);
+  const limite = performance.now() + patience;
   while (video.currentTime < cible && !video.ended && performance.now() < limite) {
     /* L'attente d'une image ne peut jamais être la seule issue.
 
@@ -7907,10 +7962,28 @@ async function avancerVers(video, cible, rythme) {
     });
   }
   if (video.currentTime <= depart + 0.001 && !video.ended) {
-    // La lecture n'a pas bougé : ce navigateur ne veut pas d'elle ici.
+    // La lecture n'a pas bougé du tout : ce navigateur ne veut pas d'elle ici.
     video.dataset.sansLecture = "oui";
     video.pause();
     await attendreImage(video, cible);
+    return;
+  }
+  /* Le lecteur a-t-il tenu l'allure ? Trois retards de suite et l'on descend
+     d'un cran ; vingt images dans les temps et l'on retente plus vite. */
+  if (video.currentTime < cible) {
+    allure.avances = 0;
+    allure.retards += 1;
+    if (allure.retards >= 3 && allure.taux > 1) {
+      allure.taux = allure.taux > 2 ? 2 : 1;
+      allure.retards = 0;
+    }
+  } else {
+    allure.retards = 0;
+    allure.avances += 1;
+    if (allure.avances >= 20 && allure.taux < 4) {
+      allure.taux = allure.taux < 2 ? 2 : 4;
+      allure.avances = 0;
+    }
   }
 }
 
@@ -8013,16 +8086,17 @@ function libererVivier() {
 }
 
 async function rendreImages(projet, reglages) {
-  const { largeur, hauteur, debit, avecSon, dire, arrete, parLecture, rythme } = reglages;
+  const { largeur, hauteur, debit, avecSon, dire, arrete, parLecture } = reglages;
+  const cadence = reglages.cadence || IMAGES_PAR_SECONDE;
   libererVivier();
   const codec = await choisirCodec(CODECS_VIDEO,
     { width: largeur, height: hauteur, bitrate: debit,
-      framerate: IMAGES_PAR_SECONDE, avc: { format: "avc" } });
+      framerate: cadence, avc: { format: "avc" } });
   if (!codec) return { echec: "codec" };
 
   const debuts = offsets(projet.plans);
   const longueur = total(projet);
-  const combien = Math.max(1, Math.round(longueur * IMAGES_PAR_SECONDE));
+  const combien = Math.max(1, Math.round(longueur * cadence));
   const echelle = 90000;
 
   const toile = document.createElement("canvas");
@@ -8039,7 +8113,17 @@ async function rendreImages(projet, reglages) {
      restait donc bloquée à un pour cent, chaque image attendant en vain les deux
      secondes de son garde-fou. */
   const lecteur = document.createElement("video");
-  lecteur.className = "lecteur-cache";
+  /* Et il est visible, en grand, sur le moniteur.
+
+     Un lecteur d'un pixel sur un, presque transparent, est un lecteur que le
+     navigateur estime inutile : Safari ralentit le rendu des vidéos qu'on ne
+     voit pas, et l'aperçu se fabriquait alors une image par seconde — quarante
+     -trois minutes annoncées pour un montage d'une minute quarante. À taille
+     réelle, il décode comme n'importe quelle vidéo qu'on regarde.
+
+     Et l'on regarde justement : le montage se construit sous les yeux, ce qui
+     vaut mieux qu'un pourcentage. */
+  lecteur.className = "lecteur-rendu";
   lecteur.muted = true;
   lecteur.setAttribute("muted", "");
   lecteur.defaultMuted = true;
@@ -8058,21 +8142,28 @@ async function rendreImages(projet, reglages) {
       const octets = new Uint8Array(bloc.byteLength);
       bloc.copyTo(octets);
       pisteVideo.echantillons.push({ octets, taille: octets.length,
-        duree: Math.round(echelle / IMAGES_PAR_SECONDE), cle: bloc.type === "key" });
+        duree: Math.round(echelle / cadence), cle: bloc.type === "key" });
     },
     error: (erreur) => { rendu.erreur = String(erreur); },
   });
-  encodeur.configure({ codec, width: largeur, height: hauteur, framerate: IMAGES_PAR_SECONDE,
+  encodeur.configure({ codec, width: largeur, height: hauteur, framerate: cadence,
     bitrate: debit,
     ...(codec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
 
   const depart = performance.now();
+  /* L'allure de lecture s'ajuste à ce que l'appareil sait tenir.
+
+     Quatre fois la vitesse normale sur un ordinateur, oui. Sur un téléphone qui
+     décode du 720p, non : le lecteur prend du retard sur chaque image, on
+     l'attend, et la fabrication s'effondre. On part donc vite et l'on ralentit
+     dès que le retard se répète — c'est toujours mieux que d'attendre. */
+  const allure = { taux: 4, retards: 0, avances: 0 };
 
   try {
     let planCourant = null;
     for (let i = 0; i < combien; i += 1) {
       if (arrete()) break;
-      const t = i / IMAGES_PAR_SECONDE;
+      const t = i / cadence;
       let index = debuts.findIndex((d, k) => t < d + duree(projet.plans[k]));
       if (index < 0) index = projet.plans.length - 1;
       const plan = projet.plans[index];
@@ -8095,7 +8186,7 @@ async function rendreImages(projet, reglages) {
 
       const dans = entreeDe(plan) + Math.max(0, t - (debuts[index] || 0));
       const vise = Math.min(dans, Math.max(0, (lecteur.duration || dans) - 0.02));
-      if (parLecture) await avancerVers(lecteur, vise, rythme || 2);
+      if (parLecture) await avancerVers(lecteur, vise, allure);
       else await attendreImage(lecteur, vise);
 
       ctx.fillStyle = "#000";
@@ -8107,10 +8198,10 @@ async function rendreImages(projet, reglages) {
         ctx.drawImage(lecteur, (largeur - l) / 2, (hauteur - h) / 2, l, h);
       }
       const image = new VideoFrame(toile, {
-        timestamp: Math.round((i * 1e6) / IMAGES_PAR_SECONDE),
-        duration: Math.round(1e6 / IMAGES_PAR_SECONDE),
+        timestamp: Math.round((i * 1e6) / cadence),
+        duration: Math.round(1e6 / cadence),
       });
-      encodeur.encode(image, { keyFrame: i % (IMAGES_PAR_SECONDE * 2) === 0 });
+      encodeur.encode(image, { keyFrame: i % (cadence * 2) === 0 });
       image.close();
 
       if (i % 12 === 0) {
