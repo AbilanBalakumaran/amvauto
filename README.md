@@ -1458,6 +1458,40 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+### « 0/175 » sur un projet déjà rapatrié
+
+Rouvrir un projet donnait l'impression que tout recommençait : le bandeau
+affichait « 0/175 plans sur l'appareil » et n'en bougeait plus. Mesuré, il ne se
+retirait **jamais** — alors qu'aucune connexion n'était ouverte.
+
+Les fichiers étaient bien là. Ils sont rangés par adresse, pas par projet : deux
+projets qui partagent un rush le partagent vraiment, et un rechargement complet
+ne redemande rien. Le défaut était ailleurs : **un fichier retrouvé dans la
+réserve ne déclenche aucun import**, donc rien ne prévenait l'interface qu'il
+est là.
+
+```
+                              avant      après
+bandeau retiré en             jamais     1,0 s
+réouverture d'un projet
+de soixante plans             —          0,7 s, aucun fichier rapatrié
+processeur dépensé            —          0,5 s
+```
+
+Deux précautions ont suivi, l'une et l'autre trouvées en mesurant :
+
+**Le rafraîchissement est étroit.** Prévenir l'interface avec le même chemin que
+la fin d'un import reconstruisait la piste entière et relançait le préchauffage
+des imagettes de tous les plans — cent soixante-quinze fois, dont un préchauffage
+en cent soixante-quinze fois cent soixante-quinze. Ici rien n'a été téléchargé :
+la piste n'a pas changé.
+
+**Le lecteur attend la réponse de la réserve.** À l'ouverture, la question « ce
+fichier est-il déjà là ? » se pose à tous les plans en même temps et met
+quelques dizaines de millisecondes à revenir. Pendant ce temps, le lecteur ne
+savait ni qu'il l'avait, ni que la file s'en occuperait : il le tirait du réseau.
+Trois téléchargements inutiles sur soixante plans rouverts, zéro maintenant.
+
 ## Aller vite ici, finir ailleurs
 
 Le but de l'outil s'est précisé : monter vite, puis **finir dans un vrai banc de

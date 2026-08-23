@@ -5407,16 +5407,40 @@ const laisserAuReseau = (plan) => {
   const adresse = mediaDe(plan);
   if (!adresse || estLocal(plan)) return false;
   if (importsRates.has(adresse)) return false;
+  // On ne sait pas encore si la réserve l'a : la question est posée.
+  if (enFouille.has(adresse)) return true;
   return importPrevu(plan);
 };
 const avancement = (plan) => enImport.get(mediaDe(plan));
 
+/* Les adresses dont on est en train de fouiller la réserve.
+
+   À l'ouverture d'un projet, la question « ce fichier est-il déjà là ? » se pose
+   à tous les plans en même temps, et la réponse met quelques dizaines de
+   millisecondes. Pendant ce temps, le lecteur ne sait pas encore qu'il l'a, ni
+   que la file va s'en occuper : il le tirait donc du réseau. Trois
+   téléchargements inutiles sur soixante plans rouverts — sur cent
+   soixante-quinze, une dizaine. On les évite en disant simplement : « attends,
+   je regarde ». */
+const enFouille = new Set();
+
 async function preparerLocal(plan) {
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube || locales.has(adresse)) return;
-  const garde = await lireBase(adresse);
+  enFouille.add(adresse);
+  const garde = await lireBase(adresse).finally(() => enFouille.delete(adresse));
   if (garde instanceof Blob) {
     locales.set(adresse, URL.createObjectURL(garde));
+    /* Un fichier retrouvé dans la réserve ne déclenche aucun import, donc rien
+       ne prévenait l'interface qu'il est là. Résultat : à la réouverture d'un
+       projet déjà rapatrié, le bandeau affichait « 0/175 plans sur l'appareil »
+       et n'en bougeait plus — l'application semblait tout retélécharger alors
+       qu'elle n'ouvrait aucune connexion. Mesuré : le bandeau ne se retirait
+       jamais. Il faut donc le dire, et le rythme de rafraîchissement fait que
+       cent soixante-quinze fichiers retrouvés ne coûtent pas cent
+       soixante-quinze redessins. */
+    majImports();
+    retrouveLocalement(plan);
     return;
   }
   planifierImport(plan);
@@ -5794,9 +5818,45 @@ function apresImport(plan) {
   // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
   redessinerBandes();
   // Le dernier import terminé, toutes les réserves peuvent enfin se constituer.
-  if (!importsEnCours && !fileImport.length) {
-    for (const autre of projetActif()?.plans || []) prechaufferPellicule(autre);
+  prechaufferPlusTard();
+}
+
+/* Ce qu'il faut faire quand un fichier est simplement retrouvé dans la réserve.
+
+   Volontairement plus étroit que « apresImport » : celui-ci reconstruit la piste
+   entière et, quand la file est vide, relance le préchauffage des imagettes de
+   tous les plans. À l'ouverture d'un projet de cent soixante-quinze rushs déjà
+   rapatriés, ces deux gestes seraient faits cent soixante-quinze fois — dont un
+   préchauffage en cent soixante-quinze fois cent soixante-quinze. Ici, rien
+   n'a été téléchargé : la piste n'a pas changé, seule l'image du plan courant
+   peut s'améliorer. */
+function retrouveLocalement(plan) {
+  const projet = projetActif();
+  if (!projet || !estLocal(plan)) return;
+  if (plan.id === projet.plans[lecture.index]?.id) {
+    const video = elementActif();
+    if (video) {
+      video.dataset.plan = "";
+      poserPlan(lecture.index, Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)));
+    }
   }
+  const attente = elementAttente();
+  if (attente?.dataset.plan === plan.id) attente.dataset.source = "";
+  redessinerBandes();
+  prechaufferPlusTard();
+}
+
+/* Le préchauffage des imagettes attend que tout soit posé : appelé à chaque
+   fichier retrouvé, il repartirait pour tous les plans à chaque fois. Une
+   seconde de calme suffit à savoir que l'ouverture est finie. */
+let prechauffePrevue = null;
+function prechaufferPlusTard() {
+  if (prechauffePrevue) clearTimeout(prechauffePrevue);
+  prechauffePrevue = setTimeout(() => {
+    prechauffePrevue = null;
+    if (importsEnCours || fileImport.length) return;
+    for (const autre of projetActif()?.plans || []) prechaufferPellicule(autre);
+  }, 1000);
 }
 
 /* La file suit la tête de lecture, elle ne suit pas l'ordre du montage.
