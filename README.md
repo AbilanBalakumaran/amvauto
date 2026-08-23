@@ -2690,6 +2690,44 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Corriger ne suffit pas : encore faut-il que la correction arrive
+
+Même signalement, mot pour mot, après le déploiement du correctif : « il rend
+tout le bloc de vidéo d'origine ». La bonne réaction n'était ni de refaire le
+correctif ni de répondre « recharge » : c'était de vérifier.
+
+Un banc d'essai a donc été écrit pour le cas exact décrit — **des rushs de dix
+secondes, coupés à une seconde deux, à six secondes deux dans le fichier**, de
+sorte que huit secondes sur dix ne doivent jamais être lues. Le lecteur est
+observé de l'extérieur, quarante fois par seconde, sans rien savoir du code :
+où en est-il ?
+
+```
+                                  lecture normale   lecture impossible
+position la plus avancée               7,43 s            7,40 s
+  (la coupe finit à 7,4 s)
+```
+
+Les deux chemins respectent la coupe, y compris le repli par déplacements. Et la
+page en ligne contient bien les correctifs — vérifié en la téléchargeant et en y
+cherchant les lignes concernées. La correction était donc bonne : c'est l'appareil
+qui tournait encore sur une ancienne copie.
+
+Deux changements pour que cela ne se reproduise pas :
+
+- **On ne fait plus confiance au service worker pour recharger.** Il est censé
+  installer la nouvelle version et faire recharger la page ; quand il ne le fait
+  pas — un worker figé, un cache tenace, une estampille oubliée au déploiement —
+  la page reste sur du vieux code sans que rien ne le dise. Désormais, dès que le
+  serveur annonce une version différente de celle chargée, on lui demande de se
+  mettre à jour **et l'on recharge soi-même**, une fois par session. Et un appel
+  manqué à `/api/version` n'est plus pris pour un accord : sur un lien mobile,
+  un échec laissait croire que tout était à jour. On retente.
+- **La version est affichée dans la barre de l'aperçu.** Une correction déployée
+  et une capture d'écran qui montre l'ancien comportement, c'est une question
+  sans réponse : le défaut est-il toujours là, ou la page est-elle périmée ? La
+  version écrite là où l'on regarde tranche d'un coup d'œil.
+
 ### L'aperçu montrait les rushs entiers, pas le montage
 
 Retour d'appareil, et cette fois ce n'est plus une question de vitesse mais de

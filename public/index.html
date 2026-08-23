@@ -1535,7 +1535,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-23 13:32";
+const VERSION_PAGE = "2026-08-23 23:33";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1568,28 +1568,40 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-// Filet pour les navigateurs sans service worker : si le serveur annonce une
-// version plus récente que celle-ci, c'est qu'une copie périmée est servie. On
-// recharge une fois, puis on se contente de le signaler.
-fetch("/api/version", { cache: "no-store" })
-  .then((r) => r.json())
-  .then(({ version }) => {
-    const marque = document.getElementById("version-page");
-    if (marque) marque.textContent = `version ${VERSION_PAGE}`;
-    if (!version || version === VERSION_PAGE) return;
+/* Si le serveur annonce une version plus récente que celle-ci, c'est qu'une
+   copie périmée est servie. On recharge une fois, puis on se contente de le
+   signaler.
 
-    // Quand un service worker pilote déjà la page, c'est lui qui recharge après
-    // avoir installé la nouvelle version : recharger ici aussi ferait deux
-    // démarrages pour une seule mise à jour. On se contente alors du bandeau.
-    if (navigator.serviceWorker?.controller) {
-      // Une seule tentative automatique par session : si le rechargement ne
-      // suffit pas, mieux vaut un bandeau qu'une page qui se recharge en boucle.
-    } else if (!sessionStorage.getItem("amvauto-maj")) {
-      sessionStorage.setItem("amvauto-maj", version);
-      montrerDemarrage();
-      location.replace(`${location.pathname}?v=${Date.now()}`);
-      return;
-    }
+   Le service worker est censé s'en charger tout seul : il installe la nouvelle
+   version et fait recharger la page. Quand il ne le fait pas — un worker figé,
+   un cache tenace, une estampille oubliée au déploiement — la page reste sur du
+   vieux code sans que rien ne le dise, et l'on croit qu'un correctif déployé n'a
+   rien changé. C'est arrivé, et cela a coûté des allers-retours entiers à
+   chercher un défaut déjà corrigé. On ne fait donc plus confiance au worker
+   pour cela : on lui demande de se mettre à jour, et on recharge nous-mêmes.
+
+   Une seule fois par session : si le rechargement ne suffit pas, mieux vaut un
+   bandeau qu'une page qui se recharge en boucle. */
+function verifierVersion(reste = 2) {
+  fetch("/api/version", { cache: "no-store" })
+    .then((r) => r.json())
+    .then(({ version }) => {
+      const marque = document.getElementById("version-page");
+      if (marque) marque.textContent = `version ${VERSION_PAGE}`;
+      if (!version || version === VERSION_PAGE) return;
+
+      if (!sessionStorage.getItem("amvauto-maj")) {
+        sessionStorage.setItem("amvauto-maj", version);
+        const maj = navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null);
+        Promise.resolve(maj)
+          .then((enregistrement) => enregistrement?.update())
+          .catch(() => {})
+          .finally(() => {
+            montrerDemarrage();
+            location.replace(`${location.pathname}?v=${Date.now()}`);
+          });
+        return;
+      }
 
     const bandeau = document.createElement("div");
     bandeau.className = "bandeau-version";
@@ -1600,8 +1612,12 @@ fetch("/api/version", { cache: "no-store" })
     recharger.addEventListener("click", () => location.replace(`${location.pathname}?v=${Date.now()}`));
     bandeau.append(recharger);
     document.body.prepend(bandeau);
-  })
-  .catch(() => {});
+    })
+    /* Une réponse manquée n'est pas une version identique : sur un lien mobile,
+       un appel qui échoue laissait croire que tout était à jour. On retente. */
+    .catch(() => { if (reste > 0) setTimeout(() => verifierVersion(reste - 1), 5000); });
+}
+verifierVersion();
 const PAR_PAGE = 100;
 const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], supprimes: {}, actif: null, reordre: false };
 
@@ -4565,6 +4581,14 @@ function barreFluide() {
   return barre;
 }
 
+/* La version, en clair, dans la barre de l'aperçu.
+
+   Une correction déployée et une capture d'écran qui montre l'ancien
+   comportement, c'est une question sans réponse : le défaut est-il toujours là,
+   ou la page est-elle périmée ? La version affichée là où l'on regarde tranche
+   la question d'un coup d'œil. */
+const marqueVersion = () => `v${VERSION_PAGE.slice(5)}`;
+
 function majBandeauFluide(texte) {
   const bouton = $("btn-fluide");
   const dit = $("fluide-dit");
@@ -4576,7 +4600,10 @@ function majBandeauFluide(texte) {
   if (bouton.textContent !== libelle) bouton.textContent = libelle;
   bouton.classList.toggle("stop", fluide.construction);
   bouton.disabled = !projet?.plans?.length;
-  const poser = (quoi) => { if (dit.textContent !== quoi) dit.textContent = quoi; };
+  const poser = (brut) => {
+    const quoi = `${brut} · ${marqueVersion()}`;
+    if (dit.textContent !== quoi) dit.textContent = quoi;
+  };
   if (texte != null) { poser(texte); return; }
   poser(fluide.construction ? ""
     : pret
