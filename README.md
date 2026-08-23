@@ -2690,6 +2690,40 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Un bloc fractionné, vérifié de bout en bout
+
+Demande suivante : que le bloc fractionné soit pris en compte au rendu comme à
+la prévisualisation. Plutôt que de répondre de mémoire, un banc d'essai coupe
+réellement un plan en deux et regarde ce que font les deux chemins.
+
+Trois plans pris entre 2 s et 6 s dans des rushs de 10,1 s ; on pose la tête au
+milieu du premier et l'on coupe. La piste devient `[2,0→2,6]`, `[2,6→6,0]`,
+`[2,0→6,0]`, `[2,0→6,0]` — le fractionnement est correct : la seconde moitié
+garde le rush dont elle vient et reçoit son propre identifiant.
+
+```
+                                   relevés   hors de [2 – 6]   le plus loin
+lecture directe sur les rushs        287            4              6,02 s
+fabrication de l'aperçu fluide        99            0              5,96 s
+```
+
+Les quatre relevés hors coupe de la lecture directe sont à 1,65 s : c'est le
+lecteur suivant garé trois dixièmes avant son point d'entrée, ce qui est
+précisément le mécanisme qui supprime l'à-coup à la coupe. Il est garé, pas
+montré — le moniteur refuse de dessiner une image située avant le point
+d'entrée.
+
+Et le fichier fabriqué dure **douze secondes**, soit exactement la somme des
+parties coupées. C'est la preuve la plus courte : s'il contenait les rushs
+entiers, il en durerait quarante.
+
+Un défaut réel a été trouvé au passage, du côté de la lecture directe. Le plan
+sortant, celui qui couvre la coupe pendant que l'entrant produit sa première
+image, jouait quatre dixièmes de seconde quoi qu'il arrive — **y compris
+au-delà de son propre point de sortie**. Il montrait donc, une fraction de
+seconde à chaque coupe, ce qu'on venait justement d'écarter. Il s'arrête
+désormais à sa sortie : le débordement passe de 0,38 s à 0,02 s, une image.
+
 ### Ce n'était pas la fabrication, c'était ce qu'elle donnait à voir
 
 Le signalement s'est précisé : « quand j'appuie sur préparer l'aperçu fluide,

@@ -1547,7 +1547,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-23 23:44";
+const VERSION_PAGE = "2026-08-23 23:54";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3525,6 +3525,15 @@ function dessinerMoniteur() {
     veillerCoherence(video, plan);
   }
 
+  /* Le plan sortant s'arrête à son propre point de sortie, sans attendre la fin
+     de son relais. Il couvrait la coupe pendant quatre dixièmes de seconde quoi
+     qu'il arrive — donc en débordant sur ce qui avait été coupé, et en décodant
+     pour rien. Ce qu'il montre au-delà de sa sortie n'appartient pas au montage. */
+  const partant = lecture.bascule?.sortant;
+  if (partant && !partant.paused && partant.currentTime > (lecture.bascule.fin ?? Infinity) + 0.02) {
+    partant.pause();
+  }
+
   // Resynchronisation : si le fichier tourne réellement alors que
   // l'application se croit à l'arrêt, la tête de lecture resterait figée. On
   // rattrape l'écart au lieu d'attendre un événement qui ne viendra pas.
@@ -3583,6 +3592,7 @@ function dessinerMoniteur() {
              && performance.now() - lecture.bascule.quand < RELAIS_SORTANT
              && video && video.currentTime <= lecture.bascule.depart + 0.01
              && lecture.bascule.sortant && !lecture.bascule.sortant.paused
+             && lecture.bascule.sortant.currentTime <= (lecture.bascule.fin ?? Infinity) + 0.02
              && lecture.bascule.sortant.readyState >= 2 && lecture.bascule.sortant.videoWidth) {
     /* Le plan qui s'en va, tant que celui qui arrive n'a rien décodé.
 
@@ -5486,7 +5496,17 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     /* On note l'instant de la bascule et la position de départ du nouveau
        lecteur : tant qu'il n'a pas avancé, c'est qu'il n'a encore rien décodé,
        et c'est le sortant qu'il faut montrer. */
-    lecture.bascule = { quand: performance.now(), depart: video.currentTime, sortant };
+    /* On retient aussi jusqu'où le sortant a le droit d'aller : son propre point
+       de sortie. Au-delà, ce qu'il joue a été coupé et n'a rien à être montré,
+       même une fraction de seconde — sur un plan fractionné, c'est la moitié
+       suivante ; sur un plan rogné, c'est ce qu'on venait d'écarter. */
+    const planSortant = projet.plans.find((autre) => autre.id === sortant.dataset.plan);
+    lecture.bascule = {
+      quand: performance.now(),
+      depart: video.currentTime,
+      sortant,
+      fin: planSortant ? sortieDe(planSortant) : Infinity,
+    };
   }
   const change = video.dataset.plan !== plan.id || video.dataset.source !== source;
   /* Le fichier est en route par la réserve : on ne le redemande pas au lecteur.
