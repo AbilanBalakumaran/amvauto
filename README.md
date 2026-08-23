@@ -1458,6 +1458,64 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+### Le fichier rendu par son téléphone
+
+Le meilleur rapport de bogue est le fichier lui-même. Neuf mégaoctets tirés d'un
+iPhone XR, ouverts ici :
+
+```
+Duration: 00:00:09.43        pour un montage de 1:43
+Video: h264 (Baseline), 1280x720, 7.11 fps
+67 images pour 9,42 s        la piste son s'arrête au même endroit
+```
+
+Deux défauts, très différents.
+
+**Le rendu s'arrêtait au bout de neuf secondes.** Depuis que le plan sortant
+continue de jouer un court instant après la bascule — ce qui a supprimé l'arrêt
+sur image à chaque coupe — un lecteur pouvait atteindre la fin de son fichier
+alors qu'il ne montrait plus rien, et redevenir « actif » au changement suivant.
+Son événement `ended` faisait alors sauter un plan de plus. Répété, le montage
+courait jusqu'à sa fin en quelques secondes, `arreter()` était appelé, et le
+rendu s'arrêtait avec lui. La fin d'un fichier ne fait plus avancer le montage
+que si ce lecteur montrait bien le plan courant.
+
+**Sept images par seconde.** Celui-là n'est pas un défaut, c'est un mur. Le rendu
+filme l'aperçu en temps réel : à chaque image l'appareil décode un rush, le
+dessine et l'encode. Mesuré ici, sur un processeur de bureau bridé six fois,
+l'aperçu seul tient 19,6 images par seconde — et 5,3 dès qu'on enregistre.
+
+Trois pistes ont été essayées et mesurées :
+
+| | images obtenues, montage de 16 s |
+| --- | --- |
+| 1280×720 | 89 |
+| 960×540 | 84 |
+| 640×360 | 96 |
+| capture demandée à 12 i/s | 86 |
+| capture demandée à 15 i/s | 84 |
+
+**Aucune ne change rien** : ni la définition, ni la cadence demandée. Le mur est
+l'encodage en temps réel lui-même. Le choix de définition est tout de même
+proposé — sur un vrai téléphone l'encodeur est matériel et le nombre de pixels
+compte, ce qu'un encodeur logiciel de banc d'essai ne montre pas — et il allège
+le fichier.
+
+Ce qui a été ajouté à défaut de mieux : **le rendu annonce la cadence qu'il a
+réellement obtenue**. Elle ne se devine pas, et sans elle il faut ouvrir le
+fichier pour comprendre pourquoi il saccade.
+
+```
+9,8 images par seconde seulement.
+L'appareil n'arrive pas à décoder, dessiner et encoder plus vite en même temps.
+Une définition plus basse aide ; un ordinateur, beaucoup plus. Le dossier pour
+DaVinci, lui, ne dépend pas de cette cadence : il emporte les rushs d'origine.
+```
+
+C'est la conclusion honnête : pour un fichier final propre, le chemin n'est pas
+le rendu depuis un téléphone, c'est le dossier pour DaVinci — les rushs
+d'origine et la conduite, montés ailleurs, sans rien filmer.
+
 ### La pause à chaque bloc
 
 Deuxième capture, après les correctifs. Mesurée sur la seule zone du moniteur :

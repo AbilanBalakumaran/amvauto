@@ -2993,7 +2993,20 @@ function creerLecteur(nom) {
   // CORS dans une toile la « teinte » — on ne peut plus en relire les pixels —
   // mais l'afficher reste permis, et c'est tout ce dont on a besoin.
 
-  video.addEventListener("ended", () => { if (video === elementActif()) planSuivant(); });
+  /* La fin d'un fichier ne fait avancer le montage que si ce lecteur montrait
+     bien le plan courant.
+
+     Depuis que le plan sortant continue de jouer un court instant après la
+     bascule, un lecteur peut atteindre la fin de son fichier alors qu'il ne
+     montre plus rien — et redevenir « actif » au changement suivant. Son
+     « ended » faisait alors sauter un plan de plus. Répété, le montage courait
+     jusqu'à sa fin en quelques secondes : c'est ce qui arrêtait un rendu de
+     cent trois secondes au bout de neuf. */
+  video.addEventListener("ended", () => {
+    if (video !== elementActif()) return;
+    if (video.dataset.plan !== String(projetActif()?.plans[lecture.index]?.id)) return;
+    planSuivant();
+  });
   video.addEventListener("error", () => {
     if (video !== elementActif()) return;
     const plan = projetActif()?.plans[lecture.index];
@@ -3186,18 +3199,41 @@ function arrondirEcran() {
    est, et le premier rendu sortait en 380×213. Pendant un rendu, la toile prend
    donc la taille de la vidéo à produire ; l'affichage, lui, ne change pas — le
    navigateur la réduit à la volée pour la montrer. */
-const RENDU_LARGEUR = 1280;
-const RENDU_HAUTEUR = 720;
+/* La définition du rendu se choisit, et ce n'est pas un caprice.
+
+   Le rendu filme l'aperçu en temps réel : à chaque image, l'appareil décode un
+   rush, le dessine en pleine définition et l'encode. Mesuré sur le fichier rendu
+   par un iPhone XR — sept images par seconde au lieu de vingt-quatre, et sur un
+   processeur de bureau bridé six fois, six. Ce n'est pas un défaut qu'on
+   corrige : c'est le travail qui ne rentre pas dans le temps disponible.
+
+   Moins de pixels, c'est moins de travail à chaque étape — le dessin comme
+   l'encodage. Le 960×540 en demande deux fois et demie moins que le 1280×720, et
+   personne ne verra la différence sur un téléphone. C'est donc ce qui est
+   proposé par défaut sur un petit écran. */
+const TAILLES_RENDU = [
+  { cle: "720", nom: "720p · net", largeur: 1280, hauteur: 720 },
+  { cle: "540", nom: "540p · fluide", largeur: 960, hauteur: 540 },
+  { cle: "360", nom: "360p · très fluide", largeur: 640, hauteur: 360 },
+];
+const tailleRendu = () =>
+  TAILLES_RENDU.find((t) => t.cle === (etatRendu.taille || (window.innerWidth < 700 ? "540" : "720")))
+  || TAILLES_RENDU[0];
+const etatRendu = { taille: null };
+let RENDU_LARGEUR = 1280;
+let RENDU_HAUTEUR = 720;
 
 function ajusterMoniteur(toile) {
   arrondirEcran();
-  if (rendu.encours) {
-    if (toile.width !== RENDU_LARGEUR || toile.height !== RENDU_HAUTEUR) {
-      toile.width = RENDU_LARGEUR;
-      toile.height = RENDU_HAUTEUR;
-    }
-    return;
-  }
+  /* Pendant un rendu, la toile affichée garde sa taille d'écran.
+
+     Elle était portée à 1280×720 pour que la capture y trouve la bonne
+     définition, et l'on recopiait ensuite cette grande toile sur celle qu'on
+     enregistre : deux opérations en pleine taille à chaque image. Mesuré sur le
+     fichier rendu par son iPhone — sept images par seconde au lieu de
+     vingt-quatre. On peint donc directement l'image sur la toile de rendu, et
+     l'écran garde sa petite toile : une opération en pleine taille au lieu de
+     deux, et l'affichage redevient presque gratuit. */
   const densite = Math.min(2, window.devicePixelRatio || 1);
   const large = toile.clientWidth * densite;
   const haut = toile.clientHeight * densite;
@@ -3224,9 +3260,7 @@ function dessinerMoniteur() {
      « captureStream » ne produit d'image que lorsqu'on touche à la toile, et une
      seconde sans rien toucher est une seconde absente du fichier. La recopie a
      lieu avant tout arrêt anticipé, pour cette raison précise. */
-  if (rendu.encours && toile.width === toileRendu.width && toile.height === toileRendu.height) {
-    toileRendu.getContext("2d")?.drawImage(toile, 0, 0);
-  }
+
   const ctx = toile.getContext("2d");
   const plan = projetActif()?.plans[lecture.index];
   const video = elementActif();
@@ -3404,6 +3438,21 @@ function dessinerMoniteur() {
   const l = largeur * facteur;
   const h = hauteur * facteur;
   ctx.drawImage(source, (toile.width - l) / 2, (toile.height - h) / 2, l, h);
+
+  /* La même image, en pleine définition, sur la toile qu'on enregistre. C'est
+     elle qui produit le fichier ; l'écran, lui, n'a besoin que de sa taille. */
+  if (rendu.encours) {
+    rendu.images = (rendu.images || 0) + 1;
+    const ctxR = toileRendu.getContext("2d");
+    if (ctxR) {
+      const fR = Math.min(toileRendu.width / largeur, toileRendu.height / hauteur);
+      const lR = largeur * fR;
+      const hR = hauteur * fR;
+      ctxR.fillStyle = "#000";
+      ctxR.fillRect(0, 0, toileRendu.width, toileRendu.height);
+      ctxR.drawImage(source, (toileRendu.width - lR) / 2, (toileRendu.height - hR) / 2, lR, hR);
+    }
+  }
 
   // On garde une copie de la dernière image réellement décodée, pour ne jamais
   // avoir à remontrer la vignette pendant un déplacement.
@@ -4949,7 +4998,15 @@ function poserPlan(index, decalage = 0, enchainer = false) {
        après, ou plus tôt si on lui donne un autre plan à préparer. */
     video.muted = true;
     const sortant = video;
-    setTimeout(() => { if (sortant !== elementActif()) sortant.pause(); }, RELAIS_SORTANT);
+    /* Arrêté dès que le relais est fini — et sans faute, même si une autre
+       bascule est survenue entre-temps : un lecteur qu'on laisse courir finit
+       par atteindre la fin de son fichier et fait avancer le montage tout
+       seul. */
+    setTimeout(() => {
+      if (sortant === elementActif()) return;
+      sortant.pause();
+      if (lecture.bascule?.sortant === sortant) lecture.bascule = null;
+    }, RELAIS_SORTANT);
     lecture.actif = lecture.actif ? 0 : 1;
     video = elementActif();
     /* On note l'instant de la bascule et la position de départ du nouveau
@@ -6366,7 +6423,8 @@ function texteExport(projet, format, extension) {
   const absents = plansAbsents(projet).length;
   const perdus = plansPerdus(projet).length;
   const reste = Math.round(resteAImporter(projet).octets / 1e6);
-  const poids = (longueur * (5e6 + 192e3)) / 8 / 1e6;
+  const t = tailleRendu();
+  const poidsTaille = (longueur * (5e6 * ((t.largeur * t.hauteur) / (1280 * 720)) + 192e3)) / 8 / 1e6;
   return [
     `${projet.plans.length} plans · ${minutage(longueur)}`,
     lecture.audio
@@ -6376,8 +6434,10 @@ function texteExport(projet, format, extension) {
         : "Aucune musique : la vidéo sortirait muette. Choisis un fichier en bas de ce panneau.",
     "",
     format
-      ? `La vidéo sortira en ${extension}, ${IMAGES_PAR_SECONDE} images par seconde, ${RENDU_LARGEUR}×${RENDU_HAUTEUR}, environ ${poids.toFixed(0)} Mo.`
+      ? `La vidéo sortira en ${extension}, ${tailleRendu().largeur}×${tailleRendu().hauteur}, environ ${poidsTaille.toFixed(0)} Mo.`
       : "Ce navigateur ne sait pas enregistrer de vidéo.",
+    "Le rendu filme l'aperçu : sur un téléphone, une définition plus basse sort plus fluide, "
+      + "parce que l'appareil arrive à produire plus d'images par seconde.",
     `Le rendu se fait en temps réel : compte ${minutage(longueur)}, écran allumé et application au premier plan.`,
     "",
     absents
@@ -6411,6 +6471,35 @@ function ouvrirExport(projet) {
   etat.className = "lecteur-meta";
   etat.style.whiteSpace = "pre-line";
 
+  /* Le choix de la définition. Sur un téléphone, c'est le réglage qui décide si
+     le fichier sortira fluide ou haché : le rendu filme l'aperçu en temps réel,
+     et moins il y a de pixels, plus l'appareil arrive à en produire par
+     seconde. */
+  const rangeeTaille = document.createElement("label");
+  rangeeTaille.className = "lecteur-reglage pile";
+  const titreTaille = document.createElement("span");
+  titreTaille.textContent = "Définition";
+  const pastillesTaille = document.createElement("div");
+  pastillesTaille.className = "pastilles";
+  const peindreTailles = () => {
+    const courante = tailleRendu().cle;
+    [...pastillesTaille.children].forEach((el) => el.classList.toggle("on", el.dataset.cle === courante));
+  };
+  TAILLES_RENDU.forEach((t) => {
+    const pastille = document.createElement("button");
+    pastille.type = "button";
+    pastille.className = "pastille";
+    pastille.dataset.cle = t.cle;
+    pastille.textContent = t.nom;
+    pastille.addEventListener("click", () => {
+      etatRendu.taille = t.cle;
+      peindreTailles();
+      meta.textContent = texteExport(projet, format, extension);
+    });
+    pastillesTaille.append(pastille);
+  });
+  rangeeTaille.append(titreTaille, pastillesTaille);
+
   const livraison = document.createElement("div");
   livraison.className = "lecteur-actions";
 
@@ -6432,7 +6521,8 @@ function ouvrirExport(projet) {
     if (rendu.encours) { arreterRendu(); return; }
     const empeche = ceQuiManque(projet, format);
     if (empeche) { etat.textContent = empeche; return; }
-    lancerRendu(projet, video, etat, (blob, ext) => livrerRendu(blob, ext, projet, livraison));
+    lancerRendu(projet, video, etat,
+      (blob, ext, cadence) => livrerRendu(blob, ext, projet, livraison, cadence));
   });
 
   /* Un rendu qui part quand même et sort muet, ou troué de noir, c'est une
@@ -6512,7 +6602,8 @@ function ouvrirExport(projet) {
 
   actions.append(video, paquet, edl, liste, fermer);
   if (!lecture.audio) actions.append(musique);
-  corps.append(titre, meta, etat, livraison, actions);
+  corps.append(titre, meta, rangeeTaille, etat, livraison, actions);
+  peindreTailles();
   jauger();
 
   /* Le rendu précédent, s'il est encore là.
@@ -6651,10 +6742,17 @@ async function lancerRendu(projet, bouton, etat, offrir) {
      fige la taille du flux au moment de l'appel, et redimensionner ensuite
      produirait une vidéo à l'ancienne taille. */
   rendu.encours = true;
-  ajusterMoniteur(moniteur);
+  rendu.images = 0;
+  rendu.depart = performance.now();
+  const taille = tailleRendu();
+  RENDU_LARGEUR = taille.largeur;
+  RENDU_HAUTEUR = taille.hauteur;
   toileRendu.width = RENDU_LARGEUR;
   toileRendu.height = RENDU_HAUTEUR;
-  toileRendu.getContext("2d", { alpha: false })?.drawImage(moniteur, 0, 0);
+  /* Un fond noir posé tout de suite : la capture démarre avant la première
+     image du montage, et une toile neuve est transparente, donc blanche. */
+  const fondRendu = toileRendu.getContext("2d", { alpha: false });
+  if (fondRendu) { fondRendu.fillStyle = "#000"; fondRendu.fillRect(0, 0, RENDU_LARGEUR, RENDU_HAUTEUR); }
   let flux;
   try {
     flux = toileRendu.captureStream(IMAGES_PAR_SECONDE);
@@ -6679,12 +6777,12 @@ async function lancerRendu(projet, bouton, etat, offrir) {
   try {
     enregistreur = new MediaRecorder(flux, {
       mimeType: format,
-      /* Cinq mégabits pour du 720p : large pour de l'animation, dont les
-         aplats se compressent bien. Le débit n'est pas qu'une affaire de
-         qualité — l'enregistreur garde tout en mémoire jusqu'à la fin, et un
-         AMV de cinq minutes à huit mégabits demanderait trois cents mégaoctets
-         de mémoire vive à un téléphone qui en a trois giga. */
-      videoBitsPerSecond: 5e6,
+      /* Le débit suit la définition : cinq mégabits pour du 720p, et d'autant
+         moins qu'il y a moins de pixels. Ce n'est pas qu'une affaire de qualité
+         — l'enregistreur garde tout en mémoire jusqu'à la fin, et un AMV de cinq
+         minutes à huit mégabits demanderait trois cents mégaoctets de mémoire
+         vive à un téléphone qui en a trois giga. */
+      videoBitsPerSecond: Math.round(5e6 * ((RENDU_LARGEUR * RENDU_HAUTEUR) / (1280 * 720))),
       audioBitsPerSecond: 192e3,
     });
   } catch (erreur) {
@@ -6702,11 +6800,18 @@ async function lancerRendu(projet, bouton, etat, offrir) {
     const brut = new Blob(morceaux, { type });
     if (!brut.size) { etat.textContent = "Rien n'a été enregistré."; return; }
     const extension = type.endsWith("mp4") ? "mp4" : "webm";
+    /* La cadence réellement obtenue. Elle ne se devine pas : elle dépend de ce
+       que l'appareil arrive à décoder, dessiner et encoder en même temps. La
+       dire évite d'avoir à ouvrir le fichier pour comprendre pourquoi il
+       saccade — et si elle est basse, c'est qu'il faut baisser la définition ou
+       rendre depuis un ordinateur. */
+    const secondes = Math.max(0.001, (performance.now() - rendu.depart) / 1000);
+    rendu.cadence = Math.round(((rendu.images || 0) / secondes) * 10) / 10;
     corrigerRendu(brut).then(async (blob) => {
       // Rangé avant d'être proposé : si l'on ferme la page tout de suite après,
       // le fichier est déjà à l'abri.
       await garderRendu(projetActif() || projet, blob, extension);
-      offrir(blob, extension);
+      offrir(blob, extension, rendu.cadence);
     });
   });
 
@@ -6891,10 +6996,23 @@ async function reprendreRendu(projet) {
    de partage, elle, sait ranger une vidéo dans Fichiers ou dans Photos. On la
    propose donc en premier quand le système l'accepte, et le lien reste en
    secours pour l'ordinateur. */
-function livrerRendu(blob, extension, projet, hote) {
+function livrerRendu(blob, extension, projet, hote, cadence = 0) {
   const nom = `${nomDeFichier(projet)}.${extension}`;
   const taille = `${(blob.size / 1e6).toFixed(1)} Mo`;
   hote.replaceChildren();
+
+  if (cadence) {
+    const dit = document.createElement("div");
+    dit.className = "lecteur-meta";
+    dit.style.whiteSpace = "pre-line";
+    dit.textContent = cadence >= 18
+      ? `${cadence} images par seconde — fluide.`
+      : `${cadence} images par seconde seulement.\n`
+        + "L'appareil n'arrive pas à décoder, dessiner et encoder plus vite en même temps. "
+        + "Une définition plus basse aide ; un ordinateur, beaucoup plus. Le dossier pour DaVinci, lui, "
+        + "ne dépend pas de cette cadence : il emporte les rushs d'origine.";
+    hote.append(dit);
+  }
 
   /* Le voir tout de suite, et de façon fluide.
 
