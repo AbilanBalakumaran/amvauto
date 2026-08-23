@@ -3946,6 +3946,15 @@ function preparerSuivant(index) {
   // lecteur devient visible immédiatement, et il montrait jusqu'ici les
   // premières images du fichier — celles-là mêmes qui avaient été coupées — le
   // temps que la position s'applique.
+  /* Garé pile sur son point d'entrée.
+
+     On a essayé de le garer un peu avant et de le lancer en silence juste
+     avant la coupe, pour qu'il soit déjà en mouvement à la bascule. Mesuré,
+     c'était pire : vingt-six interruptions au lieu de vingt et une, et la plus
+     longue passait de cent à cent soixante-six millisecondes. Un lecteur lancé
+     en avance dérive de quelques dizaines de millisecondes, et la bascule doit
+     alors le replacer — un déplacement coûte plus cher que le démarrage qu'on
+     voulait éviter. */
   const garer = () => demanderPosition(attente, entreeDe(plan));
   attente.addEventListener("loadedmetadata", garer, { once: true });
   if (attente.readyState >= 1) garer();
@@ -6200,6 +6209,18 @@ function ouvrirExport(projet) {
   edl.title = "Le découpage, pour un logiciel de montage";
   edl.addEventListener("click", () => telecharger(`${nomDeFichier(projet)}.edl`, versEdl(projet)));
 
+  /* Le dossier complet : la conduite et les rushs, dans une seule archive.
+
+     C'est ce qui manquait pour finir ailleurs. Une conduite seule oblige à
+     retrouver cent soixante-quinze fichiers un par un ; là, on ouvre l'archive,
+     on glisse le XML dans Resolve, et il retrouve tout puisque les fichiers
+     portent exactement les noms qu'il cherche. */
+  const paquet = document.createElement("button");
+  paquet.type = "button";
+  paquet.textContent = "Dossier pour DaVinci";
+  paquet.title = "La conduite et tous les rushs, dans une archive";
+  paquet.addEventListener("click", () => empaqueterPourMontage(projet, paquet, etat));
+
   const liste = document.createElement("button");
   liste.type = "button";
   liste.textContent = "Liste des plans";
@@ -6233,7 +6254,7 @@ function ouvrirExport(projet) {
   fermer.textContent = "Fermer";
   fermer.addEventListener("click", () => { arreterRendu(); fermerFeuille(); });
 
-  actions.append(video, edl, liste, fermer);
+  actions.append(video, paquet, edl, liste, fermer);
   if (!lecture.audio) actions.append(musique);
   corps.append(titre, meta, etat, livraison, actions);
   jauger();
@@ -6618,6 +6639,24 @@ function livrerRendu(blob, extension, projet, hote) {
   const nom = `${nomDeFichier(projet)}.${extension}`;
   const taille = `${(blob.size / 1e6).toFixed(1)} Mo`;
   hote.replaceChildren();
+
+  /* Le voir tout de suite, et de façon fluide.
+
+     L'aperçu du montage lit cent soixante-quinze fichiers à la file : à chaque
+     coupe, un lecteur s'arrête et un autre démarre, et cela coûte une centaine
+     de millisecondes — mesuré, vingt hoquets sur seize coupes. Aucun réglage ne
+     supprimera cela, c'est le prix d'un montage joué depuis ses rushs. Le rendu,
+     lui, est un seul fichier : il se lit comme n'importe quelle vidéo, sans un
+     hoquet. C'est ainsi qu'on juge le résultat — les bancs de montage
+     professionnels ne font pas autrement, ils appellent cela un rendu de
+     prévisualisation. */
+  const apercu = document.createElement("video");
+  apercu.src = URL.createObjectURL(blob);
+  apercu.controls = true;
+  apercu.playsInline = true;
+  apercu.preload = "metadata";
+  apercu.style.cssText = "width:100%;border-radius:12px;display:block;background:#000;margin-bottom:8px";
+  hote.append(apercu);
 
   const fichier = new File([blob], nom, { type: blob.type });
   const partageable = navigator.canShare?.({ files: [fichier] });
@@ -9419,6 +9458,260 @@ function versEdl(projet) {
     curseur = fin;
   });
   return lignes.filter((ligne, index, tout) => ligne !== "" || tout[index - 1] !== "").join("\n");
+}
+
+/* Rassembler le montage et ses médias, puis livrer l'archive.
+
+   Une remarque d'honnêteté : cela se fait sur un ordinateur. Deux cents
+   mégaoctets passent encore sur un téléphone ; un gigaoctet et demi de rushs,
+   non — ni la mémoire ni le gestionnaire de téléchargement d'iOS ne suivent. Le
+   bouton le dit plutôt que d'échouer à mi-chemin. */
+async function empaqueterPourMontage(projet, bouton, etat) {
+  const sources = [...new Map(projet.plans
+    .filter((plan) => !plan.youtube && mediaDe(plan))
+    .map((plan) => [mediaDe(plan), plan])).values()];
+  const absents = sources.filter((plan) => !estLocal(plan));
+  if (absents.length) {
+    etat.textContent = `${absents.length} rush(s) ne sont pas encore sur l'appareil : `
+      + "l'archive serait incomplète. Laisse-les arriver, puis réessaie.";
+    return;
+  }
+  if (!sources.length) { etat.textContent = "Aucun rush à empaqueter."; return; }
+
+  const avant = bouton.textContent;
+  bouton.disabled = true;
+  try {
+    const entrees = [{
+      nom: `${nomDeFichier(projet)}.fcpxml`,
+      blob: new Blob([versFcpxml(projet)], { type: "application/xml" }),
+    }, {
+      nom: `${nomDeFichier(projet)}.edl`,
+      blob: new Blob([versEdl(projet)], { type: "text/plain" }),
+    }];
+    let poids = 0;
+    for (const plan of sources) {
+      const fichier = await lireBase(mediaDe(plan));
+      if (!(fichier instanceof Blob)) continue;
+      poids += fichier.size;
+      entrees.push({ nom: nomFichier(plan), blob: fichier });
+    }
+    if (poids > 3.5e9) {
+      etat.textContent = `Le dossier ferait ${(poids / 1e9).toFixed(1)} Go — au-delà de ce qu'une `
+        + "archive ordinaire sait porter. Retire des plans, ou exporte la conduite seule.";
+      return;
+    }
+    const archive = await fabriquerZip(entrees, (part) => {
+      bouton.textContent = `Dossier ${Math.round(part * 100)} %`;
+    });
+    etat.textContent = `Dossier prêt : ${entrees.length - 2} rushs, la conduite FCPXML et l'EDL, `
+      + `${(archive.size / 1e6).toFixed(0)} Mo.\n`
+      + "Dans Resolve : Fichier → Importer → Timeline, choisis le .fcpxml. Les rushs étant à côté, "
+      + "il les retrouve seul.";
+    const lien = document.createElement("a");
+    lien.href = URL.createObjectURL(archive);
+    lien.download = `${nomDeFichier(projet)}-davinci.zip`;
+    lien.click();
+    setTimeout(() => URL.revokeObjectURL(lien.href), 60000);
+  } catch (erreur) {
+    etat.textContent = `L'archive n'a pas pu être fabriquée (${erreur.name}). `
+      + "Sur un téléphone, un dossier de plusieurs centaines de mégaoctets dépasse souvent ce que "
+      + "le navigateur peut tenir : essaie depuis un ordinateur.";
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = avant;
+  }
+}
+
+/* --- un dossier que Resolve sait ouvrir -------------------------------- */
+
+/* Écrire une archive ZIP à la main, sans rien installer.
+
+   Une conduite de montage sans les fichiers ne sert à rien : le banc de montage
+   demande où sont les rushs, et ils sont dans le navigateur. On les remet donc
+   tous dans une archive, avec la conduite à côté, prête à ouvrir.
+
+   Rien n'est compressé — « store », méthode zéro. Une vidéo est déjà compressée
+   et la repasser à la moulinette coûterait des minutes pour gagner un pour cent.
+   L'archive n'est qu'une enveloppe.
+
+   Chaque fichier est lu, mis en somme de contrôle, puis rendu au disque sous
+   forme de Blob : à aucun moment plus d'un rush ne tient en mémoire, ce qui
+   permet d'empaqueter un gigaoctet sur une machine qui n'en a pas tant. */
+const TABLE_CRC = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+/* La somme part de tous les bits à un et se termine en les renversant : ces
+   deux inversions font partie de la définition, et les oublier donne une
+   archive dont chaque fichier est déclaré corrompu — vérifié, l'outil ZIP la
+   refusait entièrement. */
+function crc32(octets) {
+  let c = 0xffffffff;
+  for (let i = 0; i < octets.length; i += 1) c = TABLE_CRC[(c ^ octets[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+// Date et heure au format MS-DOS, que le ZIP porte depuis 1989.
+function horodateDos(date = new Date()) {
+  const heure = (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1);
+  const jour = ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { heure, jour };
+}
+
+function ecrireEntier(vue, position, valeur, octets) {
+  for (let i = 0; i < octets; i += 1) vue[position + i] = (valeur >>> (i * 8)) & 0xff;
+}
+
+/* Construit l'archive. « entrees » est une liste de { nom, blob }. Le rappel
+   « avance » reçoit un nombre entre 0 et 1 : sur un gigaoctet, une barre qui
+   bouge est le minimum. */
+async function fabriquerZip(entrees, avance = () => {}) {
+  const encodeur = new TextEncoder();
+  const morceaux = [];
+  const fiches = [];
+  const { heure, jour } = horodateDos();
+  let decalage = 0;
+  const poidsTotal = entrees.reduce((somme, e) => somme + e.blob.size, 0) || 1;
+  let faits = 0;
+
+  for (const entree of entrees) {
+    const nom = encodeur.encode(entree.nom);
+    const octets = new Uint8Array(await entree.blob.arrayBuffer());
+    const somme = crc32(octets);
+
+    const tete = new Uint8Array(30 + nom.length);
+    ecrireEntier(tete, 0, 0x04034b50, 4);
+    ecrireEntier(tete, 4, 20, 2);            // version minimale
+    ecrireEntier(tete, 6, 0, 2);             // pas de drapeau
+    ecrireEntier(tete, 8, 0, 2);             // méthode « store »
+    ecrireEntier(tete, 10, heure, 2);
+    ecrireEntier(tete, 12, jour, 2);
+    ecrireEntier(tete, 14, somme, 4);
+    ecrireEntier(tete, 18, octets.length, 4);
+    ecrireEntier(tete, 22, octets.length, 4);
+    ecrireEntier(tete, 26, nom.length, 2);
+    ecrireEntier(tete, 28, 0, 2);
+    tete.set(nom, 30);
+
+    morceaux.push(tete, entree.blob);
+    fiches.push({ nom, somme, taille: octets.length, decalage });
+    decalage += tete.length + octets.length;
+    faits += entree.blob.size;
+    avance(Math.min(1, faits / poidsTotal));
+  }
+
+  const centrale = [];
+  let tailleCentrale = 0;
+  for (const fiche of fiches) {
+    const bloc = new Uint8Array(46 + fiche.nom.length);
+    ecrireEntier(bloc, 0, 0x02014b50, 4);
+    ecrireEntier(bloc, 4, 20, 2);
+    ecrireEntier(bloc, 6, 20, 2);
+    ecrireEntier(bloc, 8, 0, 2);
+    ecrireEntier(bloc, 10, 0, 2);
+    ecrireEntier(bloc, 12, heure, 2);
+    ecrireEntier(bloc, 14, jour, 2);
+    ecrireEntier(bloc, 16, fiche.somme, 4);
+    ecrireEntier(bloc, 20, fiche.taille, 4);
+    ecrireEntier(bloc, 24, fiche.taille, 4);
+    ecrireEntier(bloc, 28, fiche.nom.length, 2);
+    ecrireEntier(bloc, 42, fiche.decalage, 4);
+    bloc.set(fiche.nom, 46);
+    centrale.push(bloc);
+    tailleCentrale += bloc.length;
+  }
+
+  const fin = new Uint8Array(22);
+  ecrireEntier(fin, 0, 0x06054b50, 4);
+  ecrireEntier(fin, 8, fiches.length, 2);
+  ecrireEntier(fin, 10, fiches.length, 2);
+  ecrireEntier(fin, 12, tailleCentrale, 4);
+  ecrireEntier(fin, 16, decalage, 4);
+
+  return new Blob([...morceaux, ...centrale, fin], { type: "application/zip" });
+}
+
+/* --- conduite pour un banc de montage --------------------------------- */
+
+/* FCPXML plutôt qu'EDL, pour DaVinci Resolve.
+
+   L'EDL est un format de 1980 : des timecodes, huit caractères de nom de bobine,
+   et rien d'autre. Resolve l'accepte, mais il faut ensuite lui réapprendre à la
+   main quel fichier va avec quelle ligne. Le FCPXML porte le nom du fichier, son
+   chemin, sa durée, ses points d'entrée et de sortie — Resolve le lit et
+   reconstruit la piste, à charge pour lui de retrouver les médias.
+
+   La cadence est celle du montage : vingt-quatre images par seconde, et toutes
+   les durées sont exprimées en multiples de 1/24 s, ce que le format exige sous
+   la forme « n/24s ». Une durée qui ne tombe pas juste est arrondie à l'image —
+   un banc de montage ne connaît pas la demi-image. */
+const imagesRondes = (secondes) => `${Math.max(1, Math.round(secondes * IMAGES_PAR_SECONDE))}/${IMAGES_PAR_SECONDE}s`;
+
+function echapperXml(texte) {
+  return String(texte).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]);
+}
+
+function versFcpxml(projet) {
+  const sources = [...new Map(projet.plans
+    .filter((plan) => !plan.youtube && mediaDe(plan))
+    .map((plan) => [mediaDe(plan), plan])).values()];
+  const rang = new Map(sources.map((plan, index) => [mediaDe(plan), index + 1]));
+
+  const actifs = [];
+  for (const source of sources) {
+    actifs.push(
+      `      <asset id="r${rang.get(mediaDe(source))}" name="${echapperXml(nomFichier(source))}"` +
+      ` start="0s" duration="${imagesRondes(dureeSource(source) || 10)}"` +
+      ` hasVideo="1" format="fmt1" hasAudio="0">`,
+      `        <media-rep kind="original-media" src="${echapperXml(nomFichier(source))}"/>`,
+      "      </asset>",
+    );
+  }
+
+  let curseur = 0;
+  const clips = [];
+  projet.plans.forEach((plan) => {
+    const identifiant = rang.get(mediaDe(plan));
+    if (!identifiant) return;
+    const tenue = Math.max(1 / IMAGES_PAR_SECONDE, sortieDe(plan) - entreeDe(plan));
+    clips.push(
+      `          <asset-clip name="${echapperXml(plan.name || nomFichier(plan))}" ref="r${identifiant}"` +
+      ` offset="${imagesRondes(curseur)}" start="${imagesRondes(entreeDe(plan))}"` +
+      ` duration="${imagesRondes(tenue)}" enabled="1"/>`,
+    );
+    curseur += tenue;
+  });
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<!DOCTYPE fcpxml>",
+    '<fcpxml version="1.8">',
+    "  <resources>",
+    `    <format id="fmt1" name="FFVideoFormat1080p${IMAGES_PAR_SECONDE}"` +
+    ` frameDuration="1/${IMAGES_PAR_SECONDE}s" width="1920" height="1080"/>`,
+    ...actifs,
+    "  </resources>",
+    `  <library name="${echapperXml(projet.nom)}">`,
+    `    <event name="${echapperXml(projet.nom)}">`,
+    `      <project name="${echapperXml(projet.nom)}">`,
+    `        <sequence format="fmt1" duration="${imagesRondes(curseur)}"` +
+    ' tcStart="0s" tcFormat="NDF">',
+    "          <spine>",
+    ...clips,
+    "          </spine>",
+    "        </sequence>",
+    "      </project>",
+    "    </event>",
+    "  </library>",
+    "</fcpxml>",
+  ].join("\n");
 }
 
 function versTexte(projet) {

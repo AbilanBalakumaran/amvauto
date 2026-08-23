@@ -1458,6 +1458,79 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+## Aller vite ici, finir ailleurs
+
+Le but de l'outil s'est précisé : monter vite, puis **finir dans un vrai banc de
+montage**. Deux choses en découlent.
+
+### La fluidité a une limite, et un contournement
+
+Mesuré à l'image près, tout sur l'appareil, seize coupes de 1,6 s :
+
+```
+images vivantes peintes : 751  (29,3/s, la source en fait 24)
+bouche-trous            : 0
+interruptions > 60 ms   : 20, dont 2 au-dessus de 100 ms
+la plus longue          : 104 ms
+```
+
+Une centaine de millisecondes **à chaque coupe** : le temps qu'un lecteur
+s'arrête et qu'un autre démarre. Sur un AMV de deux minutes et demie, soixante
+hoquets. C'est ce qu'on ressent comme de la latence.
+
+J'ai essayé de lancer le lecteur suivant en silence trois dixièmes avant la
+coupe, pour qu'il soit déjà en mouvement à la bascule. **Mesuré, c'était pire** :
+vingt-six interruptions au lieu de vingt, et la plus longue passait de 104 à
+166 ms. Un lecteur lancé en avance dérive de quelques dizaines de
+millisecondes, et la bascule doit alors le replacer — un déplacement coûte plus
+cher que le démarrage qu'on voulait éviter. L'essai est resté dans le code sous
+forme de commentaire, pour que personne ne le retente.
+
+Le contournement est celui des bancs de montage professionnels : **on juge sur
+un rendu**. Un montage joué depuis ses rushs hoquette à chaque coupe ; le rendu,
+lui, est un seul fichier et se lit comme n'importe quelle vidéo. Il s'ouvre donc
+directement dans le panneau d'export, sous les boutons.
+
+### Un dossier que Resolve sait ouvrir
+
+L'EDL est un format de 1980 : des timecodes, huit caractères de nom de bobine,
+rien d'autre. Resolve l'accepte, mais il faut ensuite lui réapprendre à la main
+quel fichier va avec quelle ligne — cent soixante-quinze fois.
+
+Le bouton **« Dossier pour DaVinci »** produit une archive contenant :
+
+- une conduite **FCPXML 1.8** — noms de fichiers, durées, points d'entrée et de
+  sortie, cadence à 24 images ;
+- l'EDL, pour les logiciels qui ne lisent que cela ;
+- **tous les rushs employés**, nommés exactement comme la conduite les appelle.
+
+Dans Resolve : Fichier → Importer → Timeline, choisir le `.fcpxml`. Les rushs
+étant à côté, il les retrouve seul.
+
+```
+intégrité de l'archive : OK
+  amvauto-projet.fcpxml     conduite
+  amvauto-projet.edl        conduite de secours
+  Plan 2.webm  Plan 3.webm  Plan 4.webm
+  5 coupes · 3 sources · XML bien formé
+```
+
+L'archive est écrite à la main, sans bibliothèque : en-têtes locaux, répertoire
+central, fin de répertoire. Rien n'est compressé — une vidéo l'est déjà, et la
+repasser à la moulinette coûterait des minutes pour gagner un pour cent. Chaque
+fichier est lu, mis en somme de contrôle, puis rendu au disque : à aucun moment
+plus d'un rush ne tient en mémoire.
+
+Un piège, trouvé en ouvrant l'archive produite : la somme de contrôle CRC-32
+part de tous les bits à un **et se termine en les renversant**. Les deux
+inversions font partie de la définition, et en oublier une donne une archive
+dont chaque fichier est déclaré corrompu.
+
+Une remarque d'honnêteté : cela se fait sur un ordinateur. Deux cents mégaoctets
+passent encore sur un téléphone, un gigaoctet et demi de rushs non — ni la
+mémoire ni le gestionnaire de téléchargement d'iOS ne suivent. Le bouton le dit
+plutôt que d'échouer à mi-chemin.
+
 ### Un ou logique dont le second terme est vrai
 
 « J'appuie sur pause et ça ne s'arrête pas. » Deux causes, trouvées en lisant.
