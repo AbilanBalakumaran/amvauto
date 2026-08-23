@@ -2988,6 +2988,24 @@ function creerLecteur(nom) {
   video.className = "lecteur-cache";
   video.playsInline = true;
   video.preload = "auto";
+  /* Muet, toujours, et dès sa naissance — attribut compris, que le navigateur
+     lise avant même de charger quoi que ce soit.
+
+     Ce qu'on entend d'un montage, c'est sa piste son ; jamais celle des rushs.
+     Le son du fichier n'a donc aucun usage — et il coûtait très cher. Un
+     navigateur refuse de lancer une vidéo qui a du son quand personne ne vient
+     de toucher l'écran : c'est la règle qui empêche les pages de faire du bruit
+     toutes seules. Or la bascule d'un plan à l'autre arrive sur une horloge,
+     pas sur un geste. Chaque coupe rendait donc le lecteur audible, essuyait un
+     refus, remettait le son en sourdine et redemandait la lecture — deux
+     allers-retours avec le moteur média, à chaque coupe. Pire sur iPhone :
+     rendre audible un lecteur déjà en train de jouer l'arrête net, si bien que
+     l'amorce silencieuse préparée juste avant était annulée au moment précis où
+     elle devait servir. C'est la pause que l'on sentait à chaque changement de
+     bloc. */
+  video.muted = true;
+  video.setAttribute("muted", "");
+  video.defaultMuted = true;
   // Surtout pas de crossOrigin : les sources n'envoient pas d'en-tête CORS, et
   // le lecteur refuserait alors de charger le fichier. Dessiner une vidéo sans
   // CORS dans une toile la « teinte » — on ne peut plus en relire les pixels —
@@ -5096,15 +5114,13 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     return autre && autre !== video && autre.dataset.plan === plan.id && autre.dataset.source === source;
   });
   if (pret >= 0) {
-    /* Le sortant est mis en sourdine tout de suite — deux lecteurs qui
-       s'entendraient en même temps, jamais — mais il continue de jouer un court
-       instant. C'est lui que le moniteur montre pendant que le nouveau produit
-       sa première image : une coupe qui arrive un souffle en retard se voit
-       infiniment moins qu'un arrêt sur image. Il s'arrête tout seul juste
-       après. Il est désormais tenu à l'écart de la préparation tant que dure
-       son relais : avec deux lecteurs seulement, le plan suivant lui était
-       confié aussitôt et le relais tombait avant d'avoir servi. */
-    video.muted = true;
+    /* Le sortant continue de jouer un court instant. C'est lui que le moniteur
+       montre pendant que le nouveau produit sa première image : une coupe qui
+       arrive un souffle en retard se voit infiniment moins qu'un arrêt sur
+       image. Il s'arrête tout seul juste après. Il est désormais tenu à l'écart
+       de la préparation tant que dure son relais : avec deux lecteurs
+       seulement, le plan suivant lui était confié aussitôt et le relais tombait
+       avant d'avoir servi. */
     const sortant = video;
     /* Arrêté dès que le relais est fini — et sans faute, même si une autre
        bascule est survenue entre-temps : un lecteur qu'on laisse courir finit
@@ -5143,7 +5159,6 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     video.dataset.source = source;
     video.src = source;
   }
-  video.muted = false;
   /* Un lecteur déjà lancé et arrivé au bon endroit n'est pas replacé.
 
      C'est là que se jouait tout l'intérêt de l'amorce : le replacer annulait
@@ -5163,13 +5178,17 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     if (!lecture.demande) return;
     if (projetActif()?.plans[lecture.index]?.id !== plan.id) return;
     if (enchainer || lecture.jouant) {
+      /* Un seul essai, et sans repli : le lecteur est muet, un navigateur ne
+         refuse pas une vidéo muette. Le repli d'avant remettait en sourdine puis
+         redemandait la lecture — il ne servait qu'à réparer le son qu'on venait
+         d'allumer pour rien. */
       video.play().catch(() => {
         // Sans cette garde, une lecture interrompue par nos soins — parce qu'on
         // vient d'atteindre la fin — était aussitôt relancée, et le lecteur
         // repartait sur la partie coupée.
         if (!lecture.demande) return;
-        video.muted = true;
-        video.play().catch(() => { lecture.jouant = false; majTransport(); });
+        lecture.jouant = false;
+        majTransport();
       });
     }
   };
@@ -5263,6 +5282,16 @@ function basculerLecture() {
     lecture.index = 0;
   }
   demarrerHorloge();
+  /* La musique part dans le geste, pas dans un rappel.
+
+     Elle démarrait jusqu'ici depuis l'événement « lecture » d'un lecteur vidéo,
+     qui arrive après le clic — donc hors du geste. Un iPhone refuse d'ouvrir le
+     son d'un élément qui n'a pas été lancé par un geste, et le refus est avalé
+     en silence : la tête avançait, l'image défilait, et il n'y avait pas un son.
+     Tant que la vidéo était audible, le clic sur « lecture » déverrouillait la
+     sortie audio de la page au passage ; maintenant qu'elle est muette pour de
+     bon, la musique doit être lancée pour elle-même. */
+  demarrerSon();
   suivreTete();
 
   if (projet.plans[lecture.index]?.youtube) {
@@ -5291,13 +5320,7 @@ function basculerLecture() {
 
   deverrouille = true;
   const essai = video.play();
-  if (essai) {
-    essai.catch(() => {
-      if (!lecture.demande) return;
-      video.muted = true;
-      video.play().catch(() => { lecture.jouant = false; majTransport(); });
-    });
-  }
+  if (essai) essai.catch(() => { if (lecture.demande) { lecture.jouant = false; majTransport(); } });
   selectionner(cible.index);
   suivreTete();
 }
@@ -5532,11 +5555,7 @@ function appliquerSeek(jouer = false) {
     const vise = entreeDe(plan) + dans;
     const poser = () => {
       demanderPosition(video, Math.min(vise, video.duration || vise));
-      if (jouer) video.play().catch(() => {
-        if (!lecture.demande) return;
-        video.muted = true;
-        video.play().catch(() => {});
-      });
+      if (jouer) video.play().catch(() => {});
     };
     // Un fichier pas encore prêt ignorait la consigne, et l'image restait celle
     // d'avant : on la repose dès que ses métadonnées arrivent.

@@ -2498,6 +2498,53 @@ du lecteur ne dépend plus d'une place dans une alternance mais de son contenu :
 on cherche celui qui tient déjà le plan demandé, ce qui vaut aussi pour un saut
 n'importe où dans la piste.
 
+### Le son des rushs, qu'on n'écoute jamais, retardait chaque coupe
+
+Ce qu'on entend d'un montage, c'est sa piste son ; jamais celle des rushs.
+L'application ne se sert nulle part du son des fichiers — et pourtant, à chaque
+changement de plan, elle rendait le lecteur audible avant de le lancer.
+
+Un navigateur refuse de démarrer une vidéo qui a du son quand personne ne vient
+de toucher l'écran : c'est la règle qui empêche les pages de faire du bruit
+toutes seules. Or une coupe arrive sur une horloge, pas sur un geste. Chaque
+coupe faisait donc : rendre audible, demander la lecture, essuyer un refus,
+remettre en sourdine, redemander la lecture. Deux allers-retours avec le moteur
+média là où il n'en fallait aucun.
+
+Sur iPhone, c'est pire que lent. Rendre audible un lecteur **déjà en train de
+jouer** l'arrête net — et c'est exactement ce qui arrivait au lecteur amorcé en
+silence trois dixièmes de seconde plus tôt : la préparation était annulée au
+moment précis où elle devait servir. Toute la mécanique d'avance décrite plus
+haut se démontait à chaque coupe.
+
+Les lecteurs du montage sont désormais muets pour de bon — attribut posé dès
+leur création, avant tout chargement — et il n'y a plus de repli « on coupe le
+son et on réessaie », puisqu'il n'y a plus de son à couper. En contrepartie, la
+musique doit être lancée pour elle-même : elle partait jusqu'ici de l'événement
+« lecture » d'un lecteur vidéo, donc après le clic, donc hors du geste. Elle
+part maintenant dans le geste, avec le reste.
+
+### Le banc d'essai cachait ce défaut
+
+Toutes les mesures de fluidité étaient prises dans un navigateur lancé avec
+`--autoplay-policy=no-user-gesture-required` — un drapeau qui autorise
+précisément ce qu'un vrai navigateur interdit. Le défaut ci-dessus était donc
+invisible en mesure, et l'est resté longtemps. Le drapeau est retiré : le banc
+d'essai joue maintenant sous la même règle que l'appareil.
+
+Quatre essais alternés entre les deux versions, sous la règle réelle :
+
+```
+                          avec son    muet
+au-dessus de 100 ms       2 1 1 1     2 0 0 0
+la plus longue (ms)   126 109 102 104   136 85 92 82
+```
+
+Trois essais sur quatre ne dépassent plus la dixième de seconde une seule fois,
+là où la version audible en avait au moins une à chaque essai. Et l'écart mesuré
+ici est un plancher : un navigateur de bureau donne à la page une autorisation
+durable dès le premier clic, ce que Safari sur iPhone ne fait pas.
+
 ### Ce que ça donne
 
 Seize coupes de 1,6 s, tous les fichiers sur l'appareil :
