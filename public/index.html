@@ -2604,7 +2604,7 @@ const ECHELLE_MIN = 0.3;
 // image.
 const ECHELLE_MAX = 96 * IMAGES_PAR_SECONDE;
 const PAS_REGLE = [1 / IMAGES_PAR_SECONDE, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
-const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null, demande: false, horloge: null };
+const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: null, audioProjet: null, position: 0, seek: null, scrub: false, cible: null, secousse: false, actif: 0, moniteur: null, demande: false, horloge: null };
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
@@ -3021,6 +3021,7 @@ function editeur(projet) {
   fluide.empreinte = null;
   if (fluide.url) { URL.revokeObjectURL(fluide.url); fluide.url = null; }
   reprendreFluide(projet).catch(() => {});
+  reprendreMusique(projet).catch(() => {});
   reveillerMoniteur(1500);
   // Le battement de repos ne se met en route qu'une fois, et ne s'arrête plus :
   // c'est lui qui repère le retour dans la vue du projet.
@@ -3168,6 +3169,38 @@ async function garderFluide(projet, blob, empreinte) {
 /* Retrouver l'aperçu d'un projet qu'on rouvre. On ne lit le fichier que si son
    empreinte correspond encore : inutile de sortir de la réserve un rendu d'un
    montage qui n'existe plus. */
+/* Rendre sa musique à un projet qu'on rouvre — ou la lui retirer quand on
+   change de projet, sans quoi la chanson de l'un jouerait sur le montage de
+   l'autre. Appelée à chaque affichage du montage, donc écrite pour ne rien
+   faire quand il n'y a rien à faire. */
+async function reprendreMusique(projet) {
+  if (!projet) return;
+  if (lecture.audioProjet === projet.id && (lecture.audio || !projet.audio)) return;
+  if (!projet.audio) {
+    if (lecture.audio) { arreterSon(); lecture.audio = null; }
+    lecture.audioProjet = projet.id;
+    return;
+  }
+  lecture.audioProjet = projet.id;
+  if (lecture.audio) { arreterSon(); lecture.audio = null; }
+  let blob;
+  try { blob = await lireBase(cleMusique(projet)); } catch { return; }
+  if (!(blob instanceof Blob) || !blob.size) return;
+  if (projetActif()?.id !== projet.id) return;
+  const son = new Audio(URL.createObjectURL(blob));
+  son.preload = "metadata";
+  await new Promise((suite) => {
+    son.addEventListener("loadedmetadata", suite, { once: true });
+    son.addEventListener("error", suite, { once: true });
+    setTimeout(suite, 4000);
+  });
+  if (projetActif()?.id !== projet.id) return;
+  if (!son.duration) return;
+  lecture.audio = son;
+  // La barre de son disait « Rouvrir le fichier » : elle n'a plus lieu de le dire.
+  rendreProjet();
+}
+
 async function reprendreFluide(projet) {
   const fiche = lireFichesFluide()[projet.id];
   if (!fiche || fiche.empreinte !== empreinteMontage(projet)) return;
@@ -4500,6 +4533,13 @@ function barreFluide() {
   bouton.type = "button";
   bouton.id = "btn-fluide";
   bouton.className = "fluide-action";
+  /* Le libellé est posé ici, pas seulement par « majBandeauFluide ».
+
+     Celle-ci cherche le bouton par son identifiant — et au moment où la barre
+     est fabriquée, elle n'est pas encore dans la page : la recherche ne trouvait
+     rien et le bouton restait vide. On voyait une petite forme sans texte, tant
+     qu'aucune modification du montage ne venait rafraîchir la barre. */
+  bouton.textContent = "Préparer l'aperçu fluide";
   bouton.addEventListener("click", () => {
     if (fluide.construction) { fluide.arret = true; return; }
     const projet = projetActif();
@@ -4509,8 +4549,12 @@ function barreFluide() {
   const dit = document.createElement("span");
   dit.className = "fluide-dit";
   dit.id = "fluide-dit";
+  dit.textContent = "La lecture enchaîne les rushs un par un, et marque à chaque coupe. "
+    + "Un aperçu fluide fabrique le montage en un seul fichier, une fois, et se lit d'une traite.";
 
   barre.append(bouton, dit);
+  // Une fois la barre posée dans la page, elle peut dire ce qu'il en est vraiment.
+  requestAnimationFrame(() => majBandeauFluide());
   return barre;
 }
 
@@ -5230,6 +5274,7 @@ function boutonSon(projet) {
     retirer.addEventListener("click", () => {
       arreterSon();
       lecture.audio = null;
+      effacerBase(cleMusique(projet)).catch(() => {});
       projet.audio = null;
       sauver();
       enregistrer(projet);
@@ -5242,6 +5287,17 @@ function boutonSon(projet) {
 
 // Le fichier vient de l'appareil : un navigateur ne peut pas le rouvrir seul au
 // rechargement, on ne garde donc que son nom et sa durée.
+/* La musique est rangée sur l'appareil, comme les rushs.
+
+   Un navigateur ne peut pas rouvrir seul un fichier choisi la dernière fois :
+   c'est une règle de sécurité, pas un manque. Mais rien n'empêche d'en garder
+   une copie — c'est déjà ce qu'on fait des cent soixante-quinze rushs. Il
+   fallait donc redonner sa musique à chaque ouverture pour rien.
+
+   La copie vit sous « musique:<projet> », à côté des rushs, et elle est effacée
+   avec la bande son. */
+const cleMusique = (projet) => `musique:${projet.id}`;
+
 function chargerSon(projet, fichier) {
   arreterSon();
   const url = URL.createObjectURL(fichier);
@@ -5250,6 +5306,8 @@ function chargerSon(projet, fichier) {
   son.addEventListener("loadedmetadata", () => {
     projet.audio = { nom: fichier.name, duree: Math.round(son.duration * 100) / 100 };
     lecture.audio = son;
+    lecture.audioProjet = projet.id;
+    ecrireBase(cleMusique(projet), fichier).catch(() => { /* stockage plein : la musique vaudra pour cette séance */ });
     sauver();
     enregistrer(projet);
     rendreProjet();
@@ -7803,6 +7861,13 @@ async function choisirCodec(liste, config) {
    seule. On ne le déplace donc que pour entrer dans un plan ; à l'intérieur, on
    le laisse courir et on prend au passage l'image de chaque instant voulu. */
 async function avancerVers(video, cible, rythme) {
+  /* Et si la lecture ne prend pas, on repasse aux déplacements pour de bon.
+
+     Un navigateur peut refuser de jouer, ou jouer sans avancer : sur un appareil
+     où cela arrive, chaque image attendrait les deux secondes du garde-fou et la
+     fabrication n'avancerait plus. On s'en aperçoit à la première image et l'on
+     renonce — la fabrication est alors plus lente, mais elle aboutit. */
+  if (video.dataset.sansLecture === "oui") { await attendreImage(video, cible); return; }
   const ecart = cible - video.currentTime;
   /* Un vrai saut — en arrière, ou loin devant — mérite un déplacement franc.
 
@@ -7822,12 +7887,30 @@ async function avancerVers(video, cible, rythme) {
     video.playbackRate = rythme;
     try { await video.play(); } catch { await attendreImage(video, cible); return; }
   }
-  const limite = performance.now() + 2000;
+  const depart = video.currentTime;
+  const limite = performance.now() + 1200;
   while (video.currentTime < cible && !video.ended && performance.now() < limite) {
+    /* L'attente d'une image ne peut jamais être la seule issue.
+
+       « requestVideoFrameCallback » ne se déclenche que si le lecteur présente
+       une image. S'il ne joue pas — et un iPhone ne joue pas un élément vidéo
+       posé hors du document — il ne présente rien, le rappel n'arrive jamais, et
+       la boucle attendait pour toujours : le compte à rebours lui-même n'était
+       plus relu. C'est là que la fabrication se figeait à un pour cent. Un
+       garde-fou court l'accompagne donc, et c'est lui qui rend la main quand
+       rien ne vient. */
     await new Promise((suite) => {
-      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => suite());
-      else setTimeout(suite, 8);
+      let rendu = false;
+      const fait = () => { if (rendu) return; rendu = true; clearTimeout(garde); suite(); };
+      const garde = setTimeout(fait, 120);
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(fait);
     });
+  }
+  if (video.currentTime <= depart + 0.001 && !video.ended) {
+    // La lecture n'a pas bougé : ce navigateur ne veut pas d'elle ici.
+    video.dataset.sansLecture = "oui";
+    video.pause();
+    await attendreImage(video, cible);
   }
 }
 
@@ -7947,10 +8030,23 @@ async function rendreImages(projet, reglages) {
   toile.height = hauteur;
   const ctx = toile.getContext("2d", { alpha: false });
 
+  /* Le lecteur du rendu vit dans la page, pas à côté.
+
+     Il était fabriqué et jamais posé dans le document. Un déplacement d'image
+     fonctionne quand même — c'est ainsi que l'export marchait — mais une lecture,
+     non : sur iPhone, un élément vidéo hors du document ne joue pas. Depuis que
+     l'aperçu fluide se fabrique en laissant jouer les rushs, la fabrication
+     restait donc bloquée à un pour cent, chaque image attendant en vain les deux
+     secondes de son garde-fou. */
   const lecteur = document.createElement("video");
+  lecteur.className = "lecteur-cache";
   lecteur.muted = true;
+  lecteur.setAttribute("muted", "");
+  lecteur.defaultMuted = true;
   lecteur.playsInline = true;
+  lecteur.setAttribute("playsinline", "");
   lecteur.preload = "auto";
+  ($("ecran") || document.body).append(lecteur);
 
   const pisteVideo = { id: 1, type: "video", codec, echelle, largeur, hauteur,
     description: null, echantillons: [] };
@@ -8047,6 +8143,7 @@ async function rendreImages(projet, reglages) {
   } finally {
     lecteur.removeAttribute("src");
     lecteur.load();
+    lecteur.remove();
   }
 }
 

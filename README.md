@@ -2639,6 +2639,46 @@ processeur ×4, 24 coupes de 0,8 s
   images tenues                          1                  0
 ```
 
+### Trois défauts trouvés sur l'appareil
+
+Le premier essai sur iPhone a rapporté trois choses, dont l'une était grave.
+
+**Le bouton apparaissait sans texte.** Son libellé n'était posé que par la
+fonction qui rafraîchit la barre — laquelle cherche le bouton par son
+identifiant, alors qu'au moment de la fabrication il n'est pas encore dans la
+page. La recherche ne trouvait rien, le bouton restait vide, et il le restait
+jusqu'à la première modification du montage. Le libellé est désormais posé sur
+l'élément lui-même, à sa naissance.
+
+**La fabrication restait figée à un pour cent.** Deux causes qui se
+superposaient, la première expliquant la seconde :
+
+- Le lecteur du rendu était fabriqué et jamais posé dans le document. Un
+  déplacement d'image fonctionne quand même — c'est ainsi que l'export marchait
+  depuis le début — mais une lecture, non : sur iPhone, un élément vidéo hors du
+  document ne joue pas. Or l'aperçu se fabrique justement en laissant jouer les
+  rushs. Il vit maintenant dans la page, comme les lecteurs du montage.
+- Et l'attente d'une image n'avait pas d'issue de secours.
+  « requestVideoFrameCallback » ne se déclenche que si le lecteur présente une
+  image ; s'il ne joue pas, le rappel n'arrive jamais — et le compte à rebours
+  censé abandonner au bout de deux secondes n'était même plus relu, puisqu'il
+  n'était vérifié qu'entre deux rappels. Ce n'était donc pas lent : c'était
+  arrêté, pour toujours. Un garde-fou court accompagne maintenant chaque
+  attente, et un lecteur qui accepte de jouer sans avancer fait basculer la
+  fabrication sur les déplacements pour de bon.
+
+Vérifié en simulant un navigateur qui accepte « play » et ne bouge pas d'un
+pouce : la fabrication aboutit, en vingt secondes au lieu de six pour onze
+secondes de montage. Plus lent, mais jamais figé.
+
+**La musique était à redonner à chaque ouverture.** Un navigateur ne peut pas
+rouvrir seul un fichier choisi la dernière fois — c'est une règle de sécurité,
+pas un manque. Mais rien n'empêche d'en garder une copie, et c'est déjà ce
+qu'on fait des cent soixante-quinze rushs. Le fichier est désormais rangé sur
+l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et effacé
+avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
+l'un jouer sur le montage de l'autre.
+
 ### Fabriquer en moins de temps qu'il n'en dure
 
 Le premier jet mettait quarante-six secondes pour vingt-cinq secondes de
