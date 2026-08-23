@@ -1458,6 +1458,59 @@ piste son           2 canaux, 44 100 Hz, niveau RMS 0,124
 
 Du son réel, pas du silence.
 
+## Rendre image par image, hors du temps réel
+
+Le rendu qui filme l'aperçu est prisonnier de la vitesse de l'appareil : ce qu'il
+n'a pas eu le temps de peindre n'existe pas dans le fichier. Huit images par
+seconde sur un iPhone XR, avec des figements d'un tiers de seconde. Ni la
+définition ni la cadence demandée n'y changent rien — c'est mesuré plus bas.
+
+On renverse donc le problème : **le temps du fichier n'est plus celui de
+l'horloge**. Pour chaque image à produire, on va chercher l'instant exact dans le
+rush qui convient, on le dessine, on l'encode. L'appareil met le temps qu'il faut
+— plus que la durée du montage sur un téléphone — mais chaque image est à sa
+place. C'est ainsi qu'exporte un banc de montage : on n'a rien à montrer en
+chemin, donc on peut attendre.
+
+WebCodecs sait encoder. Il ne sait pas emballer : ce qu'il rend est un flux
+d'échantillons, pas un fichier. **Le MP4 est donc écrit ici, boîte par boîte** —
+`ftyp`, `mdat`, puis `moov` en dernier, parce qu'il faut connaître la taille de
+chaque échantillon pour remplir ses tables. Non fragmenté, contrairement à ce que
+produit `MediaRecorder` : tous les lecteurs savent s'y déplacer.
+
+Le résultat, mesuré sur un montage de seize secondes :
+
+```
+Duration: 00:00:16.00   960x540   24 fps
+384 images · intervalles : médiane 42 ms · min 42 · max 42
+irréguliers (hors 41-42 ms) : 0
+son : 16,00 s, moyenne -17,7 dB, crête -2,2 dB
+rendu en 27 s
+```
+
+**Pas un seul intervalle irrégulier.** Là où le rendu en temps réel donnait une
+médiane de 125 ms et des pointes à 327.
+
+Un piège, trouvé en ouvrant le fichier produit : l'encodeur acceptait VP9, mais
+la boîte de description écrite annonçait du VP8. Le fichier se décrivait bien,
+durait bien seize secondes, et **pas une image n'en sortait** — « Invalid sync
+code ». Un format qu'on ne sait pas décrire correctement n'a rien à faire dans la
+liste des codecs ; VP9 en a été retiré.
+
+Ce qui reste à éprouver sur son appareil : le chemin **H.264**. Ce Chromium n'a
+aucun codec propriétaire — ni H.264 ni AAC — la structure du fichier a donc été
+validée en VP8 et Opus, qui empruntent exactement le même code pour les tables,
+les durées et les positions. Seule la boîte de description du codec diffère, et
+elle vient telle quelle de l'encodeur.
+
+Les deux méthodes restent offertes, avec ce qu'elles coûtent :
+
+| | image par image | en temps réel |
+| --- | --- | --- |
+| cadence du fichier | 24 i/s, toujours | ce que l'appareil arrive à peindre |
+| durée du rendu | plus longue que le montage | celle du montage |
+| l'écran doit rester allumé | non | oui |
+
 ### Le fichier rendu par son téléphone
 
 Le meilleur rapport de bogue est le fichier lui-même. Neuf mégaoctets tirés d'un

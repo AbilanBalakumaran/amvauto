@@ -3219,7 +3219,7 @@ const TAILLES_RENDU = [
 const tailleRendu = () =>
   TAILLES_RENDU.find((t) => t.cle === (etatRendu.taille || (window.innerWidth < 700 ? "540" : "720")))
   || TAILLES_RENDU[0];
-const etatRendu = { taille: null };
+const etatRendu = { taille: null, methode: null };
 let RENDU_LARGEUR = 1280;
 let RENDU_HAUTEUR = 720;
 
@@ -6436,8 +6436,13 @@ function texteExport(projet, format, extension) {
     format
       ? `La vidéo sortira en ${extension}, ${tailleRendu().largeur}×${tailleRendu().hauteur}, environ ${poidsTaille.toFixed(0)} Mo.`
       : "Ce navigateur ne sait pas enregistrer de vidéo.",
-    "Le rendu filme l'aperçu : sur un téléphone, une définition plus basse sort plus fluide, "
-      + "parce que l'appareil arrive à produire plus d'images par seconde.",
+    etatRendu.methode === "direct" || !rendreDisponible()
+      ? "En temps réel : le rendu filme l'aperçu. Aussi rapide que le montage est long, mais ce que "
+        + "l'appareil n'a pas le temps de peindre manque au fichier — sur un téléphone, huit images "
+        + "par seconde au lieu de vingt-quatre."
+      : "Image par image : chaque image est fabriquée à sa place, sans se soucier de l'horloge. Le "
+        + "fichier sort à vingt-quatre images par seconde quoi qu'il arrive ; l'appareil, lui, met "
+        + "plus longtemps que la durée du montage. L'écran peut s'éteindre pendant ce temps.",
     `Le rendu se fait en temps réel : compte ${minutage(longueur)}, écran allumé et application au premier plan.`,
     "",
     absents
@@ -6475,6 +6480,43 @@ function ouvrirExport(projet) {
      le fichier sortira fluide ou haché : le rendu filme l'aperçu en temps réel,
      et moins il y a de pixels, plus l'appareil arrive à en produire par
      seconde. */
+  /* Deux façons de rendre, et elles n'ont rien à voir.
+
+     « Image par image » fabrique chaque image à sa place, sans se soucier de
+     l'horloge : le fichier sort à vingt-quatre images par seconde quoi qu'il
+     arrive, mais l'appareil met plus longtemps que la durée du montage. « En
+     temps réel » filme l'aperçu : c'est aussi rapide que le montage est long, et
+     ce que l'appareil n'a pas eu le temps de peindre manque au fichier. */
+  const rangeeMethode = document.createElement("label");
+  rangeeMethode.className = "lecteur-reglage pile";
+  const titreMethode = document.createElement("span");
+  titreMethode.textContent = "Méthode";
+  const pastillesMethode = document.createElement("div");
+  pastillesMethode.className = "pastilles";
+  const METHODES = [
+    ["fin", "Image par image · régulier"],
+    ["direct", "En temps réel · rapide"],
+  ];
+  const peindreMethodes = () => {
+    const courante = etatRendu.methode || "fin";
+    [...pastillesMethode.children].forEach((el) => el.classList.toggle("on", el.dataset.cle === courante));
+  };
+  METHODES.forEach(([cle, nom]) => {
+    const pastille = document.createElement("button");
+    pastille.type = "button";
+    pastille.className = "pastille";
+    pastille.dataset.cle = cle;
+    pastille.textContent = nom;
+    pastille.addEventListener("click", () => {
+      etatRendu.methode = cle;
+      peindreMethodes();
+      meta.textContent = texteExport(projet, format, extension);
+    });
+    pastillesMethode.append(pastille);
+  });
+  rangeeMethode.append(titreMethode, pastillesMethode);
+  rangeeMethode.hidden = !rendreDisponible();
+
   const rangeeTaille = document.createElement("label");
   rangeeTaille.className = "lecteur-reglage pile";
   const titreTaille = document.createElement("span");
@@ -6521,8 +6563,12 @@ function ouvrirExport(projet) {
     if (rendu.encours) { arreterRendu(); return; }
     const empeche = ceQuiManque(projet, format);
     if (empeche) { etat.textContent = empeche; return; }
-    lancerRendu(projet, video, etat,
-      (blob, ext, cadence) => livrerRendu(blob, ext, projet, livraison, cadence));
+    const livrer = (blob, ext, cadence) => livrerRendu(blob, ext, projet, livraison, cadence);
+    if (etatRendu.methode !== "direct" && rendreDisponible()) {
+      rendreHorsTempsReel(projet, video, etat, livrer);
+      return;
+    }
+    lancerRendu(projet, video, etat, livrer);
   });
 
   /* Un rendu qui part quand même et sort muet, ou troué de noir, c'est une
@@ -6602,7 +6648,8 @@ function ouvrirExport(projet) {
 
   actions.append(video, paquet, edl, liste, fermer);
   if (!lecture.audio) actions.append(musique);
-  corps.append(titre, meta, rangeeTaille, etat, livraison, actions);
+  corps.append(titre, meta, rangeeMethode, rangeeTaille, etat, livraison, actions);
+  peindreMethodes();
   peindreTailles();
   jauger();
 
@@ -6722,6 +6769,7 @@ function sortieSonPourRendu() {
 
 function arreterRendu() {
   rendu.encours = false;
+  rendu.arret = true;
   if (rendu.surveille) { clearInterval(rendu.surveille); rendu.surveille = null; }
   try { rendu.enregistreur?.stop(); } catch { /* déjà arrêté */ }
   arreter();
@@ -6987,6 +7035,513 @@ async function reprendreRendu(projet) {
   const blob = await lireBase(cleRendu(projet));
   if (!(blob instanceof Blob) || !blob.size) return null;
   return { blob, ...fiche };
+}
+
+
+/* --- écrire un MP4 à la main ------------------------------------------
+
+   Le rendu en temps réel filme l'aperçu : sur un téléphone, il sort à huit
+   images par seconde avec des figements d'un tiers de seconde. Ni la
+   définition ni la cadence demandée n'y changent rien — mesuré. Le seul remède
+   est d'arrêter de filmer : fabriquer chaque image une par une, à cadence
+   fixe, et l'encoder. L'appareil met alors le temps qu'il faut, mais le fichier
+   est régulier.
+
+   WebCodecs sait encoder. Il ne sait pas emballer : c'est un flux d'échantillons
+   qu'il rend, pas un fichier. Le MP4 se écrit donc ici, boîte par boîte.
+
+   La structure est celle d'un MP4 ordinaire, non fragmenté — celui que tous les
+   lecteurs savent parcourir, contrairement à ce que produit MediaRecorder :
+
+     ftyp   ce que le fichier prétend être
+     mdat   les octets des images et du son, bout à bout
+     moov   le plan : quelle piste, quel codec, quelle image à quel octet
+
+   Le « moov » est écrit en dernier parce qu'il faut connaître la taille de
+   chaque échantillon pour le remplir. Les lecteurs l'acceptent à la fin. */
+
+const CODEC_MP4 = new TextEncoder();
+
+function nombreVersOctets(valeur, taille) {
+  const octets = new Uint8Array(taille);
+  for (let i = taille - 1; i >= 0; i -= 1) { octets[i] = valeur & 0xff; valeur = Math.floor(valeur / 256); }
+  return octets;
+}
+
+const u8 = (...v) => new Uint8Array(v);
+const u16 = (v) => nombreVersOctets(v, 2);
+const u32 = (v) => nombreVersOctets(v, 4);
+const u64 = (v) => nombreVersOctets(v, 8);
+
+/* Une boîte : sa taille, son nom, son contenu. Tout le format n'est que cela,
+   emboîté. */
+function boiteMp4(nom, ...morceaux) {
+  const corps = [];
+  let taille = 8;
+  for (const m of morceaux) {
+    const octets = m instanceof Uint8Array ? m : new Uint8Array(m);
+    corps.push(octets);
+    taille += octets.length;
+  }
+  const sortie = new Uint8Array(taille);
+  sortie.set(u32(taille), 0);
+  sortie.set(CODEC_MP4.encode(nom), 4);
+  let position = 8;
+  for (const m of corps) { sortie.set(m, position); position += m.length; }
+  return sortie;
+}
+
+// Une boîte « pleine version » : un octet de version, trois de drapeaux.
+const boiteMp4Pleine = (nom, version, drapeaux, ...morceaux) =>
+  boiteMp4(nom, u8(version), nombreVersOctets(drapeaux, 3), ...morceaux);
+
+const MATRICE = new Uint8Array([
+  0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0x40, 0, 0, 0,
+]);
+
+/* La description du codec, telle que l'encodeur nous l'a donnée. Pour H.264
+   c'est le « avcC » — profils, niveaux, jeux de paramètres — sans quoi aucun
+   lecteur ne sait démarrer le décodage. */
+function entreeVideo(piste) {
+  const avc = piste.codec.startsWith("avc1");
+  if (!avc && !piste.codec.startsWith("vp8")) {
+    throw new Error(`codec non emballable : ${piste.codec}`);
+  }
+  const specifique = avc
+    ? boiteMp4("avcC", piste.description)
+    /* Profil 0, niveau 1.0, huit bits par composante, sous-échantillonnage
+       4:2:0 : la description minimale d'un flux VP8, telle que la réclame le
+       conteneur. */
+    : boiteMp4("vpcC", u8(1, 0, 0, 0), u8(0, 10, 0x08 << 4 | 0x01 << 1, 0), u16(0));
+  const nom = avc ? "avc1" : "vp08";
+  return boiteMp4(
+    nom,
+    u8(0, 0, 0, 0, 0, 0), u16(1),                    // réservé, index de donnée
+    u16(0), u16(0), u32(0), u32(0), u32(0),          // version, révision, fabricant
+    u16(piste.largeur), u16(piste.hauteur),
+    u32(0x00480000), u32(0x00480000),                // 72 points par pouce
+    u32(0), u16(1),
+    new Uint8Array(32),                              // nom du compresseur
+    u16(0x0018), u16(0xffff),                        // profondeur, table de couleurs
+    specifique,
+  );
+}
+
+/* Le son. « mp4a » réclame un « esds » qui enveloppe la configuration que rend
+   l'encodeur ; Opus se contente d'un « dOps ». On écrit celui qui correspond. */
+function entreeAudio(piste) {
+  const commun = [
+    u8(0, 0, 0, 0, 0, 0), u16(1),
+    u32(0), u32(0),
+    u16(piste.canaux), u16(16), u16(0), u16(0),
+    u32(piste.echantillonnage * 65536),
+  ];
+  if (piste.codec.startsWith("mp4a")) {
+    const config = piste.description || new Uint8Array([0x11, 0x90]);
+    const descripteurDecodeur = boiteMp4Descripteur(0x04, [
+      u8(0x40, 0x15),                                 // AAC, flux audio
+      nombreVersOctets(0, 3), u32(0), u32(0),         // tampon, débits
+      boiteMp4Descripteur(0x05, [config]),
+    ]);
+    const esds = boiteMp4Pleine("esds", 0, 0,
+      boiteMp4Descripteur(0x03, [u16(1), u8(0), descripteurDecodeur, boiteMp4Descripteur(0x06, [u8(2)])]));
+    return boiteMp4("mp4a", ...commun, esds);
+  }
+  return boiteMp4("Opus", ...commun,
+    boiteMp4("dOps", u8(0), u8(piste.canaux), u16(312), u32(piste.echantillonnage), u16(0), u8(0)));
+}
+
+/* Les descripteurs MPEG-4 ont leur propre encodage de longueur, sur sept bits
+   par octet. C'est le seul endroit du format où l'on compte ainsi. */
+function boiteMp4Descripteur(marque, morceaux) {
+  const contenu = [];
+  let taille = 0;
+  for (const m of morceaux) { contenu.push(m); taille += m.length; }
+  const longueur = [];
+  let reste = taille;
+  do { longueur.unshift((reste & 0x7f) | (longueur.length ? 0x80 : 0)); reste >>= 7; } while (reste);
+  const sortie = new Uint8Array(1 + longueur.length + taille);
+  sortie[0] = marque;
+  sortie.set(longueur, 1);
+  let position = 1 + longueur.length;
+  for (const m of contenu) { sortie.set(m, position); position += m.length; }
+  return sortie;
+}
+
+/* La table des durées : autant de lignes que de changements de cadence. Une
+   vidéo à cadence fixe tient en une seule ligne. */
+function tableDurees(echantillons) {
+  const lignes = [];
+  for (const e of echantillons) {
+    const derniere = lignes[lignes.length - 1];
+    if (derniere && derniere.duree === e.duree) derniere.compte += 1;
+    else lignes.push({ compte: 1, duree: e.duree });
+  }
+  const corps = [u32(lignes.length)];
+  for (const l of lignes) corps.push(u32(l.compte), u32(l.duree));
+  return boiteMp4Pleine("stts", 0, 0, ...corps);
+}
+
+function tableTailles(echantillons) {
+  const corps = [u32(0), u32(echantillons.length)];
+  for (const e of echantillons) corps.push(u32(e.taille));
+  return boiteMp4Pleine("stsz", 0, 0, ...corps);
+}
+
+function tablePositions(echantillons) {
+  const corps = [u32(echantillons.length)];
+  for (const e of echantillons) corps.push(u32(e.decalage));
+  return boiteMp4Pleine("stco", 0, 0, ...corps);
+}
+
+// Un échantillon par bloc : le plus simple, et le plus sûr.
+const tableBlocs = () => boiteMp4Pleine("stsc", 0, 0, u32(1), u32(1), u32(1), u32(1));
+
+function tableCles(echantillons) {
+  const cles = [];
+  echantillons.forEach((e, i) => { if (e.cle) cles.push(i + 1); });
+  if (cles.length === echantillons.length) return new Uint8Array(0);
+  const corps = [u32(cles.length)];
+  for (const c of cles) corps.push(u32(c));
+  return boiteMp4Pleine("stss", 0, 0, ...corps);
+}
+
+function pisteMoov(piste, dureeFilm, echelleFilm) {
+  const dureePiste = piste.echantillons.reduce((somme, e) => somme + e.duree, 0);
+  const dureeEnFilm = Math.round((dureePiste / piste.echelle) * echelleFilm);
+  const video = piste.type === "video";
+
+  const tkhd = boiteMp4Pleine("tkhd", 0, 3,
+    u32(0), u32(0), u32(piste.id), u32(0), u32(dureeEnFilm),
+    u32(0), u32(0), u16(0), u16(video ? 0 : 0x0100), u16(0), u16(0),
+    MATRICE,
+    u32(video ? piste.largeur * 65536 : 0), u32(video ? piste.hauteur * 65536 : 0));
+
+  const mdhd = boiteMp4Pleine("mdhd", 0, 0,
+    u32(0), u32(0), u32(piste.echelle), u32(dureePiste), u16(0x55c4), u16(0));
+
+  const hdlr = boiteMp4Pleine("hdlr", 0, 0,
+    u32(0), CODEC_MP4.encode(video ? "vide" : "soun"), u32(0), u32(0), u32(0), u8(0));
+
+  const entete = video
+    ? boiteMp4Pleine("vmhd", 0, 1, u16(0), u16(0), u16(0), u16(0))
+    : boiteMp4Pleine("smhd", 0, 0, u16(0), u16(0));
+
+  const dinf = boiteMp4("dinf", boiteMp4Pleine("dref", 0, 0, u32(1), boiteMp4Pleine("url ", 0, 1)));
+
+  const stbl = boiteMp4("stbl",
+    boiteMp4Pleine("stsd", 0, 0, u32(1), video ? entreeVideo(piste) : entreeAudio(piste)),
+    tableDurees(piste.echantillons),
+    tableCles(piste.echantillons),
+    tableBlocs(),
+    tableTailles(piste.echantillons),
+    tablePositions(piste.echantillons));
+
+  return boiteMp4("trak", tkhd,
+    boiteMp4("mdia", mdhd, hdlr, boiteMp4("minf", entete, dinf, stbl)));
+}
+
+/* Assemble le fichier. « pistes » porte, pour chacune, ses échantillons déjà
+   encodés et la position qu'ils occuperont dans le « mdat ». */
+function ecrireMp4(pistes) {
+  const echelleFilm = 1000;
+  let duree = 0;
+  for (const piste of pistes) {
+    const t = piste.echantillons.reduce((somme, e) => somme + e.duree, 0) / piste.echelle;
+    duree = Math.max(duree, t);
+  }
+  const dureeFilm = Math.round(duree * echelleFilm);
+
+  const ftyp = boiteMp4("ftyp", CODEC_MP4.encode("isom"), u32(512),
+    CODEC_MP4.encode("isomiso2avc1mp41"));
+
+  // Les octets, dans l'ordre : d'abord toute la vidéo, puis tout le son.
+  const corps = [];
+  let decalage = ftyp.length + 8;
+  for (const piste of pistes) {
+    for (const e of piste.echantillons) {
+      e.decalage = decalage;
+      decalage += e.taille;
+      corps.push(e.octets);
+    }
+  }
+  const tailleMdat = decalage - ftyp.length - 8;
+  const teteMdat = new Uint8Array(8);
+  teteMdat.set(u32(tailleMdat + 8), 0);
+  teteMdat.set(CODEC_MP4.encode("mdat"), 4);
+
+  const mvhd = boiteMp4Pleine("mvhd", 0, 0,
+    u32(0), u32(0), u32(echelleFilm), u32(dureeFilm), u32(0x00010000), u16(0x0100), u16(0),
+    u32(0), u32(0), MATRICE, u32(0), u32(0), u32(0), u32(0), u32(0), u32(0),
+    u32(pistes.length + 1));
+
+  const moov = boiteMp4("moov", mvhd, ...pistes.map((p) => pisteMoov(p, dureeFilm, echelleFilm)));
+  return new Blob([ftyp, teteMdat, ...corps, moov], { type: "video/mp4" });
+}
+
+
+/* --- rendre image par image, hors du temps réel -----------------------
+
+   Le rendu qui filme l'aperçu est prisonnier de la vitesse de l'appareil : ce
+   qu'il n'a pas eu le temps de peindre n'existe pas dans le fichier. Mesuré sur
+   un iPhone XR — huit images par seconde en moyenne, avec douze figements de
+   plus de deux cents millisecondes en neuf secondes.
+
+   Ici, on renverse : le temps du fichier n'est plus celui de l'horloge. Pour
+   chaque image à produire, on va chercher l'instant exact dans le rush qui
+   convient, on le dessine, on l'encode. L'appareil met le temps qu'il faut —
+   plus que la durée du montage sur un téléphone — mais chaque image du fichier
+   est à sa place, et la cadence est exacte.
+
+   C'est ainsi que travaille un banc de montage quand il exporte. La différence
+   avec un aperçu, c'est qu'on n'a rien à montrer en chemin : on peut attendre. */
+
+/* Les codecs essayés, dans l'ordre. H.264 d'abord : c'est celui que lisent les
+   téléphones, les réseaux sociaux et les bancs de montage. VP8 en secours, pour
+   les navigateurs sans codec propriétaire.
+
+   VP9 a été retiré volontairement. Il était accepté par l'encodeur, mais la
+   boîte de description que l'on écrivait annonçait du VP8 : le fichier se
+   décrivait bien, durait bien seize secondes, et pas une image n'en sortait —
+   « Invalid sync code ». Un format que l'on ne sait pas décrire correctement
+   n'a rien à faire dans la liste. */
+const CODECS_VIDEO = ["avc1.42E01E", "avc1.4D401E", "avc1.640028", "vp8"];
+const CODECS_SON = ["mp4a.40.2", "opus"];
+
+const rendreDisponible = () =>
+  typeof VideoEncoder !== "undefined" && typeof VideoFrame !== "undefined";
+
+async function choisirCodec(liste, config) {
+  for (const codec of liste) {
+    try {
+      const essai = codec.startsWith("mp4a") || codec === "opus"
+        ? await AudioEncoder.isConfigSupported({ ...config, codec })
+        : await VideoEncoder.isConfigSupported({ ...config, codec });
+      if (essai.supported) return codec;
+    } catch { /* codec inconnu de ce navigateur */ }
+  }
+  return null;
+}
+
+/* Aller chercher une image précise dans un fichier.
+
+   Un déplacement suivi de son événement « seeked » est la seule façon fiable
+   d'obtenir l'image d'un instant donné. C'est aussi ce qui coûte : quelques
+   dizaines de millisecondes par image. On évite donc de se déplacer quand on est
+   déjà à la bonne image — d'une image à la suivante dans le même plan, le
+   lecteur avance souvent tout seul. */
+function attendreImage(video, temps) {
+  return new Promise((suite) => {
+    if (Math.abs(video.currentTime - temps) < 0.008 && video.readyState >= 2) { suite(); return; }
+    let fini = false;
+    const fait = () => { if (fini) return; fini = true; clearTimeout(garde); suite(); };
+    const garde = setTimeout(fait, 2000);
+    video.addEventListener("seeked", fait, { once: true });
+    try { video.currentTime = temps; } catch { fait(); }
+  });
+}
+
+/* Le son du montage, encodé à part.
+
+   La musique est un fichier entier, indépendant des coupes : on la décode une
+   fois et on l'encode d'un trait. Rien à synchroniser — l'image et le son
+   partent tous deux de zéro. */
+async function encoderLeSon(pistes, longueur, dire) {
+  const source = lecture.audio?.src;
+  if (!source) return;
+  let mémoire;
+  try {
+    mémoire = await (await fetch(source)).arrayBuffer();
+  } catch { return; }
+
+  const Contexte = window.AudioContext || window.webkitAudioContext;
+  const contexte = new Contexte();
+  let son;
+  try { son = await contexte.decodeAudioData(mémoire); } catch { return; }
+  const canaux = Math.min(2, son.numberOfChannels);
+  const taux = son.sampleRate;
+
+  const codec = await choisirCodec(CODECS_SON,
+    { sampleRate: taux, numberOfChannels: canaux, bitrate: 128000 });
+  if (!codec) return;
+
+  const piste = { id: 2, type: "audio", codec, echelle: taux, canaux,
+    echantillonnage: taux, description: null, echantillons: [] };
+  const encodeur = new AudioEncoder({
+    output: (bloc, meta) => {
+      if (meta?.decoderConfig?.description && !piste.description) {
+        piste.description = new Uint8Array(meta.decoderConfig.description);
+      }
+      const octets = new Uint8Array(bloc.byteLength);
+      bloc.copyTo(octets);
+      piste.echantillons.push({ octets, taille: octets.length,
+        duree: Math.max(1, Math.round((bloc.duration / 1e6) * taux)), cle: true });
+    },
+    error: () => {},
+  });
+  encodeur.configure({ codec, sampleRate: taux, numberOfChannels: canaux, bitrate: 128000 });
+
+  const PAQUET = 1024;
+  const total = Math.min(son.length, Math.ceil(longueur * taux));
+  const canauxLus = [];
+  for (let c = 0; c < canaux; c += 1) canauxLus.push(son.getChannelData(c));
+  for (let debut = 0; debut + PAQUET <= total; debut += PAQUET) {
+    const entrelace = new Float32Array(PAQUET * canaux);
+    for (let c = 0; c < canaux; c += 1) {
+      const canal = canauxLus[c];
+      for (let i = 0; i < PAQUET; i += 1) entrelace[i * canaux + c] = canal[debut + i];
+    }
+    encodeur.encode(new AudioData({ format: "f32", sampleRate: taux, numberOfFrames: PAQUET,
+      numberOfChannels: canaux, timestamp: Math.round((debut / taux) * 1e6), data: entrelace }));
+    if (debut % (PAQUET * 200) === 0) {
+      dire(`Son : ${Math.round((debut / total) * 100)} %`);
+      await new Promise((suite) => setTimeout(suite, 0));
+    }
+  }
+  await encodeur.flush();
+  encodeur.close();
+  contexte.close?.();
+  if (piste.echantillons.length) pistes.push(piste);
+}
+
+async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
+  const taille = tailleRendu();
+  const largeur = taille.largeur - (taille.largeur % 2);
+  const hauteur = taille.hauteur - (taille.hauteur % 2);
+  const codec = await choisirCodec(CODECS_VIDEO,
+    { width: largeur, height: hauteur, bitrate: Math.round(5e6 * ((largeur * hauteur) / (1280 * 720))),
+      framerate: IMAGES_PAR_SECONDE, avc: { format: "avc" } });
+  if (!codec) {
+    etat.textContent = "Ce navigateur ne sait pas encoder image par image. Le rendu en temps réel reste disponible.";
+    return;
+  }
+
+  const debuts = offsets(projet.plans);
+  const longueur = total(projet);
+  const combien = Math.max(1, Math.round(longueur * IMAGES_PAR_SECONDE));
+  const echelle = 90000;
+
+  const toile = document.createElement("canvas");
+  toile.width = largeur;
+  toile.height = hauteur;
+  const ctx = toile.getContext("2d", { alpha: false });
+
+  const lecteur = document.createElement("video");
+  lecteur.muted = true;
+  lecteur.playsInline = true;
+  lecteur.preload = "auto";
+
+  const pisteVideo = { id: 1, type: "video", codec, echelle, largeur, hauteur,
+    description: null, echantillons: [] };
+  const encodeur = new VideoEncoder({
+    output: (bloc, meta) => {
+      if (meta?.decoderConfig?.description && !pisteVideo.description) {
+        pisteVideo.description = new Uint8Array(meta.decoderConfig.description);
+      }
+      const octets = new Uint8Array(bloc.byteLength);
+      bloc.copyTo(octets);
+      pisteVideo.echantillons.push({ octets, taille: octets.length,
+        duree: Math.round(echelle / IMAGES_PAR_SECONDE), cle: bloc.type === "key" });
+    },
+    error: (erreur) => { rendu.erreur = String(erreur); },
+  });
+  encodeur.configure({ codec, width: largeur, height: hauteur, framerate: IMAGES_PAR_SECONDE,
+    bitrate: Math.round(5e6 * ((largeur * hauteur) / (1280 * 720))),
+    ...(codec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
+
+  rendu.encours = true;
+  rendu.arret = false;
+  bouton.textContent = "Arrêter le rendu";
+  bouton.classList.add("stop");
+  const depart = performance.now();
+
+  try {
+    let planCourant = null;
+    for (let i = 0; i < combien; i += 1) {
+      if (rendu.arret) break;
+      const t = i / IMAGES_PAR_SECONDE;
+      let index = debuts.findIndex((d, k) => t < d + duree(projet.plans[k]));
+      if (index < 0) index = projet.plans.length - 1;
+      const plan = projet.plans[index];
+
+      if (plan !== planCourant) {
+        planCourant = plan;
+        const adresse = sourceDe(plan);
+        if (lecteur.dataset.source !== adresse) {
+          lecteur.dataset.source = adresse;
+          lecteur.src = adresse;
+          await new Promise((suite) => {
+            const fait = () => suite();
+            lecteur.addEventListener("loadeddata", fait, { once: true });
+            lecteur.addEventListener("error", fait, { once: true });
+            setTimeout(fait, 4000);
+          });
+        }
+      }
+
+      const dans = entreeDe(plan) + Math.max(0, t - (debuts[index] || 0));
+      await attendreImage(lecteur, Math.min(dans, Math.max(0, (lecteur.duration || dans) - 0.02)));
+
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, largeur, hauteur);
+      if (lecteur.videoWidth) {
+        const f = Math.min(largeur / lecteur.videoWidth, hauteur / lecteur.videoHeight);
+        const l = lecteur.videoWidth * f;
+        const h = lecteur.videoHeight * f;
+        ctx.drawImage(lecteur, (largeur - l) / 2, (hauteur - h) / 2, l, h);
+      }
+      const image = new VideoFrame(toile, {
+        timestamp: Math.round((i * 1e6) / IMAGES_PAR_SECONDE),
+        duration: Math.round(1e6 / IMAGES_PAR_SECONDE),
+      });
+      encodeur.encode(image, { keyFrame: i % (IMAGES_PAR_SECONDE * 2) === 0 });
+      image.close();
+
+      if (i % 12 === 0) {
+        const fait = i / combien;
+        const passe = (performance.now() - depart) / 1000;
+        const reste = fait > 0.02 ? Math.round((passe / fait) * (1 - fait)) : 0;
+        etat.textContent = `Rendu image par image — ${Math.round(fait * 100)} %`
+          + (reste ? `, encore ${minutage(reste)}` : "")
+          + "\nL'application doit rester ouverte, mais l'écran peut s'éteindre.";
+        // Une respiration : sans elle, l'interface se fige et le bouton d'arrêt
+        // ne répond plus.
+        await new Promise((suite) => setTimeout(suite, 0));
+      }
+      if (encodeur.encodeQueueSize > 8) {
+        await new Promise((suite) => setTimeout(suite, 8));
+      }
+    }
+    await encodeur.flush();
+    encodeur.close();
+
+    if (rendu.arret || !pisteVideo.echantillons.length) {
+      etat.textContent = rendu.arret ? "Rendu arrêté." : "Aucune image n'a pu être produite.";
+      return;
+    }
+
+    const pistes = [pisteVideo];
+    await encoderLeSon(pistes, longueur, (quoi) => { etat.textContent = quoi; });
+
+    const blob = ecrireMp4(pistes);
+    const secondes = (performance.now() - depart) / 1000;
+    etat.textContent = `Rendu terminé en ${minutage(Math.round(secondes))} — `
+      + `${pisteVideo.echantillons.length} images à ${IMAGES_PAR_SECONDE} par seconde, sans un saut.`;
+    await garderRendu(projet, blob, "mp4");
+    offrir(blob, "mp4", IMAGES_PAR_SECONDE);
+  } catch (erreur) {
+    etat.textContent = `Le rendu image par image a échoué (${erreur.name}). `
+      + "Le rendu en temps réel reste disponible.";
+  } finally {
+    rendu.encours = false;
+    rendu.arret = false;
+    bouton.textContent = "Rendre la vidéo";
+    bouton.classList.remove("stop");
+    lecteur.removeAttribute("src");
+    lecteur.load();
+  }
 }
 
 /* Livrer le fichier.
