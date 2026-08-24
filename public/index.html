@@ -1547,7 +1547,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-23 23:54";
+const VERSION_PAGE = "2026-08-24 00:39";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7974,12 +7974,25 @@ async function avancerVers(video, cible, allure, fin) {
     return;
   }
   if (ecart <= 0.001) return;
+  /* On lance la lecture sans attendre qu'elle réponde.
+
+     « play » rend une promesse qui ne se dénoue qu'une fois la lecture
+     réellement commencée — cent à deux cents millisecondes plus tard. Or le
+     lecteur, lui, est déjà parti : à quadruple vitesse, il a couvert plus d'une
+     demi-seconde de film avant que la promesse revienne, et l'on reprenait la
+     main bien au-delà de l'image voulue. C'était le dernier trou par où passait
+     « il rend tout le bloc de vidéo d'origine ».
+
+     On surveille donc la position toutes les vingt-cinq millisecondes, dès
+     l'instant où la lecture est demandée, et l'on ne s'occupe du refus que s'il
+     arrive. */
   let demarrage = false;
+  let refus = false;
   if (video.paused || video.playbackRate !== allure.taux) {
     video.playbackRate = allure.taux;
     if (video.paused) {
       demarrage = true;
-      try { await video.play(); } catch { await attendreImage(video, cible); return; }
+      video.play().catch(() => { refus = true; });
     }
   }
   const depart = video.currentTime;
@@ -8000,7 +8013,7 @@ async function avancerVers(video, cible, allure, fin) {
      ordinaire revenait à conclure, dès la première image d'un plan, que ce
      navigateur ne sait pas jouer. */
   const limite = performance.now() + (demarrage ? PATIENCE_DEMARRAGE : PATIENCE_IMAGE);
-  while (video.currentTime < cible && !video.ended && performance.now() < limite) {
+  while (!refus && video.currentTime < cible && !video.ended && performance.now() < limite) {
     if (video.currentTime >= borne) { video.pause(); break; }
     /* L'attente d'une image ne peut jamais être la seule issue.
 
@@ -8011,10 +8024,18 @@ async function avancerVers(video, cible, allure, fin) {
        plus relu. C'est là que la fabrication se figeait à un pour cent. Un
        garde-fou court l'accompagne donc, et c'est lui qui rend la main quand
        rien ne vient. */
+    /* On regarde où en est le lecteur souvent, pas de temps en temps.
+
+       Le garde-fou était à cent vingt millisecondes : entre deux regards, un
+       lecteur lancé à quadruple vitesse couvre presque une demi-seconde de
+       film. On sortait donc de l'attente bien après l'image voulue — parfois
+       au-delà du point de sortie du plan. À vingt-cinq millisecondes, le
+       dépassement tombe à un dixième de seconde au pire, et le coût est nul :
+       pendant cette attente, la page ne fait rien d'autre. */
     await new Promise((suite) => {
       let rendu = false;
       const fait = () => { if (rendu) return; rendu = true; clearTimeout(garde); suite(); };
-      const garde = setTimeout(fait, 120);
+      const garde = setTimeout(fait, 25);
       if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(fait);
     });
   }
@@ -8048,8 +8069,25 @@ async function avancerVers(video, cible, allure, fin) {
      On ralentit donc dès que le dépassement devient gros, et on accélère quand
      le lecteur traîne — ce qui est l'inverse de l'intuition, mais c'est ainsi :
      traîner veut dire qu'il faut couvrir plus de terrain à chaque attente. */
+  /* Arrêté dès qu'il a atteint l'image voulue. Toujours, sans condition.
+
+     C'est le fond de l'affaire, et il a fallu un appareil lent pour le voir. On
+     n'arrêtait le lecteur que s'il avait déjà pris de l'avance ; or au moment
+     précis où il atteint l'instant voulu, il n'en a pas encore. On le laissait
+     donc courir — et il courait pendant tout le travail de l'image : dessiner,
+     encoder, souffler. Sur un ordinateur cela fait dix millisecondes, quatre
+     fois la vitesse, soit quatre centièmes de seconde : invisible. Sur un
+     téléphone qui décode du 720p et le réencode, cela fait deux cents
+     millisecondes, donc un bond de huit dixièmes de seconde à chaque image. Un
+     plan d'une seconde deux était franchi en deux images, et l'aperçu montrait
+     la suite du rush.
+
+     Mesuré en simulant deux cents millisecondes de calcul par image : le
+     lecteur atteignait 3,80 s sur une coupe qui finit à 3,2 s. Arrêté sans
+     condition, il ne dépasse plus. */
+  video.pause();
+  if (refus) { await attendreImage(video, cible); return; }
   const depasse = video.currentTime - cible;
-  if (depasse > AVANCE_TOLEREE || video.currentTime >= borne) video.pause();
   if (depasse > 0.35) {
     allure.avances = 0;
     allure.retards += 1;

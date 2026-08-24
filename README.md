@@ -2690,6 +2690,51 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Le banc d'essai était trop rapide pour voir le défaut
+
+Trois corrections, trois « toujours pas ». Et cette fois la capture d'écran
+portait la version — celle du jour, celle qui contient les correctifs. Le défaut
+était donc bien là, et c'est la méthode de vérification qui était en cause :
+**cette machine encode une image en dix millisecondes, un téléphone en deux
+cents.**
+
+Un banc d'essai a donc été écrit pour simuler la lenteur : deux cents
+millisecondes de calcul volées à chaque image encodée, et l'on note où se trouve
+le lecteur source à ce moment-là. Le défaut apparaît immédiatement — le lecteur
+atteint 3,80 s sur une coupe qui finit à 3,2 s, et la suite des positions montre
+des bonds : `2,2 → 2,82 → … → 3,80`.
+
+Le lecteur bondissait parce qu'on **attendait la promesse de « play »**. Elle ne
+se dénoue qu'une fois la lecture réellement commencée — cent à deux cents
+millisecondes plus tard — mais le lecteur, lui, est déjà parti. À quadruple
+vitesse, il avait couvert plus d'une demi-seconde de film avant que la promesse
+revienne, et l'on reprenait la main bien au-delà de l'image voulue, parfois
+au-delà du point de sortie du plan.
+
+La lecture est donc demandée sans être attendue, et la position surveillée toutes
+les vingt-cinq millisecondes dès cet instant — contre cent vingt auparavant, ce
+qui laissait déjà passer une demi-seconde de film à chaque regard. Le lecteur est
+en outre arrêté sans condition dès qu'il a atteint l'image voulue, et non plus
+seulement s'il avait pris de l'avance : au moment précis où il l'atteint, il n'en
+a pas encore, et on le laissait donc courir pendant tout le travail de l'image.
+
+```
+                        images encodées   hors de la coupe   le plus loin
+                                                             (coupe à 3,2 s)
+appareil rapide (0 ms)         86                0              3,31 s
+téléphone (200 ms)             86         5  →   0      3,80 → 3,28 s
+très lent (400 ms)             86                0              3,30 s
+```
+
+Le dépassement restant vaut une image. Et la fabrication ne s'en trouve pas
+ralentie : dix, dix-sept et vingt-cinq secondes pour vingt-cinq secondes six de
+montage, selon le bridage — les mêmes qu'avant.
+
+La leçon vaut d'être écrite : **un banc d'essai qui ne reproduit pas la lenteur
+de l'appareil ne prouve rien sur cet appareil.** Trois vérifications successives
+avaient conclu « la coupe est respectée », et elles avaient raison — sur une
+machine qui n'est pas celle de l'utilisateur.
+
 ### Un bloc fractionné, vérifié de bout en bout
 
 Demande suivante : que le bloc fractionné soit pris en compte au rendu comme à
