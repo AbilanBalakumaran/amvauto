@@ -2610,6 +2610,70 @@ téléchargement — passe sans un seul souci : trente et une images par seconde
 **aucun bouche-trou**, neuf hoquets contre dix-sept, et un MP4 de 10,8 Mo livré
 au premier appui.
 
+## Décoder d'avance, sur un autre fil
+
+La demande, après le retrait de l'aperçu fluide : « la solution qui se rapproche
+de l'instantané — je clique, ça se lance direct ». C'est le levier que les bancs
+de montage emploient et qu'aucun réglage ne remplace : **ne pas lire un fichier,
+mais tenir en mémoire des images déjà décodées**.
+
+### Pourquoi la jointure coûte, mesurément
+
+Dans un fichier H.264, une image sur douze est complète ; les autres ne décrivent
+qu'une différence. Afficher l'image à 6,2 s oblige le décodeur à repartir de la
+dernière image-clé et à redécoder tout ce qui l'en sépare. Mesuré ici :
+**dix-neuf millisecondes pour la deuxième image d'un plan, quarante-quatre pour
+la trentième**. Et changer de plan coûte bien plus : analyser le conteneur,
+allouer un décodeur, retrouver l'image-clé, redécoder, puis démarrer l'horloge —
+dont cent à deux cents millisecondes rien que pour que `play` réponde sur un
+iPhone. Quatre-vingt-huit fois par montage.
+
+### Ce qui a été construit
+
+Un **démuxeur MP4** écrit à la main : il lit la carte du fichier — où est chaque
+image, laquelle est une image-clé, à quel instant elle s'affiche — sans rien
+décoder. Vérifié sur un fichier réellement produit par l'iPhone de
+l'utilisateur : `avc1.42001f`, 1280 × 720, soixante-sept images, cinq images-clés,
+9,43 s, et les vingt-cinq octets d'`avcC` qui configurent le décodeur.
+
+Puis un **fil de décodage** (`public/decodeur.js`) : on lui donne un fichier et
+un intervalle, il rend les premières images du plan, déjà réduites à six cent
+quarante points. Le fil principal ne fait que les peindre.
+
+Le lecteur vidéo n'est pas remplacé — à l'intérieur d'un plan il travaille bien
+et décode en matériel. On lui retire seulement le moment où il est mauvais : le
+démarrage.
+
+### Le fil séparé n'est pas un détail, c'est le tout
+
+La première version décodait sur le fil principal. Mesurée sur processeur bridé
+huit fois, elle rendait l'aperçu **pire** : trois images par seconde au lieu de
+onze, et des trous de deux secondes trois. Le décodage d'avance volait le
+processeur à l'affichage qu'il devait servir. C'est exactement pour cela qu'un
+banc de montage décode sur un fil séparé, et la mesure le dit sans détour.
+
+```
+seize coupes de 0,7 s, processeur ×8   sans moteur   avec, fil séparé
+images vivantes par seconde                   8,3         14,5
+images tenues (figées)                         10            0
+interruptions > 100 ms                         53           30
+la plus longue                             826 ms       247 ms
+```
+
+Le déroulé de ce qui est peint le montre mieux qu'un tableau —
+`vvvvv**aaaaaa**vvvvv` : à chaque coupe, les images décodées d'avance prennent le
+relais, puis le lecteur reprend la main.
+
+Sur une machine rapide, le moteur coûte un peu : une ou trois interruptions de
+plus, jamais d'image figée. C'est le prix, assumé, d'un gain qui compte là où
+l'outil est réellement employé.
+
+### Ce qui se passe quand ça ne marche pas
+
+Rien. Conteneur inconnu — un WebM, par exemple —, codec refusé, fichier pas
+encore sur l'appareil, décodeur absent : le plan n'a pas d'avance et la lecture
+reprend son cours d'avant. C'est un raccourci, jamais un passage obligé.
+
 ## L'aperçu fluide : essayé, mesuré, retiré
 
 Pendant quelques jours, l'outil a su fabriquer le montage en un seul fichier

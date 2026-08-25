@@ -1518,7 +1518,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 01:48";
+const VERSION_PAGE = "2026-08-25 02:15";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3123,6 +3123,167 @@ async function oublierApercus() {
 }
 oublierApercus().catch(() => {});
 
+/* --- les premières images d'un plan, décodées d'avance ----------------
+
+   Le défaut qui reste à l'aperçu est toujours au même endroit : la jointure. Un
+   élément vidéo à qui l'on donne un nouveau fichier doit analyser le conteneur,
+   allouer un décodeur, retrouver l'image-clé qui précède le point d'entrée,
+   redécoder tout ce qui l'en sépare, puis démarrer son horloge. Mesuré ici :
+   dix-neuf millisecondes pour la deuxième image d'un plan, quarante-quatre pour
+   la trentième, et cent à deux cents millisecondes rien que pour que « play »
+   réponde sur un iPhone. Quatre-vingt-huit fois par montage.
+
+   Aucun réglage ne supprime ce coût — mais on peut le payer d'avance. C'est ce
+   que fait un banc de montage : il ne « lit » pas des fichiers, il tient en
+   mémoire un tampon d'images déjà décodées, et une coupe n'est plus qu'un
+   changement d'adresse en RAM.
+
+   On ne remplace donc pas le lecteur : à l'intérieur d'un plan, il fait très
+   bien son travail et il décode en matériel. On lui retire seulement le moment
+   où il est mauvais — le démarrage — en gardant sous la main les toutes
+   premières images de chaque plan à venir, décodées à l'avance et déjà réduites
+   à la taille du moniteur.
+
+   Si quoi que ce soit échoue — conteneur inconnu, codec refusé, fichier pas
+   encore sur l'appareil — on ne fait rien de spécial et la lecture reprend son
+   cours d'avant. C'est un raccourci, jamais un passage obligé. */
+
+/* Combien de film on garde décodé au début de chaque plan, et pour combien de
+   plans. Assez pour couvrir le démarrage du lecteur, assez peu pour qu'un
+   téléphone n'y laisse pas sa mémoire : trois dixièmes de seconde tiennent en
+   une poignée d'images, et l'on n'en garde que pour le plan courant et les deux
+   suivants. */
+const AVANCE_IMAGES = 0.34;
+const PLANS_EN_MEMOIRE = 2;
+const LARGE_MEMOIRE = 640;
+const IMAGES_PAR_PLAN = 10;
+
+const moteur = { pretes: new Map(), enCours: new Map(), refuses: new Set(), fil: null, possible: null, numero: 0 };
+
+/* Le décodeur bas niveau existe-t-il, et sait-on lancer un fil ? La question ne
+   se pose qu'une fois. */
+function moteurPossible() {
+  if (window.__sansMoteur) return false;   // interrupteur du banc d'essai
+  if (moteur.possible === null) {
+    moteur.possible = typeof VideoDecoder === "function"
+      && typeof EncodedVideoChunk === "function"
+      && typeof Worker === "function"
+      && typeof createImageBitmap === "function";
+  }
+  return moteur.possible;
+}
+
+function filDecodage() {
+  if (moteur.fil || !moteurPossible()) return moteur.fil;
+  try {
+    moteur.fil = new Worker("decodeur.js");
+    moteur.fil.onmessage = (evt) => {
+      const { id, images, echec } = evt.data || {};
+      const attente = moteur.enCours.get(id);
+      moteur.enCours.delete(id);
+      if (!attente) {
+        if (images) for (const x of images) x.image.close?.();
+        return;
+      }
+      if (echec || !images?.length) { moteur.refuses.add(attente.plan); return; }
+      moteur.pretes.set(attente.plan, {
+        images, entree: attente.entree, fin: images[images.length - 1].t,
+      });
+      rangerMemoire();
+    };
+    moteur.fil.onerror = () => { moteur.possible = false; moteur.fil = null; };
+  } catch { moteur.possible = false; moteur.fil = null; }
+  return moteur.fil;
+}
+
+/* Demander au fil de décodage le début d'un plan. Silencieux : tout échec se
+   solde par « on n'aura pas d'avance pour celui-là », jamais par une erreur. */
+async function amorcerImages(plan) {
+  if (!plan || !moteurPossible()) return;
+  const adresse = mediaDe(plan);
+  if (!adresse || plan.youtube) return;
+  if (moteur.pretes.has(plan.id) || moteur.refuses.has(plan.id)) return;
+  for (const attente of moteur.enCours.values()) if (attente.plan === plan.id) return;
+  // Seulement depuis la copie de l'appareil : lire un fichier entier pour le
+  // démuxer n'a de sens que s'il est déjà là.
+  if (!estLocal(plan)) return;
+  const fil = filDecodage();
+  if (!fil) return;
+  const garde = await lireBase(adresse).catch(() => null);
+  if (!(garde instanceof Blob) || !garde.size) { moteur.refuses.add(plan.id); return; }
+  const entree = entreeDe(plan);
+  const id = (moteur.numero += 1);
+  moteur.enCours.set(id, { plan: plan.id, entree });
+  fil.postMessage({
+    id, blob: garde, entree,
+    fin: Math.min(sortieDe(plan), entree + AVANCE_IMAGES),
+    large: LARGE_MEMOIRE, combien: IMAGES_PAR_PLAN,
+  });
+}
+
+/* Ne garder en mémoire que le plan courant et les suivants : au-delà, les
+   images sont refermées. Une image oubliée ouverte est de la mémoire perdue, et
+   sur un téléphone cela se paie vite. */
+function rangerMemoire() {
+  const projet = projetActif();
+  if (!projet) return;
+  const gardes = new Set();
+  for (let i = lecture.index; i < lecture.index + PLANS_EN_MEMOIRE && i < projet.plans.length; i += 1) {
+    gardes.add(projet.plans[i].id);
+  }
+  for (const [id, tenue] of moteur.pretes) {
+    if (gardes.has(id)) continue;
+    for (const x of tenue.images) x.image.close?.();
+    moteur.pretes.delete(id);
+  }
+}
+
+/* Où en est le montage, ramené au temps du fichier de ce plan. */
+function sourceMaintenant(plan) {
+  const projet = projetActif();
+  if (!projet) return entreeDe(plan);
+  const debut = offsets(projet.plans)[lecture.index] || 0;
+  return entreeDe(plan) + Math.max(0, lecture.position - debut);
+}
+
+/* Le lecteur montre-t-il déjà le bon instant du bon plan ? */
+function aJour(video, plan) {
+  if (!video || !plan || video.readyState < 2 || !video.videoWidth) return false;
+  if (video.dataset.plan !== plan.id) return false;
+  return Math.abs(video.currentTime - sourceMaintenant(plan)) <= 0.15;
+}
+
+/* L'image décodée d'avance qui correspond à cet instant du fichier, s'il y en a
+   une. On prend la dernière image dont l'instant est passé — comme le ferait un
+   lecteur. */
+function imageDavance(plan, temps) {
+  const tenue = plan && moteur.pretes.get(plan.id);
+  if (!tenue) return null;
+  if (temps < tenue.entree - 0.02 || temps > tenue.fin + 0.06) return null;
+  let choisie = null;
+  for (const x of tenue.images) {
+    if (x.t <= temps + 0.02) choisie = x.image;
+    else break;
+  }
+  return choisie || tenue.images[0].image;
+}
+
+window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
+  enCours: [...moteur.enCours.values()].map((x) => x.plan),
+  images: [...moteur.pretes.values()].map((x) => `${x.entree.toFixed(2)}→${x.fin.toFixed(2)} (${x.images.length})`) });
+
+/* Préparer d'avance le plan courant et les suivants. Appelé au même moment que
+   la préparation des lecteurs, et sans jamais rien attendre. */
+function amorcerAvance(index) {
+  if (!moteurPossible()) return;
+  const projet = projetActif();
+  if (!projet) return;
+  for (let i = index; i < index + PLANS_EN_MEMOIRE && i < projet.plans.length; i += 1) {
+    amorcerImages(projet.plans[i]).catch(() => {});
+  }
+  rangerMemoire();
+}
+
 /* Combien de lecteurs, et combien de plans d'avance.
 
    Il y en avait deux, qui alternaient : un plan à l'écran, un plan préparé.
@@ -3456,6 +3617,14 @@ function dessinerMoniteur() {
        la musique : l'horloge du montage n'attend personne, seul l'affichage
        patiente. */
     source = lecture.bascule.sortant;
+  } else if (plan && lecture.demande && !aJour(video, plan) && imageDavance(plan, sourceMaintenant(plan))) {
+    /* Le lecteur n'est pas encore arrivé sur cet instant — il démarre, il
+       cherche son image-clé, il attend son décodeur. On a justement ces
+       images-là en mémoire : on les montre, et le lecteur reprendra la main dès
+       qu'il sera à l'heure. C'est là, et seulement là, que la jointure marquait. */
+    source = imageDavance(plan, sourceMaintenant(plan));
+    derniereImage.plan = plan.id;
+    derniereImage.vivante = performance.now();
   } else if (video && video.readyState >= 2 && video.videoWidth
              && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - 0.15)) {
     // La dernière condition écarte une image située avant le point d'entrée :
@@ -5252,6 +5421,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
        le son du fichier d'avant qui traîne. On l'arrête. */
     video.pause();
     preparerSuivants(index);
+    amorcerAvance(index);
     prioriserImports(index);
     majTransport();
     return;
@@ -5302,6 +5472,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   video.addEventListener("canplay", demarrer, { once: true });
 
   preparerSuivants(index);
+  amorcerAvance(index);
   prioriserImports(index);
   majTransport();
   majPreparation(projet);
@@ -5419,6 +5590,7 @@ function basculerLecture() {
   }
   viser(video, entreeDe(cible.plan) + cible.dans, cible.plan);
   preparerSuivants(cible.index);
+  amorcerAvance(cible.index);
 
   deverrouille = true;
   const essai = video.play();
@@ -6291,6 +6463,8 @@ function apresImport(plan) {
     }
   }
   oublierSourceReseau(plan);
+  moteur.refuses.delete(plan.id);
+  amorcerAvance(lecture.index);
   redessinerPisteDifferee();
   // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
   redessinerBandes();
