@@ -2705,6 +2705,79 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Le défaut était à nous : on tirait le lecteur en arrière pendant qu'il jouait
+
+Après avoir éliminé le décodeur, le réseau, le vivier et le fil de décodage, il
+restait à relire le chemin de lecture ligne à ligne. La mesure décisive : compter
+chaque écriture de `currentTime` — c'est-à-dire chaque déplacement dans le
+fichier — pendant une lecture.
+
+```
+déplacements écrits : 38 — dont 5 sur un lecteur QUI JOUE, 5 sur le lecteur MONTRÉ
+    lecteur-a : 0,08 → 0 s
+    lecteur-a : 0,24 → 0 s
+    lecteur-c : 2,47 → 2,20 s
+    lecteur-d : 2,28 → 2,20 s
+    lecteur-b : 2,27 → 2,20 s
+```
+
+**Tous vers l'arrière, tous sur le lecteur qu'on regarde, tous vers le point
+d'entrée du plan.** Un déplacement vide le tampon de décodage : c'est exactement
+une petite pause au milieu d'un plan.
+
+### La tolérance à deux faces
+
+`rattraperPosition` ramène un lecteur vers la position demandée. Sa tolérance
+était symétrique : cible atteinte en dessous de 0,06 seconde, cible abandonnée
+au-delà de 0,35 — **et entre les deux, on ramenait en arrière**. Or la consigne
+posée à la coupe est le point d'entrée du plan, et un lecteur qui joue s'en
+éloigne par construction. Un lecteur ayant parcouru un dixième de seconde tombait
+donc dans cette zone morte, était renvoyé à son point de départ, repartait, et
+retombait dedans.
+
+Sur une machine rapide, le premier contrôle arrive avant 0,06 seconde et rien ne
+se produit. Sur une machine lente — celle qu'on cherche justement à soulager —
+il arrive dans la zone morte, et le défaut se nourrit de lui-même : chaque
+déplacement fait perdre du temps, donc dérive davantage, donc provoque le
+déplacement suivant.
+
+La règle est maintenant asymétrique, ce qu'elle aurait toujours dû être : **un
+lecteur qui joue et qui a dépassé sa cible l'a atteinte.** Un lecteur à l'arrêt
+garde la tolérance des deux côtés — c'est là qu'elle sert, pour poser l'image au
+bon endroit — et une consigne fraîche vers l'arrière, un appui sur la piste
+pendant la lecture, reste suivie.
+
+### La même faute, en pire, et rappelée quatre fois par seconde
+
+`appliquerCible` fait le même travail, avec une tolérance de 0,4 seconde et
+jusqu'à douze essais — et au quatrième, **elle recharge le fichier entier** en
+posant l'instant dans l'adresse. Elle était branchée sur `timeupdate`, qui se
+déclenche quatre fois par seconde sur chacun des quatre lecteurs : seize rappels
+par seconde d'une fonction dont le seul effet possible, pendant la lecture, est
+de la défaire.
+
+Deux corrections : la même règle asymétrique, le rechargement interdit sur un
+lecteur qui joue, et `timeupdate` retiré de la liste. Poser une position se fait
+au chargement et après un déplacement ; pendant la lecture, il n'y a rien à
+poser.
+
+### Mesuré, apparié, quatre essais de chaque
+
+```
+                        AVANT              APRÈS
+arrêts « waiting »    8 · 7 · 2 · 3      1 · 0 · 1 · 0
+trous > 100 ms       28 · 28 · 23 · 21  25 · 22 · 24 · 25
+déplacements arrière      jusqu'à 5           0
+```
+
+**Les arrêts de lecture passent de cinq en moyenne à un demi**, et les bandes ne
+se recouvrent pratiquement pas. C'est la mesure la plus nette de toute cette
+série — et c'est celle qui porte le nom du symptôme : « la lecture prend des
+petites pauses », dit par le navigateur lui-même.
+
+Les trous d'affichage, eux, ne bougent pas : ils viennent d'ailleurs, de la
+présentation des images sur une machine chargée, et cette cause-là reste ouverte.
+
 ## Les pauses ne sont pas aux coupes — et ce que ça change
 
 Six tours de travail avaient porté sur la manière dont les blocs sont attribués
