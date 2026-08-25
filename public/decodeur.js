@@ -233,6 +233,32 @@ function lireMp4(donnees) {
 const cartes = new Map();
 const CARTES_GARDEES = 3;
 
+/* Et les octets eux-mêmes, avec elles.
+
+   Chaque demande faisait « blob.arrayBuffer() » : une copie entière du fichier
+   dans le fil de décodage. Un rush pèse un à six mégaoctets, un montage en
+   demande une par plan, et le même rush revient sans cesse — cent vingt blocs
+   tirés de vingt-quatre fichiers, c'est cent vingt copies pour vingt-quatre
+   fichiers distincts. Sur un téléphone, cette recopie n'est pas gratuite : elle
+   se paie en mémoire et en temps, à chaque coupe.
+
+   Les octets sont donc gardés à côté de la carte, et pour les mêmes trois
+   fichiers. Ce qui est en mémoire est ce qui sert : le plan courant et les deux
+   suivants viennent au plus de trois rushs différents. */
+const octetsGardes = new Map();
+
+async function fichierDe(cle, blob) {
+  if (cle && octetsGardes.has(cle)) return octetsGardes.get(cle);
+  const donnees = new Uint8Array(await blob.arrayBuffer());
+  if (cle) {
+    octetsGardes.set(cle, donnees);
+    while (octetsGardes.size > CARTES_GARDEES) {
+      octetsGardes.delete(octetsGardes.keys().next().value);
+    }
+  }
+  return donnees;
+}
+
 function carteDe(cle, donnees) {
   if (cle && cartes.has(cle)) return cartes.get(cle);
   const carte = lireMp4(donnees);
@@ -247,15 +273,21 @@ self.onmessage = async (evt) => {
   const { id, blob, entree, fin, large, combien, cle, pas } = evt.data || {};
   const repondre = (quoi, transferts) => self.postMessage({ id, ...quoi }, transferts || []);
   try {
-    const donnees = new Uint8Array(await blob.arrayBuffer());
+    const donnees = await fichierDe(cle, blob);
     const carte = carteDe(cle, donnees);
     if (carte.echec) return repondre({ echec: carte.echec });
 
     const config = { codec: carte.codec, codedWidth: carte.largeur, codedHeight: carte.hauteur };
     if (carte.description) config.description = carte.description;
-    let accepte = false;
-    try { accepte = (await VideoDecoder.isConfigSupported(config)).supported; } catch { accepte = false; }
-    if (!accepte) return repondre({ echec: `codec refusé (${carte.codec})` });
+    /* La compatibilité ne se redemande pas à chaque image.
+
+       « isConfigSupported » interroge le système, ce qui n'est pas gratuit et ne
+       change jamais pour un fichier donné. La réponse est retenue avec la carte. */
+    if (carte.accepte === undefined) {
+      try { carte.accepte = (await VideoDecoder.isConfigSupported(config)).supported; }
+      catch { carte.accepte = false; }
+    }
+    if (!carte.accepte) return repondre({ echec: `codec refusé (${carte.codec})` });
 
     // On repart de l'image-clé qui précède le point d'entrée : c'est la seule
     // par où un décodeur peut commencer.

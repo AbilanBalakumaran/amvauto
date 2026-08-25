@@ -1585,7 +1585,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 12:23";
+const VERSION_PAGE = "2026-08-25 13:07";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3232,6 +3232,20 @@ function creerLecteur(nom) {
     arreterSon();
   });
 
+  /* Les arrêts, comptés par celui qui les subit.
+
+     « waiting » est levé par le navigateur quand la lecture s'interrompt faute
+     d'images prêtes : c'est exactement « la lecture prend une petite pause »,
+     dit par le lecteur lui-même. Contrairement à une mesure d'horloge, ce compte
+     ne bouge pas quand la machine du banc respire mal — et il vaut donc aussi
+     bien ici que sur un téléphone. */
+  video.addEventListener("waiting", () => {
+    if (video.classList.contains("scene") && lecture.demande) arrets.attentes += 1;
+  });
+  video.addEventListener("stalled", () => {
+    if (video.classList.contains("scene") && lecture.demande) arrets.bloques += 1;
+  });
+
   /* Compter ce que l'écran reçoit vraiment.
 
      « requestVideoFrameCallback » ne se déclenche que lorsque ce lecteur
@@ -3339,6 +3353,8 @@ const moteur = {
      les devine de loin. Il tient donc son propre journal, lisible dans le
      diagnostic. */
   raison: "", echec: "", demandes: 0, servies: 0, rendus: 0,
+  // Ce que le fil de décodage coûte réellement, aller-retour compris.
+  duree: 0, repondues: 0,
 };
 
 /* Le décodeur bas niveau existe-t-il, et sait-on lancer un fil ? La question ne
@@ -3366,6 +3382,10 @@ function filDecodage() {
       const { id, images, echec } = evt.data || {};
       const attente = moteur.enCours.get(id);
       moteur.enCours.delete(id);
+      if (attente?.depart) {
+        moteur.duree += performance.now() - attente.depart;
+        moteur.repondues += 1;
+      }
       if (!attente) {
         if (images) for (const x of images) x.image.close?.();
         return;
@@ -3408,7 +3428,7 @@ async function amorcerImages(plan) {
   if (!(garde instanceof Blob) || !garde.size) { moteur.refuses.add(plan.id); return; }
   const entree = entreeDe(plan);
   const id = (moteur.numero += 1);
-  moteur.enCours.set(id, { plan: plan.id, entree });
+  moteur.enCours.set(id, { plan: plan.id, entree, depart: performance.now() });
   const fin = Math.min(sortieDe(plan), entree + AVANCE_IMAGES);
   fil.postMessage({
     id, blob: garde, entree, fin,
@@ -3505,11 +3525,37 @@ function imageDavance(plan, temps) {
 /* Une fenêtre sur l'état interne, pour le banc d'essai et pour le diagnostic.
    La bande son n'est pas dans le document — c'est un « Audio » construit à la
    main — donc rien ne permettait de l'observer du dehors. */
+/* Les arrêts de lecture, et ce que le décodeur n'a pas pu livrer. */
+const arrets = { attentes: 0, bloques: 0 };
+
+/* Le tampon couvre-t-il vraiment ce plan ?
+
+   « readyState » vaut 4 quand le navigateur *estime* pouvoir jouer jusqu'au
+   bout — c'est une prévision, et elle se trompe : mesuré, des lecteurs à 4 au
+   moment de la coupe s'arrêtaient ensuite faute d'images. « buffered », lui, dit
+   ce qui est réellement là. On regarde donc les octets, pas la promesse.
+
+   On ne demande pas tout le plan : deux secondes d'avance suffisent, et un plan
+   plus long finira de se remplir en jouant. */
+const COUVERTURE_MINIMALE = 2;
+
+function couvre(video, plan) {
+  if (!video || !plan) return false;
+  const debut = entreeDe(plan);
+  const fin = Math.min(sortieDe(plan), debut + COUVERTURE_MINIMALE);
+  try {
+    for (let i = 0; i < video.buffered.length; i += 1) {
+      if (video.buffered.start(i) <= debut + 0.05 && video.buffered.end(i) >= fin - 0.05) return true;
+    }
+  } catch { return false; }
+  return false;
+}
+
 /* Le compte de ce qui est passé à l'écran pendant les lectures. */
 const vues = { lecteur: 0, reserve: 0, tenue: 0, imagette: 0, noir: 0 };
 
 const bascules = {
-  total: 0, chaud: 0, froid: 0, causes: [], etats: [],
+  total: 0, chaud: 0, froid: 0, causes: [], etats: [], instants: [],
   amorces: 0, amorcesTenues: 0, amorcesRefusees: 0, dernierRefus: "",
   chargements: 0, jouantMax: 0,
 };
@@ -3528,7 +3574,8 @@ function compterJouants() {
 }
 
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
-  bascules: { ...bascules }, vues: { ...vues },
+  fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0 },
+  bascules: { ...bascules }, vues: { ...vues }, arrets: { ...arrets },
   copie: `${derniereImage.toile.width}x${derniereImage.toile.height}`,
   moniteur: `${$("moniteur")?.width || 0}x${$("moniteur")?.height || 0}`,
   enCours: [...moteur.enCours.values()].map((x) => x.plan),
@@ -3956,6 +4003,33 @@ function dessinerMoniteur() {
 
   if (source) {
     // une imagette de défilement a déjà été retenue
+  } else if (plan && lecture.demande && !aJour(video, plan)
+             && imageDavance(plan, sourceMaintenant(plan))) {
+    /* La coupe appartient à la réserve, le milieu du plan au lecteur.
+
+       C'était le relais qui couvrait la coupe : on continuait de montrer le plan
+       qu'on quitte pendant que le nouveau démarrait. Cela masquait bien l'arrêt,
+       mais au prix d'un contresens — pendant quatre dixièmes de seconde, l'écran
+       montre autre chose que ce que la tête de lecture désigne, et sur une coupe
+       d'une seconde c'est presque la moitié du plan.
+
+       La réserve, elle, contient les images du plan qu'on prend, décodées deux
+       plans à l'avance sur un autre fil. Elles sont justes, elles sont nettes —
+       640 points contre 380 au moniteur — et les dessiner ne coûte rien : mesuré
+       sous la résolution du chronomètre, contre 0,40 à 4,20 ms pour une vidéo.
+
+       On les montre donc dès l'instant de la coupe, et jusqu'à ce que le lecteur
+       présente les siennes. Le relais ne sert plus que de dernier recours, quand
+       la réserve n'a rien — un plan trop court pour avoir été décodé, un codec
+       refusé, un fil de décodage absent.
+
+       Le délai d'attente qui précédait — quatre-vingt-dix millisecondes avant de
+       juger le lecteur immobile — est retiré ici : à la coupe, on sait d'avance
+       qu'il n'a rien à montrer, il n'y a rien à attendre pour s'en assurer. */
+    source = imageDavance(plan, sourceMaintenant(plan));
+    moteur.rendus += 1;
+    derniereImage.plan = plan.id;
+    derniereImage.vivante = performance.now();
   } else if (lecture.demande && lecture.bascule
              && performance.now() - lecture.bascule.quand < RELAIS_SORTANT
              && video && video.currentTime <= lecture.bascule.depart + 0.01
@@ -3975,16 +4049,6 @@ function dessinerMoniteur() {
        la musique : l'horloge du montage n'attend personne, seul l'affichage
        patiente. */
     source = lecture.bascule.sortant;
-  } else if (plan && lecture.demande && !aJour(video, plan) && immobile(video)
-             && imageDavance(plan, sourceMaintenant(plan))) {
-    /* Le lecteur n'est pas encore arrivé sur cet instant — il démarre, il
-       cherche son image-clé, il attend son décodeur. On a justement ces
-       images-là en mémoire : on les montre, et le lecteur reprendra la main dès
-       qu'il sera à l'heure. C'est là, et seulement là, que la jointure marquait. */
-    source = imageDavance(plan, sourceMaintenant(plan));
-    moteur.rendus += 1;
-    derniereImage.plan = plan.id;
-    derniereImage.vivante = performance.now();
   } else if (video && video.readyState >= 2 && video.videoWidth
              && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - 0.15)) {
     // La dernière condition écarte une image située avant le point d'entrée :
@@ -5124,6 +5188,10 @@ function amorcerSuivant(reste) {
   const avance = Number(attente.dataset.avance);
   if (!(avance > 0.05) || reste > avance) return;
   if (attente.readyState < 2) return;
+  // Lancer un lecteur qui n'a pas ses octets, c'est provoquer l'arrêt qu'on
+  // cherche à éviter : il jouera une image puis attendra.
+  if (!couvre(attente, projetActif()?.plans[lecture.index + 1] || null)
+      && !couvre(attente, planApres())) return;
   attente.dataset.amorce = "oui";
   attente.muted = true;
   bascules.amorces += 1;
@@ -6164,10 +6232,22 @@ function poserPlan(index, decalage = 0, enchainer = false) {
      l'intérêt d'en avoir plusieurs, le fichier est chargé et placé. Ce n'est
      plus forcément « le suivant dans l'alternance » — un saut dans la piste
      peut retomber sur n'importe lequel d'entre eux. */
-  const pret = video.dataset.plan === plan.id ? -1 : NOMS_LECTEURS.findIndex((nom) => {
-    const autre = lecteurDe(nom);
-    return autre && autre !== video && autre.dataset.plan === plan.id && autre.dataset.source === source;
-  });
+  /* On bascule de préférence sur un lecteur dont le tampon couvre le plan.
+
+     Jusqu'ici il suffisait qu'un lecteur porte le bon plan ; sa capacité à le
+     jouer sans s'arrêter n'était pas vérifiée, et « readyState » — une
+     prévision — disait oui à des lecteurs qui s'arrêtaient ensuite. Quand deux
+     lecteurs portent le même plan, on prend celui qui a réellement les octets ;
+     quand aucun ne les a, on bascule quand même (mieux vaut une image un peu
+     tardive que pas d'image) mais on le compte. */
+  const porteurs = NOMS_LECTEURS.map((nom, i) => ({ i, v: lecteurDe(nom) }))
+    .filter(({ v }) => v && v !== video && v.dataset.plan === plan.id && v.dataset.source === source);
+  const couvrant = porteurs.find(({ v }) => couvre(v, plan));
+  const pret = video.dataset.plan === plan.id ? -1
+    : couvrant ? couvrant.i
+    : porteurs.length ? porteurs[0].i
+    : -1;
+  if (pret >= 0 && !couvrant) arrets.nonCouverts = (arrets.nonCouverts || 0) + 1;
   /* Le compte des bascules, froides et chaudes.
 
      Une bascule est chaude quand le bloc à montrer était déjà chargé et placé
@@ -6185,6 +6265,9 @@ function poserPlan(index, decalage = 0, enchainer = false) {
        déplacement dans un fichier compressé coûte le parcours depuis l'image-clé
        précédente. */
     const entrant = pret >= 0 ? lecteurDe(NOMS_LECTEURS[pret]) : video;
+    // L'instant exact de chaque coupe : c'est ce qui permet de savoir si les
+    // trous tombent dessus ou entre elles — deux causes sans rapport.
+    bascules.instants.push(Math.round(performance.now()));
     bascules.etats.push({
       plan: index,
       chaud: pret >= 0,
@@ -9243,6 +9326,20 @@ $("btn-setting").addEventListener("click", () => {
        même pour chacune : le lecteur est à sa taille native, une image décodée
        d'avance fait 640 points, la copie de secours la taille du moniteur, une
        imagette 160. Un aperçu sain est presque entièrement « lecteur ». */
+    "Arrêts de lecture :",
+    ...(() => {
+      const l = [`  le lecteur s'est arrêté faute d'images : ${arrets.attentes} fois`];
+      if (arrets.bloques) l.push(`  arrêts réseau : ${arrets.bloques}`);
+      if (arrets.nonCouverts) l.push(`  bascules sur un tampon incomplet : ${arrets.nonCouverts}`);
+      const v = elementActif();
+      if (v?.getVideoPlaybackQuality) {
+        const q = v.getVideoPlaybackQuality();
+        l.push(`  images décodées : ${q.totalVideoFrames}, dont ${q.droppedVideoFrames} jetées`);
+      }
+      if (arrets.attentes > 5) l.push("  → c'est cela, les « petites pauses » : le lecteur attend ses images");
+      return l;
+    })(),
+    "",
     "Ce qui est passé à l'écran :",
     ...(() => {
       const t = vues.lecteur + vues.reserve + vues.tenue + vues.imagette + vues.noir;

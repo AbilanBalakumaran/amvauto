@@ -2705,6 +2705,94 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Les pauses ne sont pas aux coupes — et ce que ça change
+
+Six tours de travail avaient porté sur la manière dont les blocs sont attribués
+aux lecteurs, chargés, placés, basculés. Une mesure a montré que ce n'était pas
+là.
+
+### Où tombent les trous
+
+Chaque instant de coupe est maintenant horodaté, et chaque trou de plus de cent
+millisecondes rapporté à la coupe la plus proche :
+
+```
+trous > 100 ms : 35 — dont 11 SUR une coupe, 24 AILLEURS
+trous > 100 ms : 36 — dont  5 SUR une coupe, 31 AILLEURS
+trous > 100 ms : 36 — dont  7 SUR une coupe, 29 AILLEURS
+```
+
+**Les trois quarts des accrocs tombent en plein milieu d'un plan**, loin de toute
+coupe. La mécanique de bascule — celle que six tours avaient polie — n'était en
+cause que dans un quart des cas. Confirmé par ailleurs : la réserve d'images
+décodées, à qui l'on vient de confier la coupe, ne sert que 0 à 3 % du temps,
+parce que le lecteur entrant est déjà à l'heure.
+
+### Trois suspects, éliminés par la mesure
+
+**Le fil de décodage volerait le processeur.** Comparé avec et sans : 13,7 et
+12,3 images/s contre 17,7 et 13,8. Les intervalles se recouvrent, rien à
+conclure.
+
+**Le vivier serait trop grand** — quatre lecteurs chargés font quatre décodeurs
+instanciés. Mesuré à deux, trois et quatre lecteurs : les arrêts ne suivent pas.
+Et à deux lecteurs, les bascules froides passent de quatre à onze. Le vivier
+reste à quatre.
+
+**Le décodeur ne suivrait pas.** C'est réfutable directement : le navigateur
+compte les images qu'il jette faute de temps. Sur toutes les mesures, **zéro à
+quatre images jetées sur trois cents** — le décodeur suit très largement.
+
+### Ce que le navigateur dit lui-même
+
+L'événement `waiting` est levé quand la lecture s'interrompt faute d'images
+prêtes. C'est littéralement « la lecture prend une petite pause », dit par celui
+qui la subit — et, contrairement à une mesure d'horloge, ce compte ne bouge pas
+quand la machine du banc respire mal.
+
+```
+                    arrêts « waiting »   images jetées
+processeur ×1            1 · 1              2 / 288
+processeur ×2            6 · 5              1 / 288
+processeur ×4            1 · 1              0 / 295
+processeur ×8            5 · 2              1 / 312
+```
+
+Quelques arrêts par vingt secondes, **sans rapport avec la puissance de la
+machine**. Les images sont décodées, elles ne sont pas jetées — elles ne sont
+simplement pas présentées à l'heure. Ce n'est donc ni le décodage, ni le réseau,
+ni le nombre de lecteurs : c'est la présentation.
+
+### Ce qui est corrigé quand même, parce que c'est juste
+
+`readyState` vaut 4 quand le navigateur **estime** pouvoir jouer jusqu'au bout.
+C'est une prévision, et elle se trompe : des lecteurs à 4 au moment de la coupe
+s'arrêtaient ensuite faute d'images. `buffered`, lui, dit ce qui est réellement
+là. La bascule regarde donc les octets et non la promesse : quand deux lecteurs
+portent le même plan, on prend celui qui a les données ; quand aucun ne les a, on
+bascule tout de même — mieux vaut une image tardive que pas d'image — mais on le
+compte. L'amorce, elle, ne part plus sur un lecteur qui n'a pas ses octets :
+c'était provoquer l'arrêt qu'on cherche à éviter.
+
+Et le fil de décodage ne recopiait pas seulement la carte du fichier à chaque
+demande, mais **le fichier entier** — un à six mégaoctets, cent vingt fois pour
+vingt-quatre fichiers distincts. Les octets sont gardés avec la carte, pour les
+mêmes trois fichiers.
+
+### L'instrument qui manquait
+
+Le diagnostic porte maintenant le compte des arrêts, et le dit en clair au-delà
+de cinq :
+
+```
+Arrêts de lecture :
+  le lecteur s'est arrêté faute d'images : 0 fois
+  images décodées : 5, dont 0 jetées
+```
+
+C'est la mesure que ce dépôt cherchait depuis le début : elle vaut la même chose
+ici et sur un téléphone, et elle nomme le défaut au lieu de le décrire.
+
 ## « Ça pixellise et ça fait des petites pauses » — c'est un seul événement
 
 Deux symptômes rapportés ensemble, et ils n'en font qu'un.
