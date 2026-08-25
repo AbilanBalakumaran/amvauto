@@ -940,35 +940,6 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .transport-cote { flex: 1; display: flex; gap: 8px; }
 .transport-cote.fin { justify-content: flex-end; }
 
-/* La barre de l'aperçu fluide : un bouton et une phrase qui dit où l'on en est.
-   Elle tient sur une ligne quand il y a la place, sur deux sinon. */
-.barre-fluide {
-  display: flex;
-  align-items: center;
-  gap: var(--e2);
-  flex-wrap: wrap;
-  margin-top: var(--e2);
-}
-.fluide-action {
-  flex: none;
-  padding: 7px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--trait);
-  background: var(--surface);
-  color: var(--texte);
-  font: inherit;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.fluide-action:disabled { opacity: 0.45; cursor: default; }
-.fluide-action.stop { border-color: #e0603f; color: #e0603f; }
-.fluide-dit {
-  flex: 1 1 220px;
-  min-width: 0;
-  font-size: 0.76rem;
-  line-height: 1.35;
-  color: var(--doux);
-}
 .rond {
   display: grid;
   place-items: center;
@@ -1547,7 +1518,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 01:22";
+const VERSION_PAGE = "2026-08-25 01:48";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3039,25 +3010,9 @@ function editeur(projet) {
   preparationDit.id = "preparation-dit";
   preparation.append(preparationDit, boutonVeille());
 
-  /* Le lecteur de l'aperçu fluide : un seul fichier, donc un seul élément, qui
-     ne sert que quand ce fichier existe et correspond au montage. */
-  const doublure = document.createElement("video");
-  doublure.id = "apercu-fluide";
-  doublure.className = "lecteur-cache";
-  doublure.playsInline = true;
-  doublure.preload = "auto";
-  doublure.muted = true;
-  doublure.setAttribute("muted", "");
-  doublure.defaultMuted = true;
-  doublure.addEventListener("ended", () => { if (fluideDispo()) terminerLecture(); });
-
-  ecran.append(moniteur, ...lecteurs, doublure, vide, preparation);
-  bloc.append(ecran, transport(), barreFluide(), pisteComplete(projet));
+  ecran.append(moniteur, ...lecteurs, vide, preparation);
+  bloc.append(ecran, transport(), pisteComplete(projet));
   lecture.actif = 0;
-  fluide.video = null;
-  fluide.empreinte = null;
-  if (fluide.url) { URL.revokeObjectURL(fluide.url); fluide.url = null; }
-  reprendreFluide(projet).catch(() => {});
   reprendreMusique(projet).catch(() => {});
   reveillerMoniteur(1500);
   // Le battement de repos ne se met en route qu'une fois, et ne s'arrête plus :
@@ -3146,118 +3101,27 @@ function creerLecteur(nom) {
   return video;
 }
 
-/* --- l'aperçu fluide -------------------------------------------------
+/* Ce qu'il reste d'un aperçu fluide abandonné.
 
-   Le mur, mesuré et remesuré : lire cent soixante-quinze fichiers à la file
-   dans un navigateur de téléphone hoquettera toujours. Chaque coupe demande à
-   un décodeur de démarrer, et cela coûte de cinquante à deux cents
-   millisecondes. On peut réduire — les lecteurs préparés d'avance, le relais du
-   plan sortant, le silence imposé aux rushs — on ne peut pas supprimer. C'est le
-   prix d'un montage joué depuis ses rushs, dans un navigateur.
-
-   La réponse est celle des bancs de montage : on ne juge pas sur les rushs, on
-   juge sur un rendu. L'outil fabrique donc, une fois, un fichier unique en
-   basse définition — un « proxy » — et c'est lui que l'aperçu lit. Un seul
-   fichier, un seul décodeur, aucune coupe : la lecture est aussi fluide que
-   n'importe quelle vidéo, parce que c'en est une.
-
-   Il est sans son : c'est la musique de la page qu'on entend par-dessus, comme
-   toujours. Cela évite d'encoder du son pour rien et va d'autant plus vite.
-
-   Il se périme tout seul. Son empreinte est celle du montage : l'ordre des
-   plans et leurs points d'entrée et de sortie. Le moindre rognage change
-   l'empreinte, l'aperçu fluide cesse d'être proposé, et la lecture revient aux
-   rushs le temps qu'on en refasse un. */
-const fluide = { empreinte: null, url: null, video: null, construction: false, arret: false };
-
-/* Tout ce qui, s'il change, périme le fichier fabriqué. La musique n'en fait
-   pas partie : elle n'y est pas. */
-function empreinteMontage(projet) {
-  if (!projet?.plans?.length) return "";
-  return projet.plans
-    .map((plan) => `${plan.id}@${entreeDe(plan).toFixed(2)}-${sortieDe(plan).toFixed(2)}`)
-    .join("|");
-}
-
-/* Le lecteur de l'aperçu fluide, s'il correspond bien au montage affiché.
-   Renvoie null sinon — et tout le reste de la lecture reprend alors son cours
-   habituel, sur les rushs. */
-function fluideDispo() {
-  const projet = projetActif();
-  if (!fluide.video || !fluide.empreinte || !projet) return null;
-  return fluide.empreinte === empreinteMontage(projet) ? fluide.video : null;
-}
-
+   L'outil a su fabriquer le montage en un seul fichier basse définition, pour
+   l'avoir sous la main sans le moindre à-coup. C'était juste et mesuré — zéro
+   interruption là où la lecture des rushs en compte quarante à quatre-vingt-dix
+   — mais cela se payait d'une fabrication à refaire à chaque modification du
+   montage, et d'une seconde façon de lire à tenir dans tout le code. Retiré à la
+   demande : on ne garde que la lecture directe. Les fichiers déjà fabriqués sont
+   effacés de l'appareil au premier lancement, pour ne pas y laisser des
+   mégaoctets qui ne servent plus à rien. */
 const CLE_FLUIDES = "amvauto-apercus";
-const cleFluide = (projet) => `apercu:${projet.id}`;
-const lireFichesFluide = () => {
-  try { return JSON.parse(localStorage.getItem(CLE_FLUIDES) || "{}"); } catch { return {}; }
-};
-
-async function garderFluide(projet, blob, empreinte) {
-  try {
-    await ecrireBase(cleFluide(projet), blob);
-    const fiches = lireFichesFluide();
-    fiches[projet.id] = { quand: Date.now(), taille: blob.size, empreinte };
-    localStorage.setItem(CLE_FLUIDES, JSON.stringify(fiches));
-  } catch { /* stockage plein : l'aperçu vaut pour cette séance, pas au-delà */ }
-}
-
-/* Retrouver l'aperçu d'un projet qu'on rouvre. On ne lit le fichier que si son
-   empreinte correspond encore : inutile de sortir de la réserve un rendu d'un
-   montage qui n'existe plus. */
-/* Rendre sa musique à un projet qu'on rouvre — ou la lui retirer quand on
-   change de projet, sans quoi la chanson de l'un jouerait sur le montage de
-   l'autre. Appelée à chaque affichage du montage, donc écrite pour ne rien
-   faire quand il n'y a rien à faire. */
-async function reprendreMusique(projet) {
-  if (!projet) return;
-  if (lecture.audioProjet === projet.id && (lecture.audio || !projet.audio)) return;
-  if (!projet.audio) {
-    if (lecture.audio) { arreterSon(); lecture.audio = null; }
-    lecture.audioProjet = projet.id;
-    return;
-  }
-  lecture.audioProjet = projet.id;
-  if (lecture.audio) { arreterSon(); lecture.audio = null; }
-  let blob;
-  try { blob = await lireBase(cleMusique(projet)); } catch { return; }
-  if (!(blob instanceof Blob) || !blob.size) return;
-  if (projetActif()?.id !== projet.id) return;
-  const son = new Audio(URL.createObjectURL(blob));
-  son.preload = "metadata";
-  await new Promise((suite) => {
-    son.addEventListener("loadedmetadata", suite, { once: true });
-    son.addEventListener("error", suite, { once: true });
-    setTimeout(suite, 4000);
-  });
-  if (projetActif()?.id !== projet.id) return;
-  if (!son.duration) return;
-  lecture.audio = son;
-  // La barre de son disait « Rouvrir le fichier » : elle n'a plus lieu de le dire.
-  rendreProjet();
-}
-
-async function reprendreFluide(projet) {
-  const fiche = lireFichesFluide()[projet.id];
-  if (!fiche || fiche.empreinte !== empreinteMontage(projet)) return;
-  const blob = await lireBase(cleFluide(projet));
-  if (!(blob instanceof Blob) || !blob.size) return;
-  poserFluide(blob, fiche.empreinte);
-  majBandeauFluide();
-}
-
-function poserFluide(blob, empreinte) {
-  if (fluide.url) URL.revokeObjectURL(fluide.url);
-  fluide.url = URL.createObjectURL(blob);
-  fluide.empreinte = empreinte;
-  const video = $("apercu-fluide");
-  if (video) {
-    video.src = fluide.url;
-    video.load();
-    fluide.video = video;
+async function oublierApercus() {
+  let fiches;
+  try { fiches = JSON.parse(localStorage.getItem(CLE_FLUIDES) || "null"); } catch { fiches = null; }
+  if (!fiches) return;
+  localStorage.removeItem(CLE_FLUIDES);
+  for (const id of Object.keys(fiches)) {
+    try { await effacerBase(`apercu:${id}`); } catch { /* déjà parti */ }
   }
 }
+oublierApercus().catch(() => {});
 
 /* Combien de lecteurs, et combien de plans d'avance.
 
@@ -3501,7 +3365,7 @@ function ajusterMoniteur(toile) {
 
 function dessinerMoniteur() {
   // Pendant un rendu image par image, c'est lui qui peint : la toile encodée.
-  if (fluide.construction || rendu.parImage) return;
+  if (rendu.parImage) return;
   const toile = $("moniteur");
   if (!toile) return;
   ajusterMoniteur(toile);
@@ -3514,18 +3378,12 @@ function dessinerMoniteur() {
 
   const ctx = toile.getContext("2d");
   const plan = projetActif()?.plans[lecture.index];
-  /* L'aperçu fluide court-circuite tout : une seule source, jamais de coupe à
-     couvrir, jamais de position à rattraper. Le lecteur du fichier est aussi
-     celui qui donne l'heure — on le dessine tel quel. */
-  const doublure = fluideDispo();
-  const video = doublure || elementActif();
+  const video = elementActif();
   // La position demandée est reprise ici, à chaque image : c'est ce qui garantit
   // que l'image finit par correspondre au curseur, quoi qu'il arrive aux
   // événements du lecteur.
-  if (!doublure) {
-    rattraperPosition(video);
-    veillerCoherence(video, plan);
-  }
+  rattraperPosition(video);
+  veillerCoherence(video, plan);
 
   /* Le plan sortant s'arrête à son propre point de sortie, sans attendre la fin
      de son relais. Il couvrait la coupe pendant quatre dixièmes de seconde quoi
@@ -3562,12 +3420,7 @@ function dessinerMoniteur() {
      de la pellicule, en basse définition mais immédiate — et l'image pleine
      reprend la main dès que le doigt s'arrête. C'est ainsi qu'un banc de
      montage donne l'impression de faire défiler les images. */
-  if (lecture.scrub && doublure) {
-    const vise = Math.min(lecture.position, doublure.duration || lecture.position);
-    if (Math.abs(doublure.currentTime - vise) > 0.05 && !doublure.seeking) {
-      try { doublure.currentTime = vise; } catch { /* pas encore prêt */ }
-    }
-  } else if (lecture.scrub) {
+  if (lecture.scrub) {
     const cible = positionCible();
     if (cible && !cible.plan.youtube) {
       const temps = entreeDe(cible.plan) + cible.dans;
@@ -3582,13 +3435,7 @@ function dessinerMoniteur() {
     }
   }
 
-  if (doublure) {
-    /* Un déplacement sur un fichier unique aboutit en quelques images : on le
-       montre dès qu'il a quelque chose, et l'on tient la dernière image sinon —
-       pas d'imagettes, pas de vignette, rien à bricoler. */
-    if (doublure.readyState >= 2 && doublure.videoWidth) source = doublure;
-    else if (derniereImage.toile.width) source = derniereImage.toile;
-  } else if (source) {
+  if (source) {
     // une imagette de défilement a déjà été retenue
   } else if (lecture.demande && lecture.bascule
              && performance.now() - lecture.bascule.quand < RELAIS_SORTANT
@@ -4000,7 +3847,7 @@ function servirImagettes() {
      fichier déjà en mémoire coûte trois dixièmes de milliseconde quand la page
      ne fait rien d'autre. C'est la sonde à imagettes qui, à côté, décodait de
      la vidéo pour la pellicule et retenait le décodeur. */
-  if (lecture.demande || rendu.encours || fluide.construction) return;
+  if (lecture.demande || rendu.encours) return;
   /* L'ordre de service compte autant que la capture elle-même.
 
      La file se servait par la fin, et les colonnes sont demandées de gauche à
@@ -4569,138 +4416,6 @@ function transport() {
 
   barre.append(gauche, jouer, droite);
   return barre;
-}
-
-/* La barre de l'aperçu fluide : un bouton et une phrase, sous le transport. */
-function barreFluide() {
-  const barre = document.createElement("div");
-  barre.className = "barre-fluide";
-  barre.id = "barre-fluide";
-
-  const bouton = document.createElement("button");
-  bouton.type = "button";
-  bouton.id = "btn-fluide";
-  bouton.className = "fluide-action";
-  /* Le libellé est posé ici, pas seulement par « majBandeauFluide ».
-
-     Celle-ci cherche le bouton par son identifiant — et au moment où la barre
-     est fabriquée, elle n'est pas encore dans la page : la recherche ne trouvait
-     rien et le bouton restait vide. On voyait une petite forme sans texte, tant
-     qu'aucune modification du montage ne venait rafraîchir la barre. */
-  bouton.textContent = "Préparer l'aperçu fluide";
-  bouton.addEventListener("click", () => {
-    if (fluide.construction) { fluide.arret = true; return; }
-    const projet = projetActif();
-    if (projet) construireFluide(projet);
-  });
-
-  const dit = document.createElement("span");
-  dit.className = "fluide-dit";
-  dit.id = "fluide-dit";
-  dit.textContent = "La lecture enchaîne les rushs un par un, et marque à chaque coupe. "
-    + "Un aperçu fluide fabrique le montage en un seul fichier, une fois, et se lit d'une traite.";
-
-  barre.append(bouton, dit);
-  // Une fois la barre posée dans la page, elle peut dire ce qu'il en est vraiment.
-  requestAnimationFrame(() => majBandeauFluide());
-  return barre;
-}
-
-/* La version, en clair, dans la barre de l'aperçu.
-
-   Une correction déployée et une capture d'écran qui montre l'ancien
-   comportement, c'est une question sans réponse : le défaut est-il toujours là,
-   ou la page est-elle périmée ? La version affichée là où l'on regarde tranche
-   la question d'un coup d'œil. */
-const marqueVersion = () => `v${VERSION_PAGE.slice(5)}`;
-
-function majBandeauFluide(texte) {
-  const bouton = $("btn-fluide");
-  const dit = $("fluide-dit");
-  if (!bouton || !dit) return;
-  const projet = projetActif();
-  const pret = Boolean(fluideDispo());
-  const libelle = fluide.construction ? "Arrêter"
-    : pret ? "Refaire l'aperçu fluide" : "Préparer l'aperçu fluide";
-  if (bouton.textContent !== libelle) bouton.textContent = libelle;
-  bouton.classList.toggle("stop", fluide.construction);
-  bouton.disabled = !projet?.plans?.length;
-  const poser = (brut) => {
-    const quoi = `${brut} · ${marqueVersion()}`;
-    if (dit.textContent !== quoi) dit.textContent = quoi;
-  };
-  if (texte != null) { poser(texte); return; }
-  poser(fluide.construction ? ""
-    : pret
-      ? "Aperçu fluide prêt : la lecture se fait sur un seul fichier, sans coupe."
-      : fluide.empreinte
-        ? "Le montage a changé depuis le dernier aperçu fluide — la lecture repasse par les rushs."
-        : "La lecture enchaîne les rushs un par un, et marque à chaque coupe. "
-          + "Un aperçu fluide fabrique le montage en un seul fichier, une fois, et se lit d'une traite.");
-}
-
-/* Fabriquer l'aperçu : le même rendu que l'export, mais petit et sans son. */
-async function construireFluide(projet) {
-  if (fluide.construction || rendu.encours) return;
-  libererSondeBande();
-  const empreinte = empreinteMontage(projet);
-  if (!empreinte) return;
-  fluide.construction = true;
-  fluide.arret = false;
-  let compteRendu;
-  /* Le bandeau d'avancement des téléchargements n'a rien à dire pendant une
-     fabrication, et il se pose au bas du moniteur — là où l'on regarde
-     justement le montage se construire. On le range le temps qu'il faut. */
-  const bandeau = $("preparation");
-  const bandeauMontre = bandeau && !bandeau.hidden;
-  if (bandeau) bandeau.hidden = true;
-  // La lecture sur les rushs libérerait des décodeurs dont le rendu a besoin.
-  arreter();
-  majBandeauFluide("Préparation…");
-  try {
-    const fait = await rendreImages(projet, {
-      largeur: 640, hauteur: 360,
-      debit: Math.round(5e6 * ((640 * 360) / (1280 * 720))),
-      avecSon: false,
-      /* Douze images par seconde, pas vingt-quatre.
-
-         L'aperçu sert à juger l'enchaînement et le mouvement, pas à livrer. Or
-         chaque image coûte un décodage : en demander deux fois moins divise la
-         fabrication par deux. Et l'animation japonaise est le plus souvent
-         dessinée sur deux ou trois images — douze par seconde, c'est très
-         exactement la cadence de ce qu'on regarde. L'export, lui, reste à
-         vingt-quatre. */
-      cadence: 12,
-      /* L'aperçu se fabrique en laissant jouer les rushs, pas en les
-         parcourant : c'est ce qui fait la différence entre une fabrication plus
-         longue que le montage et une fabrication plus courte. L'export, lui,
-         reste sur le parcours image par image — il vise l'exactitude, pas la
-         vitesse. */
-      parLecture: true,
-      arrete: () => fluide.arret,
-      dire: (pourcent, reste) => majBandeauFluide(
-        `Aperçu fluide — ${pourcent} %${reste ? `, encore ${minutage(reste)}` : ""}`
-        + " · l'application doit rester ouverte",
-      ),
-    });
-    if (fait.echec === "codec") {
-      majBandeauFluide("Ce navigateur ne sait pas fabriquer d'aperçu fluide.");
-      return;
-    }
-    if (fait.echec === "arret") { majBandeauFluide("Aperçu fluide arrêté."); return; }
-    if (fait.echec) { majBandeauFluide(`L'aperçu fluide a échoué (${fait.echec}).`); return; }
-    poserFluide(fait.blob, empreinte);
-    await garderFluide(projet, fait.blob, empreinte);
-    fluide.construction = false;
-    compteRendu = `Aperçu fluide prêt en ${minutage(Math.round(fait.secondes))} — `
-      + `${(fait.blob.size / 1e6).toFixed(1)} Mo, lu d'une traite.`;
-  } finally {
-    fluide.construction = false;
-    fluide.arret = false;
-    if (bandeau && bandeauMontre) bandeau.hidden = false;
-    majBandeauFluide(compteRendu);
-    reveillerMoniteur(1500);
-  }
 }
 
 // Safari sur iPhone n'expose pas requestFullscreen sur un élément quelconque.
@@ -5337,6 +5052,38 @@ function boutonSon(projet) {
    avec la bande son. */
 const cleMusique = (projet) => `musique:${projet.id}`;
 
+/* Rendre sa musique à un projet qu'on rouvre — ou la lui retirer quand on
+   change de projet, sans quoi la chanson de l'un jouerait sur le montage de
+   l'autre. Appelée à chaque affichage du montage, donc écrite pour ne rien
+   faire quand il n'y a rien à faire. */
+async function reprendreMusique(projet) {
+  if (!projet) return;
+  if (lecture.audioProjet === projet.id && (lecture.audio || !projet.audio)) return;
+  if (!projet.audio) {
+    if (lecture.audio) { arreterSon(); lecture.audio = null; }
+    lecture.audioProjet = projet.id;
+    return;
+  }
+  lecture.audioProjet = projet.id;
+  if (lecture.audio) { arreterSon(); lecture.audio = null; }
+  let blob;
+  try { blob = await lireBase(cleMusique(projet)); } catch { return; }
+  if (!(blob instanceof Blob) || !blob.size) return;
+  if (projetActif()?.id !== projet.id) return;
+  const son = new Audio(URL.createObjectURL(blob));
+  son.preload = "metadata";
+  await new Promise((suite) => {
+    son.addEventListener("loadedmetadata", suite, { once: true });
+    son.addEventListener("error", suite, { once: true });
+    setTimeout(suite, 4000);
+  });
+  if (projetActif()?.id !== projet.id) return;
+  if (!son.duration) return;
+  lecture.audio = son;
+  // La barre de son disait « Rouvrir le fichier » : elle n'a plus lieu de le dire.
+  rendreProjet();
+}
+
 function chargerSon(projet, fichier) {
   arreterSon();
   const url = URL.createObjectURL(fichier);
@@ -5407,8 +5154,6 @@ function redessinerPiste() {
   const projet = projetActif();
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
-  // Le moindre rognage périme l'aperçu fluide : la barre doit le dire.
-  majBandeauFluide();
   purgerBandes();
   ancienne.closest(".piste-enveloppe").replaceWith(pisteComplete(projet));
   // La carte du projet porte la durée totale : elle vieillit dès qu'une durée
@@ -5430,21 +5175,6 @@ function redessinerPiste() {
 function poserPlan(index, decalage = 0, enchainer = false) {
   const projet = projetActif();
   if (!projet || !projet.plans[index]) return;
-  /* Aperçu fluide : il n'y a pas de rush à poser, seulement une tête à déplacer
-     dans le fichier unique. */
-  const doublure = fluideDispo();
-  if (doublure) {
-    lecture.index = index;
-    lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
-    selectionner(index);
-    try {
-      doublure.currentTime = Math.min(lecture.position, doublure.duration || lecture.position);
-    } catch { /* pas encore prêt */ }
-    if (enchainer || lecture.jouant) doublure.play().catch(() => {});
-    reveillerMoniteur(1500);
-    majTransport();
-    return;
-  }
   lecture.index = index;
   if (!lecture.demande) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
   reveillerMoniteur(1500);
@@ -5599,8 +5329,6 @@ function planSuivant() {
 
 function basculerLecture() {
   const projet = projetActif();
-  const doublure = fluideDispo();
-  if (doublure && projet) return basculerFluide(doublure, projet);
   const video = elementActif();
   if (!video || !projet) return;
   if (lecture.demande) {
@@ -5699,40 +5427,7 @@ function basculerLecture() {
   suivreTete();
 }
 
-/* Lire l'aperçu fluide : un fichier, un lecteur, rien à enchaîner. La tête de
-   lecture suit ce fichier au lieu de suivre une horloge — c'est lui la vérité,
-   et il ne peut pas prendre de retard sur lui-même. */
-function basculerFluide(video, projet) {
-  if (lecture.demande) {
-    lecture.demande = false;
-    lecture.jouant = false;
-    lecture.horloge = null;
-    video.pause();
-    arreterSon();
-    majTransport();
-    reveillerMoniteur();
-    lancerImport();
-    servirImagettes();
-    if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); }
-    return;
-  }
-  // Arrivé au bout, « lecture » reprend depuis le début.
-  if (lecture.position >= total(projet) - IMAGE) { lecture.position = 0; lecture.index = 0; }
-  lecture.demande = true;
-  lecture.jouant = true;
-  libererSondeBande();
-  // Les lecteurs de rushs n'ont plus rien à faire : ils gardaient un décodeur.
-  for (const lecteur of vivier()) lecteur.pause();
-  try { video.currentTime = Math.min(lecture.position, video.duration || lecture.position); } catch { /* pas encore prêt */ }
-  demarrerHorloge();
-  demarrerSon();
-  video.play().catch(() => { lecture.demande = false; lecture.jouant = false; majTransport(); });
-  majTransport();
-  suivreTete();
-}
-
 function arreter() {
-  $("apercu-fluide")?.pause();
   lecture.demande = false;
   lecture.jouant = false;
   lecture.horloge = null;
@@ -5953,21 +5648,6 @@ function appliquerSeek(jouer = false) {
   let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
   if (index < 0) index = projet.plans.length - 1;
   const dans = Math.max(0, lecture.position - debuts[index]);
-
-  const doublure = fluideDispo();
-  if (doublure) {
-    lecture.index = index;
-    selectionner(index);
-    try { doublure.currentTime = Math.min(lecture.position, doublure.duration || lecture.position); } catch { /* pas encore prêt */ }
-    if (jouer) doublure.play().catch(() => {});
-    if (lecture.audio) {
-      lecture.audio.currentTime = Math.min(lecture.position, lecture.audio.duration || 0);
-      if (jouer) lecture.audio.play().catch(() => {});
-    }
-    reveillerMoniteur();
-    majTransport();
-    return;
-  }
 
   const video = elementActif();
   const plan = projet.plans[index];
@@ -6702,15 +6382,6 @@ function positionCourante() {
 
   // Le doigt prime sur tout le reste.
   if (lecture.scrub || !lecture.demande) return lecture.position;
-  /* Aperçu fluide : la tête suit le fichier. Il n'y a pas de coupe à rattraper
-     ni d'horloge à tenir — le temps du fichier est le temps du montage. */
-  const doublure = fluideDispo();
-  if (doublure) {
-    const position = Math.min(doublure.currentTime, duree_totale);
-    lecture.position = position;
-    if (position >= duree_totale - 0.02) { terminerLecture(); return duree_totale; }
-    return position;
-  }
   if (!lecture.horloge) return lecture.position;
 
   const ecoule = (performance.now() - lecture.horloge.debut) / 1000;
@@ -6782,7 +6453,6 @@ function terminerLecture() {
   lecture.horloge = null;
   if (projet) lecture.position = total(projet);
   elementActif()?.pause();
-  $("apercu-fluide")?.pause();
   arreterSon();
   majTransport();
   reveillerMoniteur();
@@ -6799,14 +6469,7 @@ function suivreTete() {
     // Le changement de plan est décidé par l'horloge, pas par la fin d'un
     // fichier : un plan dont la lecture patine n'immobilise plus le montage.
     const projet = projetActif();
-    /* Sur l'aperçu fluide, il n'y a rien à enchaîner : on tient seulement la
-       sélection à jour, pour que la piste montre le plan qu'on regarde. */
-    if (lecture.demande && projet && fluideDispo()) {
-      const debuts = offsets(projet.plans);
-      let index = debuts.findIndex((d, k) => lecture.position < d + duree(projet.plans[k]));
-      if (index < 0) index = projet.plans.length - 1;
-      if (index !== lecture.index) { lecture.index = index; selectionner(index); }
-    } else if (lecture.demande && projet) {
+    if (lecture.demande && projet) {
       const plan = projet.plans[lecture.index];
       const debuts = offsets(projet.plans);
       const fin = (debuts[lecture.index] || 0) + duree(plan);
@@ -7909,206 +7572,17 @@ async function choisirCodec(liste, config) {
    Laisser le lecteur jouer, au contraire, décode chaque image une fois et une
    seule. On ne le déplace donc que pour entrer dans un plan ; à l'intérieur, on
    le laisse courir et on prend au passage l'image de chaque instant voulu. */
-/* Le plafond d'attente d'une image, pendant une fabrication. Deux fois
-   l'intervalle d'une image à douze par seconde : de quoi laisser le décodeur
-   arriver quand il le peut, jamais de quoi bloquer la fabrication. */
-const PATIENCE_IMAGE = 170;
+/* Le rendu avance d'image en image par déplacements, jamais en lisant.
 
-/* Et le délai laissé à une lecture qui démarre, plus généreux : c'est une fois
-   par plan, pas une fois par image. */
-const PATIENCE_DEMARRAGE = 800;
-
-/* De combien le lecteur a le droit de devancer la grille d'images avant d'être
-   arrêté. Une image ou deux à douze par seconde : assez peu pour qu'il ne
-   franchisse pas le point de sortie du plan, assez pour ne pas l'arrêter et le
-   relancer à chaque image. Mesuré à 0,05 s, la fabrication est correcte mais un
-   tiers plus lente ; à 0,25 s, elle dépasse la coupe de six dixièmes de seconde.
-   Entre les deux, elle est à la fois juste et la plus rapide des trois. */
-const AVANCE_TOLEREE = 0.12;
-
-async function avancerVers(video, cible, allure, fin) {
-  /* Et si la lecture ne prend pas, on repasse aux déplacements pour de bon.
-
-     Un navigateur peut refuser de jouer, ou jouer sans avancer : sur un appareil
-     où cela arrive, chaque image attendrait les deux secondes du garde-fou et la
-     fabrication n'avancerait plus. On s'en aperçoit à la première image et l'on
-     renonce — la fabrication est alors plus lente, mais elle aboutit. */
-  if (video.dataset.sansLecture === "oui") { await attendreImage(video, cible); return; }
-
-  /* Le point de sortie du plan est une frontière dure : au-delà, ce qui reste
-     dans le fichier a été coupé et n'a rien à faire dans l'aperçu. */
-  const borne = Number.isFinite(fin) ? fin : Infinity;
-  const ecart = cible - video.currentTime;
-
-  /* Le lecteur est arrêté dès qu'il a de l'avance — y compris ici, avant même
-     de se demander quoi faire.
-
-     C'était le trou. Quand il avait déjà dépassé l'instant voulu, on repartait
-     aussitôt sans rien lui dire, et il continuait de tourner pendant qu'on
-     dessine, qu'on encode et qu'on souffle — c'est-à-dire pendant l'essentiel du
-     temps. Il franchissait ainsi le point de sortie du plan et lisait la suite
-     du rush, celle qu'on venait justement de couper : mesuré, jusqu'à une
-     seconde deux au-delà de la coupe. L'aperçu montrait les rushs d'origine
-     plutôt que le montage, et ce décodage-là était du temps perdu deux fois.
-
-     Arrêté, il ne peut plus dériver, et il repart tout seul dès que la grille
-     d'images l'a rattrapé. */
-  if (!video.paused && (video.currentTime >= borne || ecart < -AVANCE_TOLEREE)) video.pause();
-  /* Un vrai saut — en arrière, ou loin devant — mérite un déplacement franc.
-     Un dépassement, non.
-
-     C'est ici que se jouaient les quarante minutes. En lecture accélérée, le
-     lecteur passe l'instant voulu avant qu'on ait la main : à quatre fois la
-     vitesse et cent soixante-dix millisecondes d'attente, il peut le dépasser
-     de plus d'une demi-seconde. Le seuil était à un quart de seconde — donc
-     chaque image déclenchait un retour en arrière, et chaque retour en arrière
-     est un déplacement, c'est-à-dire un redécodage depuis la dernière image-clé.
-     Sur un ordinateur cela ne coûte rien et ne se voit pas ; sur un téléphone
-     qui décode du 720p, c'est une seconde par image. Mille deux cents images
-     plus tard, on annonce quarante minutes.
-
-     On ne revient donc en arrière que pour un vrai décrochage. En deçà, on prend
-     l'image qu'on a sous la main : à une demi-seconde près dans un aperçu de
-     douze images par seconde, cela vaut infiniment mieux qu'un déplacement. */
-  if (ecart < -1.2 || ecart > 1.5) {
-    video.pause();
-    await attendreImage(video, cible);
-    return;
-  }
-  if (ecart <= 0.001) return;
-  /* On lance la lecture sans attendre qu'elle réponde.
-
-     « play » rend une promesse qui ne se dénoue qu'une fois la lecture
-     réellement commencée — cent à deux cents millisecondes plus tard. Or le
-     lecteur, lui, est déjà parti : à quadruple vitesse, il a couvert plus d'une
-     demi-seconde de film avant que la promesse revienne, et l'on reprenait la
-     main bien au-delà de l'image voulue. C'était le dernier trou par où passait
-     « il rend tout le bloc de vidéo d'origine ».
-
-     On surveille donc la position toutes les vingt-cinq millisecondes, dès
-     l'instant où la lecture est demandée, et l'on ne s'occupe du refus que s'il
-     arrive. */
-  let demarrage = false;
-  let refus = false;
-  if (video.paused || video.playbackRate !== allure.taux) {
-    video.playbackRate = allure.taux;
-    if (video.paused) {
-      demarrage = true;
-      video.play().catch(() => { refus = true; });
-    }
-  }
-  const depart = video.currentTime;
-  /* L'attente est plate, courte, et ne dépend de rien.
-
-     Elle était calculée sur le retard à rattraper — donc plus l'appareil
-     traînait, plus on l'attendait : exactement l'inverse de ce qu'il faut. Sur
-     un téléphone, le retard s'accumulait jusqu'à une seconde et demie et
-     l'attente montait avec lui, jusqu'à deux secondes et demie par image. Un
-     montage d'une minute quarante annonçait vingt-six minutes de fabrication.
-
-     Un plafond fixe borne tout : aucune image ne peut coûter plus que cela, donc
-     aucune fabrication ne peut s'emballer, quel que soit l'appareil. Ce qu'on
-     perd, c'est une image tenue de temps à autre dans l'aperçu — invisible à
-     côté d'une attente qui se compte en dizaines de minutes. */
-  /* Une lecture qui démarre met plus longtemps que les suivantes : le décodeur
-     s'amorce, la première image met un peu à venir. Lui appliquer le plafond
-     ordinaire revenait à conclure, dès la première image d'un plan, que ce
-     navigateur ne sait pas jouer. */
-  const limite = performance.now() + (demarrage ? PATIENCE_DEMARRAGE : PATIENCE_IMAGE);
-  while (!refus && video.currentTime < cible && !video.ended && performance.now() < limite) {
-    if (video.currentTime >= borne) { video.pause(); break; }
-    /* L'attente d'une image ne peut jamais être la seule issue.
-
-       « requestVideoFrameCallback » ne se déclenche que si le lecteur présente
-       une image. S'il ne joue pas — et un iPhone ne joue pas un élément vidéo
-       posé hors du document — il ne présente rien, le rappel n'arrive jamais, et
-       la boucle attendait pour toujours : le compte à rebours lui-même n'était
-       plus relu. C'est là que la fabrication se figeait à un pour cent. Un
-       garde-fou court l'accompagne donc, et c'est lui qui rend la main quand
-       rien ne vient. */
-    /* On regarde où en est le lecteur souvent, pas de temps en temps.
-
-       Le garde-fou était à cent vingt millisecondes : entre deux regards, un
-       lecteur lancé à quadruple vitesse couvre presque une demi-seconde de
-       film. On sortait donc de l'attente bien après l'image voulue — parfois
-       au-delà du point de sortie du plan. À vingt-cinq millisecondes, le
-       dépassement tombe à un dixième de seconde au pire, et le coût est nul :
-       pendant cette attente, la page ne fait rien d'autre. */
-    await new Promise((suite) => {
-      let rendu = false;
-      const fait = () => { if (rendu) return; rendu = true; clearTimeout(garde); suite(); };
-      const garde = setTimeout(fait, 25);
-      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(fait);
-    });
-  }
-  if (video.currentTime <= depart + 0.001 && !video.ended) {
-    /* La lecture n'a pas bougé d'un pouce. Une fois, cela ne prouve rien — un
-       décodeur qui s'amorce, une image qui tarde. Renoncer sur un seul essai a
-       été essayé et c'était le pire des deux mondes : la toute première image
-       d'une fabrication déclenchait le repli, et les mille suivantes se
-       faisaient à coups de déplacements, chacun redécodant le plan depuis sa
-       dernière image-clé. Mesuré : trois cent cinq déplacements sur trois cent
-       sept images. On ne renonce donc qu'après une série d'échecs francs. */
-    allure.morts = (allure.morts || 0) + 1;
-    if (allure.morts >= 10) {
-      video.dataset.sansLecture = "oui";
-      video.pause();
-    }
-    await attendreImage(video, cible);
-    return;
-  }
-  allure.morts = 0;
-  /* L'allure se règle sur le dépassement, pas sur le retard.
-
-     Le lecteur avance pendant qu'on l'attend : plus il va vite, plus il a passé
-     l'instant voulu quand on reprend la main. À quadruple vitesse et cent
-     soixante-dix millisecondes d'attente, il le dépasse de sept dixièmes de
-     seconde — assez pour que l'image suivante soit déjà loin derrière lui, et
-     pour qu'on soit tenté de le renvoyer en arrière. Or un retour en arrière est
-     un redécodage depuis la dernière image-clé : sur un téléphone, une seconde.
-     C'est là que se fabriquaient les quarante minutes.
-
-     On ralentit donc dès que le dépassement devient gros, et on accélère quand
-     le lecteur traîne — ce qui est l'inverse de l'intuition, mais c'est ainsi :
-     traîner veut dire qu'il faut couvrir plus de terrain à chaque attente. */
-  /* Arrêté dès qu'il a atteint l'image voulue. Toujours, sans condition.
-
-     C'est le fond de l'affaire, et il a fallu un appareil lent pour le voir. On
-     n'arrêtait le lecteur que s'il avait déjà pris de l'avance ; or au moment
-     précis où il atteint l'instant voulu, il n'en a pas encore. On le laissait
-     donc courir — et il courait pendant tout le travail de l'image : dessiner,
-     encoder, souffler. Sur un ordinateur cela fait dix millisecondes, quatre
-     fois la vitesse, soit quatre centièmes de seconde : invisible. Sur un
-     téléphone qui décode du 720p et le réencode, cela fait deux cents
-     millisecondes, donc un bond de huit dixièmes de seconde à chaque image. Un
-     plan d'une seconde deux était franchi en deux images, et l'aperçu montrait
-     la suite du rush.
-
-     Mesuré en simulant deux cents millisecondes de calcul par image : le
-     lecteur atteignait 3,80 s sur une coupe qui finit à 3,2 s. Arrêté sans
-     condition, il ne dépasse plus. */
-  video.pause();
-  if (refus) { await attendreImage(video, cible); return; }
-  const depasse = video.currentTime - cible;
-  if (depasse > 0.35) {
-    allure.avances = 0;
-    allure.retards += 1;
-    if (allure.retards >= 2 && allure.taux > 1) {
-      allure.taux = allure.taux > 2 ? 2 : 1;
-      allure.retards = 0;
-    }
-  } else if (depasse < 0) {
-    allure.retards = 0;
-    allure.avances += 1;
-    if (allure.avances >= 4 && allure.taux < 4) {
-      allure.taux = allure.taux < 2 ? 2 : 4;
-      allure.avances = 0;
-    }
-  } else {
-    allure.retards = 0;
-    allure.avances = 0;
-  }
-}
+   Un second chemin a existé : laisser le lecteur jouer en accéléré et prendre
+   au passage l'image de chaque instant voulu. Il fabriquait l'aperçu fluide
+   quatre fois et demie plus vite, mais il demandait tout un attirail — un
+   plafond d'attente, une allure qui s'ajuste au dépassement, une tolérance
+   d'avance, un repli quand le navigateur refuse de jouer — et il ne servait
+   qu'à cet aperçu. L'aperçu retiré, il l'est aussi. L'export, lui, a toujours
+   avancé par déplacements : il vise l'exactitude, pas la vitesse. Le chemin par
+   lecture reste dans l'historique du dépôt si le rendu devait un jour être
+   pressé. */
 
 function attendreImage(video, temps) {
   return new Promise((suite) => {
@@ -8209,7 +7683,7 @@ function libererVivier() {
 }
 
 async function rendreImages(projet, reglages) {
-  const { largeur, hauteur, debit, avecSon, dire, arrete, parLecture } = reglages;
+  const { largeur, hauteur, debit, avecSon, dire, arrete } = reglages;
   const cadence = reglages.cadence || IMAGES_PAR_SECONDE;
   libererVivier();
   const codec = await choisirCodec(CODECS_VIDEO,
@@ -8303,13 +7777,6 @@ async function rendreImages(projet, reglages) {
 
   const depart = performance.now();
   rendu.parImage = true;
-  /* L'allure de lecture s'ajuste à ce que l'appareil sait tenir.
-
-     Quatre fois la vitesse normale sur un ordinateur, oui. Sur un téléphone qui
-     décode du 720p, non : le lecteur prend du retard sur chaque image, on
-     l'attend, et la fabrication s'effondre. On part donc vite et l'on ralentit
-     dès que le retard se répète — c'est toujours mieux que d'attendre. */
-  const allure = { taux: 4, retards: 0, avances: 0 };
 
   try {
     let planCourant = null;
@@ -8352,8 +7819,7 @@ async function rendreImages(projet, reglages) {
 
       const dans = entreeDe(plan) + Math.max(0, t - (debuts[index] || 0));
       const vise = Math.min(dans, Math.max(0, (lecteur.duration || dans) - 0.02));
-      if (parLecture) await avancerVers(lecteur, vise, allure, sortieDe(plan));
-      else await attendreImage(lecteur, vise);
+      await attendreImage(lecteur, vise);
 
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, largeur, hauteur);
