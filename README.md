@@ -2705,6 +2705,112 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Comment un bloc de montage est traité, et ce qui n'allait pas
+
+Remarque de l'utilisateur : « ce n'est pas un problème de cache ou de mémoire,
+c'est un problème de comment les blocs de vidéo sont traités ». Il avait raison
+de désigner cet endroit — il y avait trois défauts, dont un qui rendait tout le
+banc d'essai aveugle.
+
+### Le banc donnait un fichier par bloc ; un montage n'en fait rien
+
+Le banc fabriquait cent vingt plans pointant vers cent vingt fichiers différents.
+Un vrai montage tire cent à cent soixante-quinze blocs de **vingt-quatre rushs** :
+le même fichier revient sans cesse, à des endroits différents. Le cas le plus
+fréquent n'était donc jamais mesuré. Le banc tire maintenant ses blocs d'un petit
+jeu de sources, au hasard mais de façon reproductible.
+
+### Un bloc est un fichier et deux bornes — le code confondait les deux
+
+`preparerPlan` et `poserPlan` décidaient de recharger le fichier en comparant
+**l'identifiant du bloc**. Or depuis que chaque bloc porte son propre identifiant,
+passer d'un bloc à l'autre du même rush réécrivait `src` avec la même adresse. Et
+réécrire `src`, même à l'identique, relance l'algorithme de chargement du
+navigateur : tampon jeté, conteneur relu, tout refait pour un fichier déjà là et
+déjà décodé.
+
+Le chargement suit maintenant le fichier, le déplacement suit les bornes. Et deux
+blocs taillés bout à bout dans le même rush s'enchaînent sans le moindre
+déplacement — la lecture continue, seules les bornes changent.
+
+```
+120 blocs tirés de 6 sources, 20 s de lecture
+                          avant      après
+fichiers chargés         18 · 19    14 · 14
+déplacements             17 · 14    22 · 23
+```
+
+Un quart des chargements en moins, remplacés par des déplacements — l'échange est
+le bon : un déplacement coûte le parcours depuis une image-clé, un chargement
+coûte cela plus la relecture du conteneur et le remplissage du tampon.
+**Effet mesuré sur la fluidité : aucun sur ce banc.** Le gain est du travail
+retiré, pas des images gagnées.
+
+### Un lecteur préparé devenait orphelin quand le fichier local arrivait
+
+Quand la copie locale d'un rush arrivait, les lecteurs qui l'avaient préparé
+depuis le relais voyaient leur source effacée — et rien d'autre. Ils cessaient
+d'être reconnus comme tenant ce bloc, tout en continuant de l'occuper : personne
+ne les préparait plus, et la coupe qui arrivait sur ce bloc devenait froide,
+c'est-à-dire un fichier ouvert au moment précis où il faut afficher. **Sur un lien
+mobile, où les fichiers arrivent pendant qu'on regarde, cela se produit à chaque
+arrivée.** Le lecteur est maintenant rechargé sur place, tout de suite.
+
+### L'amorce ne repassait pas par le début
+
+Le lecteur d'attente se lisait « le plan d'index + 1 ». Sur le dernier plan d'un
+montage qui boucle, il n'y en avait donc aucun, et le retour au début démarrait à
+froid à chaque tour.
+
+### Ce que le banc dit, et ce qu'il ne peut pas dire
+
+Instrumenté à l'instant exact de chaque coupe, sur cent vingt blocs :
+
+```
+21 bascules : 18 à chaud, 3 à froid — et les trois froides sont au démarrage
+sur les 18 chaudes :  readyState 4 : 18/18   déjà en train de jouer : 14/18
+                      écart au point d'entrée : médiane 57 ms, pire 128 ms
+```
+
+La mécanique fait donc son travail : au moment de la coupe le fichier est chargé,
+placé à moins de deux images de sa borne, et le plus souvent déjà en mouvement.
+Et selon le bridage du processeur :
+
+```
+             images/s   trous > 100 ms
+processeur ×1   21,2           1
+processeur ×2   23,7           0
+processeur ×4   20,9           8
+processeur ×8   17,6          20
+```
+
+**Jusqu'à ×4, la lecture est fluide.** Le défaut ne se reproduit ici qu'à bridage
+extrême — donc ce qui se passe sur un iPhone tient à quelque chose que ce banc ne
+sait pas simuler.
+
+### La piste la plus probable, et comment elle se vérifiera
+
+iOS borne le nombre de vidéos qu'il décode en même temps. Au moment d'une coupe,
+l'application en fait jouer jusqu'à trois : le plan sortant qui couvre le relais,
+le plan courant, et le plan suivant qu'on amorce. Sur un téléphone qui refuse la
+troisième, l'amorce échoue — et **chaque coupe démarre à froid**, sans que rien ne
+le dise, puisque le refus était avalé en silence.
+
+Il est maintenant compté, et le diagnostic le montre :
+
+```
+Blocs et lecteurs :
+  bascules : 20 · 18 à chaud (lecteur déjà prêt) · 2 à froid
+  fichiers chargés : 19 pour 20 bascules
+  amorces avant la coupe : 13 demandées, 13 tenues, 0 refusées
+  lecteurs jouant en même temps, au plus : 2
+```
+
+Sur un appareil qui refuse, la ligne des amorces le dira, et le diagnostic ajoute
+la conclusion en toutes lettres. C'est la seule façon de trancher entre « le code
+prépare mal » et « le système refuse » — deux causes qui donnent la même image
+saccadée et qui n'appellent pas le même remède.
+
 ## L'aperçu ne s'arrête plus au bout
 
 Demande : « pendant la prévisualisation je veux que les plans et la musique ne

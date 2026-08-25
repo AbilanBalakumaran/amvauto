@@ -1580,7 +1580,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 08:05";
+const VERSION_PAGE = "2026-08-25 10:35";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3392,7 +3392,27 @@ function imageDavance(plan, temps) {
 /* Une fenêtre sur l'état interne, pour le banc d'essai et pour le diagnostic.
    La bande son n'est pas dans le document — c'est un « Audio » construit à la
    main — donc rien ne permettait de l'observer du dehors. */
+const bascules = {
+  total: 0, chaud: 0, froid: 0, causes: [], etats: [],
+  amorces: 0, amorcesTenues: 0, amorcesRefusees: 0, dernierRefus: "",
+  chargements: 0, jouantMax: 0,
+};
+
+/* Combien de lecteurs jouent en même temps, au plus.
+
+   C'est la mesure qui dit si l'on demande à l'appareil plus qu'il ne sait
+   faire. Trois vidéos en vol au moment d'une coupe passent sans peine sur un
+   ordinateur ; un téléphone peut n'en accepter que deux, et alors ce n'est pas
+   l'application qui ralentit, c'est le système qui refuse. */
+function compterJouants() {
+  let n = 0;
+  for (const v of vivier()) if (!v.paused) n += 1;
+  if (n > bascules.jouantMax) bascules.jouantMax = n;
+  return n;
+}
+
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
+  bascules: { ...bascules },
   enCours: [...moteur.enCours.values()].map((x) => x.plan),
   images: [...moteur.pretes.values()].map((x) => `${x.entree.toFixed(2)}→${x.fin.toFixed(2)} (${x.images.length})`),
   son: lecture.audio
@@ -3485,8 +3505,19 @@ function lecteurTenant(plan) {
   return vivier().find((v) => v.dataset.plan === plan.id && v.dataset.source === source) || null;
 }
 
-// Le lecteur du plan à venir : celui sur lequel la prochaine coupe basculera.
-const elementAttente = () => lecteurTenant(projetActif()?.plans[lecture.index + 1]);
+/* Le lecteur du plan à venir : celui sur lequel la prochaine coupe basculera.
+
+   « le suivant » se lisait « index + 1 », sans repasser par le début. Sur le
+   dernier plan d'un montage qui boucle, il n'y avait donc aucun lecteur
+   d'attente, donc aucune amorce : le retour au début démarrait à froid, chaque
+   fois, alors même que le vivier avait bien préparé le premier plan. */
+const planApres = () => {
+  const projet = projetActif();
+  if (!projet?.plans.length) return null;
+  const [suivant] = plansApres(lecture.index, 1);
+  return suivant === undefined ? null : projet.plans[suivant];
+};
+const elementAttente = () => lecteurTenant(planApres());
 
 // Le moniteur dessine, image par image, ce que la séquence doit montrer : la
 // vidéo du plan courant si elle a quelque chose à donner, sa vignette sinon.
@@ -4743,10 +4774,20 @@ function preparerSuivants(index) {
     else manquants.push(plan);
   }
   if (!manquants.length) return;
-  // Les lecteurs libres vont aux plans les plus proches en premier.
   const libres = vivier().filter((v) => !gardes.has(v));
+  /* Les lecteurs libres vont aux plans les plus proches en premier — et de
+     préférence à celui qui tient déjà le bon fichier.
+
+     Un montage tire cent blocs de vingt-quatre rushs : le même fichier revient
+     sans cesse, à des endroits différents. Confier un bloc à un lecteur qui a
+     déjà ce fichier ouvert ne coûte qu'un déplacement ; le confier à un autre
+     coûte un chargement complet — conteneur relu, tampon à remplir. À
+     l'inverse, prendre un lecteur au hasard quand un autre avait le fichier,
+     c'est refaire un travail déjà fait. */
   for (const plan of manquants) {
-    const libre = libres.shift();
+    const source = sourceDe(plan);
+    const dejaLa = libres.findIndex((v) => v.dataset.source === source && source);
+    const libre = dejaLa >= 0 ? libres.splice(dejaLa, 1)[0] : libres.shift();
     if (!libre) return;
     preparerPlan(libre, plan);
   }
@@ -4760,11 +4801,26 @@ function preparerPlan(video, plan) {
   // Ce lecteur pouvait encore rouler — un sortant dont le relais est fini. Le
   // laisser courir, c'est un décodage pour une image que personne ne regarde.
   video.pause();
+  /* Le fichier ne se recharge que si c'en est un autre.
+
+     Un bloc de montage, c'est un fichier et deux bornes. Deux blocs taillés
+     dans le même rush ne diffèrent que par leurs bornes — et depuis que chaque
+     bloc porte son propre identifiant, le test portait sur l'identifiant seul :
+     passer d'un bloc à l'autre du même fichier réécrivait « src » avec la même
+     adresse. Réécrire « src », même à l'identique, relance l'algorithme de
+     chargement du navigateur : le tampon est jeté, le conteneur relu, tout est
+     refait pour un fichier qui était déjà là et déjà décodé.
+
+     Le chargement suit donc le fichier, et le déplacement suit les bornes. */
+  const memeFichier = Boolean(source) && video.dataset.source === source;
   video.dataset.plan = plan.id;
   video.dataset.source = source;
   video.muted = true;
-  video.src = source;
-  video.load();
+  if (!memeFichier) {
+    bascules.chargements += 1;
+    video.src = source;
+    video.load();
+  }
   // Et garé sur son point d'entrée, pas au début du fichier : à la bascule, le
   // lecteur devient visible immédiatement, et il montrait jusqu'ici les
   // premières images du fichier — celles-là mêmes qui avaient été coupées — le
@@ -4793,7 +4849,20 @@ function preparerPlan(video, plan) {
 function oublierSourceReseau(plan) {
   const actif = elementActif();
   for (const autre of vivier()) {
-    if (autre !== actif && autre.dataset.plan === plan.id) autre.dataset.source = "";
+    if (autre === actif || autre.dataset.plan !== plan.id) continue;
+    /* On effaçait la source, et on s'arrêtait là.
+
+       Le lecteur cessait alors d'être reconnu comme tenant ce plan — la
+       recherche exige la même source — mais il continuait de l'occuper : plus
+       personne ne le préparait, et la coupe qui arrivait sur ce plan devenait
+       froide, c'est-à-dire un fichier ouvert au moment précis où il faut
+       afficher. Sur un lien mobile, où les fichiers arrivent pendant qu'on
+       regarde, cela se produit à chaque arrivée.
+
+       On le recharge donc tout de suite sur le fichier de l'appareil : le
+       lecteur qui tenait déjà ce plan le tient toujours, simplement mieux. */
+    autre.dataset.source = "";
+    preparerPlan(autre, plan);
   }
 }
 
@@ -4827,7 +4896,22 @@ function amorcerSuivant(reste) {
   if (attente.readyState < 2) return;
   attente.dataset.amorce = "oui";
   attente.muted = true;
-  attente.play().catch(() => { attente.dataset.amorce = ""; });
+  bascules.amorces += 1;
+  /* Un refus d'amorce n'est pas anodin, et il était avalé en silence.
+
+     iOS borne le nombre de vidéos qu'il décode en même temps. Au moment d'une
+     coupe, l'application en fait jouer jusqu'à trois : le plan sortant qui
+     couvre le relais, le plan courant, et le plan suivant qu'on amorce. Sur un
+     téléphone qui refuse la troisième, l'amorce échoue — et la coupe suivante
+     démarre à froid, chaque fois, sans que rien ne le dise. C'est exactement le
+     défaut qu'un banc de bureau ne peut pas reproduire. On le compte donc, et
+     le diagnostic le montre. */
+  attente.play().then(() => { bascules.amorcesTenues += 1; })
+    .catch((erreur) => {
+      attente.dataset.amorce = "";
+      bascules.amorcesRefusees += 1;
+      bascules.dernierRefus = String(erreur?.name || erreur || "refus");
+    });
 }
 
 // Plein écran à gauche, lecture au centre, annuler et rétablir à droite.
@@ -5854,6 +5938,48 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     const autre = lecteurDe(nom);
     return autre && autre !== video && autre.dataset.plan === plan.id && autre.dataset.source === source;
   });
+  /* Le compte des bascules, froides et chaudes.
+
+     Une bascule est chaude quand le bloc à montrer était déjà chargé et placé
+     sur un lecteur du vivier : il n'y a qu'à changer de lecteur. Elle est froide
+     quand il faut ouvrir le fichier sur place — conteneur relu, tampon à
+     remplir, déplacement à faire — pendant que l'image doit continuer. C'est la
+     seule mesure qui dise si la préparation d'avance fait son travail. */
+  if (video.dataset.plan !== plan.id) {
+    bascules.total += 1;
+    /* L'état exact du lecteur entrant à l'instant de la coupe.
+
+       C'est la seule chose qui décide si la coupe se voit : un lecteur déjà
+       lancé et posé sur son point d'entrée enchaîne sans rien faire ; un lecteur
+       à l'arrêt doit démarrer, et un lecteur mal placé doit se déplacer — et un
+       déplacement dans un fichier compressé coûte le parcours depuis l'image-clé
+       précédente. */
+    const entrant = pret >= 0 ? lecteurDe(NOMS_LECTEURS[pret]) : video;
+    bascules.etats.push({
+      plan: index,
+      chaud: pret >= 0,
+      joue: entrant ? !entrant.paused : false,
+      pret: entrant ? entrant.readyState : -1,
+      ecart: entrant ? Math.round((entrant.currentTime - entreeDe(plan)) * 1000) : null,
+      amorce: entrant ? entrant.dataset.amorce === "oui" : false,
+      avance: entrant ? Number(entrant.dataset.avance || 0) : 0,
+    });
+    if (pret >= 0) bascules.chaud += 1;
+    else {
+      bascules.froid += 1;
+      /* Pourquoi celle-ci était froide. Trois causes possibles, et elles
+         n'appellent pas le même remède : le bloc n'a jamais été préparé, il l'a
+         été mais sur une autre source — le fichier local est arrivé entre-temps
+         — ou le lecteur qui le tenait a été repris pour autre chose. */
+      const memeId = vivier().find((v) => v !== video && v.dataset.plan === plan.id);
+      bascules.causes.push({
+        plan: index,
+        quand: Math.round(performance.now()),
+        pourquoi: memeId ? `source changée (${memeId.dataset.source ? "autre fichier" : "source oubliée"})`
+          : "jamais préparé",
+      });
+    }
+  }
   if (pret >= 0) {
     /* Le sortant continue de jouer un court instant. C'est lui que le moniteur
        montre pendant que le nouveau produit sa première image : une coupe qui
@@ -5889,7 +6015,16 @@ function poserPlan(index, decalage = 0, enchainer = false) {
       fin: planSortant ? sortieDe(planSortant) : Infinity,
     };
   }
-  const change = video.dataset.plan !== plan.id || video.dataset.source !== source;
+  /* Deux questions différentes, longtemps confondues en une seule.
+
+     « Le bloc a-t-il changé ? » décide de ce qu'on note sur le lecteur.
+     « Le fichier a-t-il changé ? » décide s'il faut le recharger. Un montage
+     taille cent blocs dans vingt-quatre rushs : la plupart des coupes changent
+     de bloc sans changer de fichier, et celles-là ne demandent qu'un
+     déplacement. Les traiter comme un changement de fichier jetait le tampon et
+     relisait le conteneur à chaque coupe. */
+  const changeFichier = video.dataset.source !== source;
+  const change = video.dataset.plan !== plan.id || changeFichier;
   /* Le fichier est en route par la réserve : on ne le redemande pas au lecteur.
      On laisse en place ce qu'il montrait — le moniteur tient la dernière image
      — et le plan s'affichera dès sa copie locale prête. */
@@ -5909,7 +6044,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   if (change) {
     video.dataset.plan = plan.id;
     video.dataset.source = source;
-    video.src = source;
+    if (changeFichier) { bascules.chargements += 1; video.src = source; }
   }
   /* Un lecteur déjà lancé et arrivé au bon endroit n'est pas replacé.
 
@@ -5918,7 +6053,11 @@ function poserPlan(index, decalage = 0, enchainer = false) {
      seconde de tolérance — bien plus que la dérive réelle, bien moins qu'une
      coupe — et l'enchaînement se fait sans rien redémarrer ni rien déplacer. */
   const vise = entreeDe(plan) + decalage;
-  const roule = !change && !video.paused && video.readyState >= 2
+  /* Un lecteur qui roule déjà au bon endroit du bon fichier n'est pas replacé —
+     même si le bloc, lui, a changé. Deux blocs taillés bout à bout dans le même
+     rush s'enchaînent alors sans le moindre déplacement, comme sur un banc de
+     montage : la lecture continue, seules les bornes ont changé. */
+  const roule = !changeFichier && !video.paused && video.readyState >= 2
     && Math.abs(video.currentTime - vise) < 0.25;
   if (roule) oublierPosition(video);
   else viser(video, vise, plan);
@@ -5946,8 +6085,9 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   };
   // Juste après un changement de source, readyState décrit encore l'ancien
   // fichier : s'y fier faisait poser la position sur un média déjà remplacé,
-  // et le nouveau démarrait donc à zéro.
-  if (!change && video.readyState >= 1) demarrer();
+  // et le nouveau démarrait donc à zéro. Quand le fichier n'a pas changé, il n'y
+  // a rien de tel à craindre : c'est bien de celui-là que readyState parle.
+  if (!changeFichier && video.readyState >= 1) demarrer();
   video.addEventListener("loadedmetadata", demarrer, { once: true });
   video.addEventListener("canplay", demarrer, { once: true });
 
@@ -7175,6 +7315,7 @@ function suivreTete() {
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   const pas = () => {
     tourAffichage += 1;
+    compterJouants();
     majTransport();
     // C'est cette boucle qui peint pendant la lecture — celle du moniteur se
     // tait tant qu'elle tourne. Une image montrée, un seul travail pour la
@@ -8859,6 +9000,33 @@ $("btn-setting").addEventListener("click", () => {
        c'est voulu, mais ça rend le silence indéchiffrable de loin. Ces trois
        lignes tranchent : soit il tourne et sert des images, soit il ne tourne
        pas et l'on sait pourquoi. */
+    /* Comment les blocs sont traités, vu de l'appareil qui les traite.
+
+       Un bloc de montage est un fichier et deux bornes. Le montrer demande un
+       lecteur qui tienne ce fichier, placé sur la borne d'entrée, déjà lancé au
+       moment de la coupe. Ces quatre lignes disent si c'est ce qui se passe —
+       et, quand ce n'est pas le cas, laquelle des trois conditions manque. */
+    "Blocs et lecteurs :",
+    ...(() => {
+      const b = bascules;
+      const lignes = [
+        `  bascules : ${b.total} · ${b.chaud} à chaud (lecteur déjà prêt) · ${b.froid} à froid`,
+        `  fichiers chargés : ${b.chargements}` +
+          `${b.total ? ` pour ${b.total} bascules` : ""}`,
+        `  amorces avant la coupe : ${b.amorces} demandées, ${b.amorcesTenues} tenues, ${b.amorcesRefusees} refusées`,
+        `  lecteurs jouant en même temps, au plus : ${b.jouantMax}`,
+      ];
+      if (b.dernierRefus) lignes.push(`  dernier refus d'amorce : ${b.dernierRefus}`);
+      if (b.amorcesRefusees > 0 && b.amorcesRefusees >= b.amorces / 2) {
+        lignes.push("  → cet appareil refuse de décoder plusieurs vidéos à la fois :");
+        lignes.push("    chaque coupe démarre donc à froid");
+      }
+      if (b.froid > b.chaud && b.total > 4) {
+        lignes.push("  → les blocs ne sont pas prêts à temps : chaque coupe ouvre un fichier");
+      }
+      return lignes;
+    })(),
+    "",
     "Lecture en boucle :",
     ...(() => {
       const lignes = [bouclePossible()
