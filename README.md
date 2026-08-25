@@ -2705,6 +2705,65 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## « Ça pixellise et ça fait des petites pauses » — c'est un seul événement
+
+Deux symptômes rapportés ensemble, et ils n'en font qu'un.
+
+L'aperçu montre le lecteur vidéo directement : à sa définition native, il ne peut
+pas pixelliser. Quand il décroche, en revanche, le moniteur montre autre chose —
+et c'est là qu'il faut regarder. Il a le choix entre quatre sources, qui n'ont pas
+la même définition :
+
+```
+le lecteur                   sa taille native, 854 à 960 points
+une image décodée d'avance   640 points
+la copie de secours          320 points   ← le coupable
+une imagette de pellicule    160 points
+```
+
+**La copie de secours était prise en 320 points de large**, puis étirée sur un
+moniteur qui en fait 760 sur un téléphone à deux pixels par point, et jusqu'à
+1280 en plein écran : un agrandissement de deux fois et demie à quatre fois. Elle
+n'apparaît qu'au moment où la lecture accroche — donc la pixellisation et la
+petite pause sont le même instant, vu deux fois.
+
+Elle est maintenant prise à la taille du moniteur. Ce qu'elle coûte n'a d'ailleurs
+presque rien à voir avec sa taille : le prix d'une recopie de vidéo est celui de
+la descente de l'image depuis le processeur graphique, la taille de destination ne
+pèse presque rien. Vérifié : `320×180` → `380×214` sur le banc, et autant que le
+moniteur en demande sur un écran dense.
+
+### Un instrument pour ne plus deviner
+
+Le diagnostic compte désormais ce qui est réellement passé à l'écran, par nature :
+
+```
+Ce qui est passé à l'écran :        processeur ×2      processeur ×8
+  lecteur (pleine définition)          100 %              91 %
+  images décodées d'avance               0 %               9 %
+  image tenue (copie)                    0 %               1 %
+  imagette (160 points)                  0 %               0 %
+```
+
+Un aperçu sain est presque entièrement « lecteur ». Dès qu'une autre ligne monte,
+on sait laquelle — et le diagnostic ajoute la conclusion en clair quand les
+imagettes dépassent un vingtième, ou l'image tenue un cinquième.
+
+### Essayé et écarté : couvrir plus tôt
+
+Le seuil au-delà duquel on considère le lecteur immobile était de 90 ms, soit deux
+images manquées avant de réagir. Abaissé à 55 ms — une seule image — il ne donne
+rien de mesurable et rend l'aperçu sensible au moindre soubresaut normal. Laissé
+à 90.
+
+### Un test qui accusait le rendu à tort
+
+`export.mjs` attendait six secondes fixes après avoir lancé le rendu, puis
+concluait. Sur une machine chargée, le rendu était encore en cours : le test
+annonçait « rien livré », c'est-à-dire une panne là où il n'y avait qu'une
+lenteur — et j'ai bien failli chercher une régression inexistante. Il attend
+maintenant le résultat, pas une durée : sept secondes ce jour-là.
+
 ## Le cran au-dessus : deux pistes écartées, une retenue
 
 Demande : « il faut aller à un cran plus haut pour que ce soit fluide ». Le cran

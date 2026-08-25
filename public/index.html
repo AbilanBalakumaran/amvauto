@@ -1585,7 +1585,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 12:01";
+const VERSION_PAGE = "2026-08-25 12:23";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3505,6 +3505,9 @@ function imageDavance(plan, temps) {
 /* Une fenêtre sur l'état interne, pour le banc d'essai et pour le diagnostic.
    La bande son n'est pas dans le document — c'est un « Audio » construit à la
    main — donc rien ne permettait de l'observer du dehors. */
+/* Le compte de ce qui est passé à l'écran pendant les lectures. */
+const vues = { lecteur: 0, reserve: 0, tenue: 0, imagette: 0, noir: 0 };
+
 const bascules = {
   total: 0, chaud: 0, froid: 0, causes: [], etats: [],
   amorces: 0, amorcesTenues: 0, amorcesRefusees: 0, dernierRefus: "",
@@ -3525,7 +3528,9 @@ function compterJouants() {
 }
 
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
-  bascules: { ...bascules },
+  bascules: { ...bascules }, vues: { ...vues },
+  copie: `${derniereImage.toile.width}x${derniereImage.toile.height}`,
+  moniteur: `${$("moniteur")?.width || 0}x${$("moniteur")?.height || 0}`,
   enCours: [...moteur.enCours.values()].map((x) => x.plan),
   images: [...moteur.pretes.values()].map((x) => `${x.entree.toFixed(2)}→${x.fin.toFixed(2)} (${x.images.length})`),
   son: lecture.audio
@@ -4050,6 +4055,23 @@ function dessinerMoniteur() {
   const hauteur = source && (source.videoHeight || source.naturalHeight || source.height);
   if (!largeur || !hauteur) source = null;
 
+  /* Ce que le moniteur montre, compté par nature.
+
+     Cinq sources possibles, et elles n'ont pas la même définition : le lecteur
+     est à sa taille native, une image décodée d'avance fait 640 points, la copie
+     de secours la taille du moniteur, une imagette 160. Quand l'utilisateur dit
+     « ça pixellise », il décrit forcément l'une des deux dernières — et le seul
+     moyen de savoir laquelle, et combien de temps, est de les compter. */
+  if (lecture.demande && source) {
+    const genre = source.tagName === "VIDEO" ? "lecteur"
+      : source === derniereImage.toile ? "tenue"
+      : (typeof ImageBitmap === "function" && source instanceof ImageBitmap) ? "reserve"
+      : "imagette";
+    vues[genre] += 1;
+  } else if (lecture.demande) {
+    vues.noir += 1;
+  }
+
   /* Même image, même instant, même toile : les pixels seraient identiques, on
      n'y touche pas. C'est ce qui fait qu'un projet à l'arrêt ne coûte rien, et
      qu'une lecture à 24 images par seconde ne peint que 24 fois au lieu de
@@ -4191,7 +4213,22 @@ function copierDerniere(video, largeur, hauteur) {
   const maintenant = performance.now();
   if (maintenant - derniereImage.quand <= (lecture.demande ? 500 : 100)) return;
   derniereImage.quand = maintenant;
-  const largeurCopie = 320;
+  /* La copie de secours à la taille du moniteur, et non trois cent vingt points.
+
+     Elle était prise en 320 de large, puis étirée sur un moniteur qui en fait
+     760 sur un téléphone à deux pixels par point, et jusqu'à 1280 en plein
+     écran. C'est un agrandissement de deux fois et demie à quatre fois : la
+     seule image de l'application qui puisse paraître pixellisée, et elle
+     apparaît précisément au moment où la lecture accroche. « Ça pixellise et ça
+     fait des petites pauses » décrit un seul événement, pas deux.
+
+     Ce qu'elle coûte n'a rien à voir avec sa taille : le prix d'une recopie de
+     vidéo est celui de la descente de l'image depuis le processeur graphique, la
+     taille de destination ne pèse presque rien. On la prend donc à la taille où
+     elle sera montrée, à la même cadence qu'avant. */
+  const moniteur = $("moniteur");
+  const large = Math.max(320, Math.min(1280, moniteur?.width || 640));
+  const largeurCopie = Math.min(largeur, large);
   const hauteurCopie = Math.max(1, Math.round((largeurCopie * hauteur) / largeur));
   if (derniereImage.toile.width !== largeurCopie || derniereImage.toile.height !== hauteurCopie) {
     derniereImage.toile.width = largeurCopie;
@@ -9202,6 +9239,27 @@ $("btn-setting").addEventListener("click", () => {
        lecteur qui tienne ce fichier, placé sur la borne d'entrée, déjà lancé au
        moment de la coupe. Ces quatre lignes disent si c'est ce qui se passe —
        et, quand ce n'est pas le cas, laquelle des trois conditions manque. */
+    /* Ce que l'écran a montré, par nature d'image. La définition n'est pas la
+       même pour chacune : le lecteur est à sa taille native, une image décodée
+       d'avance fait 640 points, la copie de secours la taille du moniteur, une
+       imagette 160. Un aperçu sain est presque entièrement « lecteur ». */
+    "Ce qui est passé à l'écran :",
+    ...(() => {
+      const t = vues.lecteur + vues.reserve + vues.tenue + vues.imagette + vues.noir;
+      if (!t) return ["  (rien encore : lance une lecture)"];
+      const part = (n) => `${Math.round((100 * n) / t)} %`;
+      const l = [
+        `  lecteur (pleine définition) : ${part(vues.lecteur)}`,
+        `  images décodées d'avance    : ${part(vues.reserve)}`,
+        `  image tenue (copie)         : ${part(vues.tenue)}`,
+        `  imagette (160 points)       : ${part(vues.imagette)}`,
+      ];
+      if (vues.noir) l.push(`  rien du tout                : ${part(vues.noir)}`);
+      if (vues.imagette > t / 20) l.push("  → des imagettes à l'écran : c'est ce qui se voit comme du pixel");
+      if (vues.tenue > t / 5) l.push("  → l'image est souvent tenue : le lecteur décroche souvent");
+      return l;
+    })(),
+    "",
     "Allure :",
     ...(() => {
       const l = [alAise()
