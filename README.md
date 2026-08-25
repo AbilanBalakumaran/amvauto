@@ -2705,6 +2705,78 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Caler les coupes sur les images-clés : proposé, mesuré, abandonné
+
+L'idée était bonne sur le papier, et c'est la première que proposent les manuels :
+un point d'entrée posé **sur** une image-clé coûte un décodage immédiat, un point
+d'entrée posé au milieu d'un groupe d'images oblige à décoder tout ce qui précède.
+Il suffirait donc de glisser chaque coupe jusqu'à l'image-clé voisine — sans
+toucher à la durée du plan, pour ne pas dérégler la synchronisation musicale.
+
+Reste à savoir si l'image-clé voisine est assez près pour que le glissement ne se
+voie pas. Mesuré sur trois fichiers, dont un rush envoyé par l'utilisateur :
+
+```
+hors.mp4        16,0 s · 24 ips ·  8 clés sur 384 images
+parcours-1.mp4  29,9 s · 24 ips · 15 clés sur 718 images
+sien.mp4         9,4 s ·  7 ips ·  5 clés sur  67 images
+
+  écart entre deux images-clés : 2,00 s — moyen ET maximum, sur les trois
+  distance d'un point tiré au hasard à la clé la plus proche : médiane 0,52 s
+  à moins de 0,10 s : 10 %   0,20 s : 19 %   0,33 s : 31 %
+```
+
+**Deux secondes exactement, partout.** Ce n'est pas un hasard : c'est le réglage
+par défaut de la plupart des encodeurs. Conséquence directe : en acceptant un
+glissement imperceptible — deux dixièmes de seconde, cinq images — on ne
+rattraperait que **19 % des coupes**. Les quatre cinquièmes restants ne bougent
+pas, et pour eux le coût de départ est inchangé. Pour en attraper la moitié, il
+faudrait déplacer les coupes d'une demi-seconde : à ce prix-là on ne montre plus
+le plan qui avait été choisi.
+
+L'idée est donc écartée. Elle valait la mesure : elle coûtait trois lignes à
+tester et aurait coûté une refonte du montage à implémenter pour rien.
+
+Ce que cette mesure confirme, en revanche, c'est que le décodage d'avance est
+bien placé : il part de l'image-clé qui précède le point d'entrée et remonte
+jusqu'à lui **sur un autre fil**, là où le lecteur, lui, le fait sur le fil
+principal. C'est la même quantité de travail — sauf qu'elle ne bloque plus rien.
+
+## Savoir, depuis le téléphone, si le moteur tourne vraiment
+
+Tous les chiffres de ce dépôt viennent d'un Chromium de bureau. Rien ne prouvait
+que Safari accepte ce décodeur, et le moteur est conçu pour **se taire quand il
+échoue** : chaque refus se solde par « on n'aura pas d'avance pour ce plan-là »,
+jamais par une erreur. Un moteur muet et un moteur absent se ressemblent trop
+pour qu'on les distingue à distance.
+
+Le diagnostic (bouton « Setting », puis « Copier le diagnostic ») porte donc
+trois lignes de plus :
+
+```
+Décodage d'avance :
+  disponible · 2 plan(s) en mémoire, 19 image(s)
+  0 en préparation · 0 refusé(s)
+  images montrées par le moteur : 19
+```
+
+ou, quand le navigateur n'en veut pas :
+
+```
+Décodage d'avance :
+  indisponible — absent de ce navigateur : VideoDecoder
+```
+
+et, cas le plus traître — l'API existe, mais refuse ces fichiers-là :
+
+```
+  dernier refus : codec refusé (avc1.640020)
+  → le moteur ne sert rien : ce navigateur décode mal ces fichiers
+```
+
+Trois lignes qui répondent à la question qu'aucun banc d'essai ne pouvait
+trancher : est-ce que ce qui a été mesuré ici sert à quelque chose là-bas ?
+
 ## Décoder d'avance, sur un autre fil
 
 La demande, après le retrait de l'aperçu fluide : « la solution qui se rapproche

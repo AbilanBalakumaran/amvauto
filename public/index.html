@@ -1518,7 +1518,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 03:12";
+const VERSION_PAGE = "2026-08-25 03:29";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3158,17 +3158,32 @@ const PLANS_EN_MEMOIRE = 2;
 const LARGE_MEMOIRE = 640;
 const IMAGES_PAR_PLAN = 10;
 
-const moteur = { pretes: new Map(), enCours: new Map(), refuses: new Set(), fil: null, possible: null, numero: 0 };
+const moteur = {
+  pretes: new Map(), enCours: new Map(), refuses: new Set(), fil: null, possible: null, numero: 0,
+  /* Ce que le moteur a vécu, pour pouvoir le dire.
+
+     Tous les chiffres mesurés sur ce banc l'ont été dans un navigateur de
+     bureau. Rien ne prouve qu'un iPhone accepte ce décodeur : Safari peut
+     refuser la configuration, et le moteur se tait alors sans bruit — c'est son
+     principe. Un moteur muet et un moteur absent se ressemblent trop pour qu'on
+     les devine de loin. Il tient donc son propre journal, lisible dans le
+     diagnostic. */
+  raison: "", echec: "", demandes: 0, servies: 0, rendus: 0,
+};
 
 /* Le décodeur bas niveau existe-t-il, et sait-on lancer un fil ? La question ne
    se pose qu'une fois. */
 function moteurPossible() {
   if (window.__sansMoteur) return false;   // interrupteur du banc d'essai
   if (moteur.possible === null) {
-    moteur.possible = typeof VideoDecoder === "function"
-      && typeof EncodedVideoChunk === "function"
-      && typeof Worker === "function"
-      && typeof createImageBitmap === "function";
+    const manque = [
+      ["VideoDecoder", typeof VideoDecoder === "function"],
+      ["EncodedVideoChunk", typeof EncodedVideoChunk === "function"],
+      ["Worker", typeof Worker === "function"],
+      ["createImageBitmap", typeof createImageBitmap === "function"],
+    ].filter(([, la]) => !la).map(([nom]) => nom);
+    moteur.possible = manque.length === 0;
+    moteur.raison = manque.length ? `absent de ce navigateur : ${manque.join(", ")}` : "";
   }
   return moteur.possible;
 }
@@ -3185,14 +3200,24 @@ function filDecodage() {
         if (images) for (const x of images) x.image.close?.();
         return;
       }
-      if (echec || !images?.length) { moteur.refuses.add(attente.plan); return; }
+      if (echec || !images?.length) {
+        moteur.refuses.add(attente.plan);
+        moteur.echec = echec || "aucune image";
+        return;
+      }
       moteur.pretes.set(attente.plan, {
         images, entree: attente.entree, fin: images[images.length - 1].t,
       });
       rangerMemoire();
     };
-    moteur.fil.onerror = () => { moteur.possible = false; moteur.fil = null; };
-  } catch { moteur.possible = false; moteur.fil = null; }
+    moteur.fil.onerror = () => {
+      moteur.possible = false; moteur.fil = null;
+      moteur.raison = "le fil de décodage n'a pas démarré";
+    };
+  } catch {
+    moteur.possible = false; moteur.fil = null;
+    moteur.raison = "le fil de décodage n'a pas démarré";
+  }
   return moteur.fil;
 }
 
@@ -3257,6 +3282,7 @@ function aJour(video, plan) {
    une. On prend la dernière image dont l'instant est passé — comme le ferait un
    lecteur. */
 function imageDavance(plan, temps) {
+  moteur.demandes += 1;
   const tenue = plan && moteur.pretes.get(plan.id);
   if (!tenue) return null;
   if (temps < tenue.entree - 0.02 || temps > tenue.fin + 0.06) return null;
@@ -3265,6 +3291,7 @@ function imageDavance(plan, temps) {
     if (x.t <= temps + 0.02) choisie = x.image;
     else break;
   }
+  moteur.servies += 1;
   return choisie || tenue.images[0].image;
 }
 
@@ -3623,6 +3650,7 @@ function dessinerMoniteur() {
        images-là en mémoire : on les montre, et le lecteur reprendra la main dès
        qu'il sera à l'heure. C'est là, et seulement là, que la jointure marquait. */
     source = imageDavance(plan, sourceMaintenant(plan));
+    moteur.rendus += 1;
     derniereImage.plan = plan.id;
     derniereImage.vivante = performance.now();
   } else if (video && video.readyState >= 2 && video.videoWidth
@@ -8309,6 +8337,29 @@ $("btn-setting").addEventListener("click", () => {
           `${pellicule.prises} prise(s), ${pellicule.ratees} échec(s)` +
           `${pellicule.dernier ? ` — dernier : ${pellicule.dernier}` : ""}`,
       ];
+    })(),
+    "",
+    /* Le moteur de décodage d'avance, vu de l'appareil qui l'exécute.
+
+       Tout ce qui a été mesuré l'a été sur un navigateur de bureau. Safari peut
+       très bien refuser ce décodeur, et le moteur se tait alors sans rien dire —
+       c'est voulu, mais ça rend le silence indéchiffrable de loin. Ces trois
+       lignes tranchent : soit il tourne et sert des images, soit il ne tourne
+       pas et l'on sait pourquoi. */
+    "Décodage d'avance :",
+    ...(() => {
+      if (!moteurPossible()) return [`  indisponible — ${moteur.raison || "désactivé"}`];
+      const lignes = [
+        `  disponible · ${moteur.pretes.size} plan(s) en mémoire, ` +
+          `${[...moteur.pretes.values()].reduce((n, t) => n + t.images.length, 0)} image(s)`,
+        `  ${moteur.enCours.size} en préparation · ${moteur.refuses.size} refusé(s)`,
+        `  images montrées par le moteur : ${moteur.rendus}`,
+      ];
+      if (moteur.echec) lignes.push(`  dernier refus : ${moteur.echec}`);
+      if (!moteur.rendus && moteur.refuses.size) {
+        lignes.push("  → le moteur ne sert rien : ce navigateur décode mal ces fichiers");
+      }
+      return lignes;
     })(),
     "",
     "Dernières demandes de position :",
