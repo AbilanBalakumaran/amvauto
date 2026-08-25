@@ -2610,6 +2610,58 @@ téléchargement — passe sans un seul souci : trente et une images par seconde
 **aucun bouche-trou**, neuf hoquets contre dix-sept, et un MP4 de 10,8 Mo livré
 au premier appui.
 
+## Ce que Cloudflare donne gratuitement, et ce qu'il ne peut pas donner
+
+Question posée : peut-on faire fabriquer les proxies par Cloudflare, ou s'en
+servir pour aller plus vite ? La réponse tient en un fait et une mesure.
+
+### Le fait : Cloudflare ne sait pas transcoder
+
+Fabriquer un proxy, c'est décoder puis réencoder. **Les Workers n'ont aucun
+décodeur vidéo** — ni WebCodecs, ni ffmpeg, ni codec natif — et cent vingt-huit
+mégaoctets de mémoire par requête. Ce n'est pas une affaire de quota : il n'y a
+rien pour le faire. R2 et KV sont du stockage, pas du calcul : ils peuvent
+ranger un proxy, pas le produire. Le seul produit Cloudflare qui transcode est
+Stream, payant, et qui supposerait d'héberger les rushs d'anime sous le compte
+de l'utilisateur — un risque qui dépasse la facture.
+
+Vérifié au passage sur le compte, par l'API : **R2 n'est pas activé**
+(« Please enable R2 through the Cloudflare Dashboard »), et l'activation demande
+un moyen de paiement même pour les dix gigaoctets offerts. Ce n'est pas un
+paiement mais une vérification d'identité : du stockage à sortie gratuite est la
+cible d'abus la plus évidente, d'où la carte. Les ressources déjà employées —
+Workers, KV, Workers AI — sont bornées par nature et n'en demandent pas.
+
+Autre vérification utile : Sakugabooru ne propose **aucune version légère** de
+ses fichiers (`montage: null`), et ses rushs font 854 × 480 pour six à dix
+mégaoctets de quelques secondes. Ce n'est donc pas la définition qui coûte, mais
+le débit — des encodages presque sans perte, faits pour analyser l'animation.
+
+### La mesure : la réponse assemblée n'était jamais gardée
+
+Les appels à Sakugabooru étaient mis en cache depuis longtemps. Mais une
+recherche en enchaîne plusieurs, puis trie, note et sérialise — et **ce résultat
+final, lui, n'était gardé nulle part**. L'en-tête `cf-cache-status` était
+simplement absent des réponses.
+
+```
+                                    avant           après
+/api/rushes (jujutsu kaisen)   2,36 s → 1,12 s   1,83 s → 0,097 s
+/api/rushes (naruto)                             1,00 s → 0,065 s
+/api/tree   (jujutsu kaisen)                     2,34 s → 0,109 s
+```
+
+Une recherche déjà faite coûte désormais une consultation au bord du réseau, pas
+une seconde de travail. Six heures de fraîcheur, puis une journée pendant
+laquelle la réponse périmée est servie immédiatement pendant qu'une fraîche se
+prépare — un catalogue de rushs ne change pas d'un quart d'heure à l'autre. Les
+réponses en erreur ne sont jamais gardées : une panne d'une seconde ne doit pas
+durer six heures.
+
+Et les fichiers eux-mêmes sont gardés un mois au bord au lieu d'un jour : leurs
+adresses sont des empreintes du contenu (`/data/<empreinte>.mp4`), donc ce
+qu'elles désignent ne changera jamais.
+
 ## Décoder d'avance, sur un autre fil
 
 La demande, après le retrait de l'aperçu fluide : « la solution qui se rapproche

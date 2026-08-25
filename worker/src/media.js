@@ -79,7 +79,12 @@ export async function relayerMedia(request, url) {
     amont = await fetch(adresse.toString(), {
       headers: entetes,
       redirect: "manual",
-      cf: { cacheEverything: true, cacheTtl: 86400 },
+      /* Un mois au bord, et non plus un jour : ces adresses sont des empreintes
+         du contenu — « /data/<empreinte>.mp4 » — donc le fichier derrière ne
+         changera jamais. Le garder plus longtemps rend les reprises de
+         téléchargement et les réimports immédiats côté origine, et épargne la
+         source. */
+      cf: { cacheEverything: true, cacheTtl: 2592000 },
     });
     if (![301, 302, 303, 307, 308].includes(amont.status)) break;
     if (saut >= 3) return new Response("trop de redirections", { status: 502 });

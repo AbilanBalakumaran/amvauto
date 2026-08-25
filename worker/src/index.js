@@ -17,7 +17,11 @@ import { VERSION } from "./version.js";
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
-  "cache-control": "public, max-age=900",
+  /* Six heures au bord, et une journée de sursis pendant lequel la réponse
+     périmée est servie tout de suite pendant qu'une fraîche se prépare. Un
+     catalogue de rushs ne change pas d'un quart d'heure à l'autre, et attendre
+     une seconde pour l'apprendre est une seconde de trop. */
+  "cache-control": "public, max-age=21600, stale-while-revalidate=86400",
 };
 
 /* Une réponse en erreur n'est jamais gardée. Elle l'était un quart d'heure comme
@@ -283,16 +287,49 @@ async function handleRushes(url) {
   });
 }
 
+/* Les routes dont la réponse ne dépend que de l'adresse : deux fois la même
+   question, deux fois la même réponse. Elles peuvent donc être gardées au bord
+   du réseau, entières.
+
+   Les appels à Sakugabooru étaient déjà mis en cache, mais pas la réponse
+   assemblée — or une recherche en enchaîne plusieurs, puis trie, note et
+   sérialise. Mesuré sur le Worker en ligne : 2,4 s à froid, 1,1 s encore à
+   chaud, et aucun en-tête « cf-cache-status », donc rien de gardé. Une réponse
+   déjà calculée devrait coûter une consultation, pas une seconde. */
+/* Déposer une réponse au bord, sans faire attendre celui qui l'a demandée.
+   « waitUntil » laisse le dépôt se terminer après l'envoi. Une réponse en échec
+   n'est jamais gardée : une panne d'une seconde ne doit pas durer six heures. */
+async function garder(coffreBord, request, ctx, reponse) {
+  if (!coffreBord || !reponse.ok) return reponse;
+  const copie = reponse.clone();
+  if (ctx?.waitUntil) ctx.waitUntil(coffreBord.put(request, copie));
+  else await coffreBord.put(request, copie).catch(() => null);
+  return reponse;
+}
+
+const ROUTES_GARDEES = new Set(["/api/tree", "/api/rushes", "/api/suggest", "/api/moods"]);
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/")) {
+      /* Le cache du bord, consulté avant tout travail. La clé est l'adresse
+         complète : deux recherches différentes ne se confondent pas. */
+      const gardable = request.method === "GET" && ROUTES_GARDEES.has(url.pathname);
+      let coffreBord = null;
+      if (gardable) {
+        try {
+          coffreBord = caches.default;
+          const dejaVu = await coffreBord.match(request);
+          if (dejaVu) return dejaVu;
+        } catch { coffreBord = null; }
+      }
       try {
-        if (url.pathname === "/api/tree") return await handleTree(url);
-        if (url.pathname === "/api/rushes") return await handleRushes(url);
+        if (url.pathname === "/api/tree") return await garder(coffreBord, request, ctx, await handleTree(url));
+        if (url.pathname === "/api/rushes") return await garder(coffreBord, request, ctx, await handleRushes(url));
         if (url.pathname === "/api/suggest") {
-          return json({ series: suggest(url.searchParams.get("q") || "", 10) });
+          return await garder(coffreBord, request, ctx, json({ series: suggest(url.searchParams.get("q") || "", 10) }));
         }
         if (url.pathname === "/api/media") return await relayerMedia(request, url);
         if (url.pathname === "/api/coffre") return await coffre(request, url, env);
@@ -309,9 +346,9 @@ export default {
           });
         }
         if (url.pathname === "/api/moods") {
-          return json({
+          return await garder(coffreBord, request, ctx, json({
             moods: Object.entries(MOODS).map(([key, m]) => ({ key, label: m.label })),
-          });
+          }));
         }
         return json({ error: "Route inconnue." }, 404);
       } catch (error) {
