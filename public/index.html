@@ -1547,7 +1547,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-24 00:39";
+const VERSION_PAGE = "2026-08-25 01:22";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2584,8 +2584,10 @@ function reposerQuandToutEstMesure() {
     /* On ne compare pas le nombre de coupes — il est presque toujours le même,
        puisqu'il vient de la musique. Ce qui doit avoir changé, c'est le nombre de
        scènes différentes employées : c'est tout l'objet de ce dernier passage. */
-    const avant = new Set(projet.plans.map((plan) => String(plan.id))).size;
-    const apres = new Set(montage.map((plan) => String(plan.id))).size;
+    /* Par rush, pas par bloc : depuis que chaque morceau a sa propre identité,
+       compter les identifiants reviendrait à compter les coupes. */
+    const avant = new Set(projet.plans.map((plan) => String(idRush(plan)))).size;
+    const apres = new Set(montage.map((plan) => String(idRush(plan)))).size;
     if (apres <= avant) return;
     projet.plans = montage;
     sauver();
@@ -9241,7 +9243,7 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
      vaut mieux qu'un plan d'énergie parfaite qui ne parle de rien —, mais pas
      assez pour écraser la fraîcheur. Revoir six fois le même plan « juste »
      resterait pire que varier. */
-  const place = accord ? accord.indexOf(String(plan.id)) : -1;
+  const place = accord ? accord.indexOf(String(idRush(plan))) : -1;
   const parole = place < 0 ? 0 : -8 + place * 1.5;
 
   /* L'épisode a-t-il épuisé son budget ? La pénalité est du même ordre que la
@@ -9369,9 +9371,12 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
      Le vivier est donc gardé à part, tel que la recherche l'a rapporté, et c'est
      lui qui sert de base à tout montage ultérieur. */
   const socle = depuis || (projet.rushs?.length ? projet.rushs : projet.plans);
+  /* Une entrée par rush, jamais une par morceau déjà posé : sans quoi un
+     montage refait repartirait de ses propres coupes, et le même rush
+     compterait pour sept sources différentes. */
   const sources = [...new Map(socle
     .filter((plan) => dureeSource(plan) >= PLAN_MINI)
-    .map((plan) => [String(plan.id), plan])).values()];
+    .map((plan) => [String(idRush(plan)), plan])).values()];
   if (!rythme?.bpm || !sources.length) return null;
   const chrono = ordre === "chrono";
   const suite = chrono ? [...sources].sort(parChronologie) : null;
@@ -9440,7 +9445,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
           /* Deux blocs de suite venus du même rush, c'est le plan d'origine qui
              réapparaît : exactement ce qu'un mashup doit éviter. La règle est
              dure, pas une pénalité — sauf s'il n'y a rien d'autre. */
-          if (precedent && sources.length > 1 && String(plan.id) === String(precedent.id)) continue;
+          if (precedent && sources.length > 1 && String(idRush(plan)) === String(idRush(precedent))) continue;
           // Un rush trop court pour la case n'est pas disqualifié — il n'y en
           // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
           const court = dureeSource(plan) < vise ? 3 : 0;
@@ -9459,7 +9464,34 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       familleCourante = famille;
 
       const pose = bornes.sortie - bornes.entree;
-      montage.push({ ...choix, ...bornes, __pris: undefined, __famille: undefined });
+      /* Chaque morceau a sa propre identité.
+
+         L'identifiant était recopié du rush : quand une source servait sept
+         fois — ce qui arrive dès qu'il y a moins de sources que de coupes, donc
+         presque toujours — les sept morceaux portaient le même nom, alors qu'ils
+         prennent sept passages différents du même fichier. Or presque tout, dans
+         l'aperçu, se repère à cet identifiant : le lecteur qui tient déjà un
+         plan, la pellicule, la dernière image décodée. Le lecteur qui tenait le
+         premier morceau était donc pris pour celui qui tient le cinquième, et la
+         bascule se faisait sans le replacer — il continuait tout droit dans le
+         fichier. C'est exactement ce qu'on voyait : « il lit tout le bloc de
+         vidéo d'origine et non seulement la partie découpée ».
+
+         Mesuré sur vingt-quatre sources et cent six coupes : vingt-quatre
+         identifiants pour cent six blocs, un rush découpé en sept morceaux
+         portant tous le même nom.
+
+         Le lien vers la source est gardé à part, dans « rush » : c'est lui qui
+         dit à l'explorateur qu'un rush est déjà dans le projet, et c'est la même
+         mécanique que celle d'un plan coupé à la main. */
+      montage.push({
+        ...choix,
+        ...bornes,
+        id: `${idRush(choix)}#${Date.now().toString(36)}${(compteurCoupes += 1).toString(36)}`,
+        rush: idRush(choix),
+        __pris: undefined,
+        __famille: undefined,
+      });
       choix.__pris = (choix.__pris || 0) + 1;
       vus.set(choix.id, rang);
       const cle = cleEpisode(choix);
@@ -10449,7 +10481,9 @@ async function automatiserAmv(bouton) {
   projet.__automate = true;
   projet.__graine = graine;
   const poser = () => {
-    if (!socle) socle = [...new Map(projet.plans.map((plan) => [String(plan.id), plan])).values()];
+    /* Le socle est le vivier des sources, une par rush — pas un par morceau
+       déjà posé, sinon un montage refait partirait de ses propres coupes. */
+    if (!socle) socle = [...new Map(projet.plans.map((plan) => [String(idRush(plan)), plan])).values()];
     const montage = construireMontage(projet, { ordre: amv.ordre, depuis: socle, graine });
     if (!montage) return 0;
     projet.plans = montage;
@@ -10480,7 +10514,7 @@ async function automatiserAmv(bouton) {
     {
       dire("Recherche des plans…");
       const trouves = await chercherRushs(animes, projet.rythme.duree || 120, casesAttendues(projet));
-      const connus = new Set(projet.plans.map((p) => String(p.id)));
+      const connus = new Set(projet.plans.map((p) => String(idRush(p))));
       trouves.filter((r) => !connus.has(String(r.id))).forEach((rush) => {
         const plan = { ...rush, duree: null, entree: 0, sortie: null };
         projet.plans.push(plan);
@@ -10491,7 +10525,8 @@ async function automatiserAmv(bouton) {
          piste : sans cela, les scènes non retenues seraient perdues, et les
          montages suivants n'auraient plus qu'elles à se répartir. */
       projet.rushs = [...new Map(projet.plans
-        .map((plan) => [String(plan.id), { ...plan, entree: 0, sortie: null }])).values()];
+        .map((plan) => [String(idRush(plan)),
+          { ...plan, id: idRush(plan), rush: undefined, entree: 0, sortie: null }])).values()];
       sauver();
     }
     if (automate.arret) return;
@@ -10535,7 +10570,7 @@ async function automatiserAmv(bouton) {
     if (automate.arret) return;
     const complet = poser();
     if (complet && !amv.lire) {
-      const sources = new Set(projetActif()?.plans.map((x) => String(x.id))).size;
+      const sources = new Set(projetActif()?.plans.map((x) => String(idRush(x)))).size;
       dire(`${complet} coupes sur ${sources} scènes différentes.`);
     }
 

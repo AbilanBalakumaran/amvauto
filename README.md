@@ -2690,6 +2690,45 @@ l'appareil sous « musique:<projet> », rendu au projet à son ouverture, et eff
 avec la bande son. Au passage, changer de projet ne laisse plus la chanson de
 l'un jouer sur le montage de l'autre.
 
+### Sept morceaux d'un même rush portaient le même nom
+
+« Un système qui permet de faire comprendre que le bloc de clip original a été
+fractionné dans la partie montage. » Formulé ainsi, c'était une demande de
+fonctionnalité ; c'était en fait la description exacte d'un défaut.
+
+L'automatisation posait chaque coupe par `montage.push({ ...choix, ...bornes })`
+— **l'identifiant du rush était recopié tel quel**. Or il y a presque toujours
+moins de sources que de coupes : dès qu'une source sert plusieurs fois, ses
+morceaux portaient tous le même nom, alors qu'ils prennent des passages
+différents du même fichier.
+
+Mesuré sur le rapport de l'utilisateur — vingt-quatre sources pour
+quatre-vingt-huit plans — en reproduisant la même densité :
+
+```
+                        identifiants distincts
+24 sources · 106 blocs           24   →   106
+un rush découpé en          7 morceaux du même nom
+```
+
+Presque tout, dans l'aperçu, se repère à cet identifiant : le lecteur qui tient
+déjà un plan, la pellicule d'un bloc, la dernière image décodée, la vignette. Le
+lecteur qui tenait le premier morceau était donc pris pour celui qui tient le
+cinquième — et la pellicule affichait les mêmes images pour les sept, ce qui
+donne très exactement l'impression que le montage rejoue le bloc d'origine.
+
+Chaque bloc a maintenant sa propre identité, et le lien vers sa source est gardé
+à part, dans `rush` — la même mécanique que pour un plan coupé à la main. Ce qui
+a demandé de reprendre tout ce qui comptait les *sources* en comptant les
+*blocs* : le socle du vivier, la comparaison entre deux montages, la règle
+« jamais deux fois la même source de suite », l'accord aux paroles, le compte
+affiché à la fin de l'automatisation. Six endroits, tous passés par `idRush`.
+
+Vérifié après coup : vingt sources pour soixante-quinze coupes donnent bien
+« chaque source sert 3 à 5 fois » là où le compte annonçait « 1 à 1 fois », et
+deux montages successifs emploient toujours cent pour cent de sources
+différentes.
+
 ### Le banc d'essai était trop rapide pour voir le défaut
 
 Trois corrections, trois « toujours pas ». Et cette fois la capture d'écran
