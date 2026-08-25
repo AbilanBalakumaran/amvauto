@@ -1591,7 +1591,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 14:58";
+const VERSION_PAGE = "2026-08-25 15:09";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3639,8 +3639,26 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
 
    Le segment commence à zéro : le lire ne demande plus aucun déplacement. */
 
-const LARGE_SEGMENT = 640;         // la définition d'un aperçu, pas d'un rendu
-const DEBIT_SEGMENT = 900_000;
+/* La définition d'un segment suit l'écran, pas une valeur ronde.
+
+   Elle était fixée à 640 points. Sur un téléphone à deux pixels par point, le
+   moniteur en fait sept cent soixante, et le plein écran davantage encore : on
+   agrandissait donc une image plus petite que l'écran, là où la lecture des
+   rushs en montrait 854. La fluidité était gagnée, la netteté perdue — et c'est
+   la netteté qui se voit.
+
+   La fabrique ne dépasse jamais la définition du rush : demander 1280 sur un
+   rush qui en fait 854 rend un segment de 854, c'est-à-dire exactement l'image
+   d'origine. On demande donc ce que l'écran peut montrer, et la source décide du
+   reste. */
+const LARGE_SEGMENT = (() => {
+  const densite = Math.min(2, (typeof devicePixelRatio === "number" ? devicePixelRatio : 1) || 1);
+  const cote = Math.max(screen?.width || 0, screen?.height || 0) || 1280;
+  return Math.min(1280, Math.max(640, Math.round((cote * densite) / 2) * 2));
+})();
+/* Le débit suit la surface : un segment deux fois plus large au même débit
+   serait plus net en pixels et plus sale en compression. */
+const DEBIT_SEGMENT = Math.round(900_000 * ((LARGE_SEGMENT * LARGE_SEGMENT) / (640 * 640)));
 const SEGMENTS_GARDES = 400;       // de quoi tenir deux montages complets
 
 const segments = new Map();        // clé → { url, taille }

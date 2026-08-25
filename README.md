@@ -2726,8 +2726,31 @@ cinquante kilo-octets et le joue du début à la fin. Ni gros fichier à parcour
 ni image-clé à retrouver, ni discontinuité à encaisser.
 
 ```
-un bloc de 1,5 s  →  169 Ko · 37 images · 640×360 · fabriqué en 210 ms
+un bloc de 1,5 s  →  602 Ko · 37 images · 960×540 · fabriqué en 236 ms
 ```
+
+### La définition suit l'écran, jamais en dessous
+
+Premier essai : segments en 640 points. C'était une erreur, et elle se voyait —
+« ça pixellise toujours ». Sur un téléphone à deux pixels par point, le moniteur
+fait sept cent soixante points de large, et le plein écran davantage : on
+agrandissait donc une image plus petite que l'écran, là où la lecture des rushs en
+montrait 854. La fluidité gagnée, la netteté perdue, et c'est la netteté qui se
+voit.
+
+La définition demandée suit maintenant l'écran, et la fabrique ne dépasse jamais
+celle du rush : demander 1280 sur un rush qui en fait 854 rend un segment de 854,
+c'est-à-dire l'image d'origine, exactement. Mesuré, la fluidité ne bouge pas :
+
+```
+                     segments 640     segments à pleine définition
+images par seconde  23,3 · 23,2 · 22,8   23,0 · 22,6 · 22,6
+trous > 100 ms         2 ·  1 ·  3          2 ·  5 ·  3
+cache complet          2,2 Mo               4,0 Mo
+```
+
+Ce qui coûtait n'était donc pas le nombre de pixels : c'étaient les déplacements
+dans un gros fichier. On peut garder les deux.
 
 Sept fois plus vite que le temps réel, sur le fil de la fabrique, sans jamais
 toucher à la boucle d'affichage.
