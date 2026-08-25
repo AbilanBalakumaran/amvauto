@@ -1034,6 +1034,25 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   touch-action: pan-x;
 }
 .ligne { position: relative; min-width: 100%; }
+/* La piste gelée : une seule image à la place de cent vingt blocs.
+
+   Mesuré sur cent vingt plans, processeur bridé huit fois : la piste retirée du
+   rendu fait passer la lecture de 9,8 à 16,2 images par seconde. Ce n'est ni la
+   peinture (« visibility:hidden » ne gagne rien) ni les toiles ni la décoration
+   (essayées séparément, aucune ne rend le gain) : c'est le simple fait d'avoir
+   cent vingt éléments dans le rendu d'une page où une vidéo joue.
+
+   Or pendant la lecture, la piste ne change pas. On la recopie donc une fois
+   dans une toile, on retire les blocs du rendu, et on rend tout à l'arrêt. Deux
+   choses continuent de bouger, et ce sont deux éléments légers : la tête, et le
+   liseré du plan courant. */
+.piste-gelee { position: absolute; z-index: 1; pointer-events: none; display: block; }
+.rail.gelee { content-visibility: hidden; }
+.clip-fantome {
+  position: absolute; z-index: 2; pointer-events: none;
+  border-radius: 4px; outline: 1px solid var(--vert); outline-offset: -1px;
+  box-shadow: inset 0 0 0 2px var(--vert);
+}
 /* La grille des temps de la musique. Deux dégradés répétés suffisent — un trait
    par temps, un plus marqué toutes les quatre mesures — ce qui évite de poser
    des centaines d'éléments dans la page pour un morceau de trois minutes. */
@@ -1201,10 +1220,21 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
    gestes, il rend intouchable ce qui passe dessous — les poignées de rognage du
    premier plan étaient ainsi inatteignables. Le trait est donc décoratif, et
    seul son bouton en haut se saisit. On se déplace aussi depuis la règle. */
+/* La tête se déplace par « transform », jamais par « left ».
+
+   Déplacer un élément par sa position oblige le navigateur à refaire la mise en
+   page de la piste, puis à la repeindre — et la piste contient un bloc et une
+   toile par plan. Sur cent vingt plans, ce travail tombait soixante fois par
+   seconde, pendant toute la lecture. Une transformation, elle, est appliquée
+   par le compositeur : rien n'est remis en page, rien n'est repeint.
+
+   Mesuré : piste masquée, la lecture passait de 9,3 à 17,7 images par seconde —
+   c'est-à-dire que la moitié du budget d'image partait à déplacer ce trait. */
 .tete {
   position: absolute; top: 0; bottom: 0; left: 0;
   width: 22px; margin-left: -11px;
   pointer-events: none; z-index: 3;
+  will-change: transform;
 }
 .tete::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 10px;
@@ -1550,7 +1580,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 04:06";
+const VERSION_PAGE = "2026-08-25 07:23";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2701,13 +2731,45 @@ function duree(plan) {
 // l'explorateur si la série est déjà dans le projet.
 const idRush = (plan) => plan.rush || plan.id;
 
-function offsets(plans) {
+/* Où commence chaque plan, et combien dure le montage.
+
+   Ces deux réponses se lisaient en parcourant tout le montage, et l'on
+   parcourait tout le montage plusieurs fois par image : l'horloge, le
+   timecode, le plan sous la tête, la position dans le fichier, la bascule —
+   chacun redemandait le calcul pour son compte, et chacun allouait au passage
+   un tableau neuf. Profilé pendant une lecture sur cent vingt plans :
+   « majTransport » pesait 7,6 % du temps à lui seul, et le ramasse-miettes
+   3,0 % — c'est-à-dire les tableaux jetés aussitôt que faits.
+
+   Le résultat est donc calculé une fois par image, et relu ensuite. La mémoire
+   se périme au tour d'affichage suivant : même si le montage change entre deux
+   images — une coupe, une poignée déplacée — la réponse est refaite avant
+   d'être montrée. Un changement de longueur ou de tableau la périme aussi,
+   pour le cas où deux montages se répondraient dans le même tour. */
+let tourAffichage = 0;
+const mesures = { tour: -1, plans: null, n: -1, debuts: [], bout: 0 };
+
+function mesurerMontage(plans) {
+  if (mesures.tour === tourAffichage && mesures.plans === plans && mesures.n === plans.length) {
+    return mesures;
+  }
+  const debuts = new Array(plans.length);
   let curseur = 0;
-  return plans.map((plan) => {
-    const debut = curseur;
-    curseur += duree(plan);
-    return debut;
-  });
+  for (let i = 0; i < plans.length; i += 1) {
+    debuts[i] = curseur;
+    curseur += duree(plans[i]);
+  }
+  mesures.tour = tourAffichage;
+  mesures.plans = plans;
+  mesures.n = plans.length;
+  mesures.debuts = debuts;
+  mesures.bout = curseur;
+  return mesures;
+}
+
+// Le tableau rendu est partagé : on le lit, on n'y écrit jamais.
+function offsets(plans) {
+  return mesurerMontage(plans).debuts;
 }
 
 // Zoomé à l'image, un dixième de seconde ne suffit plus à distinguer deux
@@ -2723,7 +2785,7 @@ function horloge(valeur, decimales = 0) {
   return `${String(minutes).padStart(2, "0")}:${sec}`;
 }
 
-const total = (projet) => projet.plans.reduce((somme, plan) => somme + duree(plan), 0);
+const total = (projet) => mesurerMontage(projet.plans).bout;
 
 function ajusterEchelle(projet) {
   const disponible = ($("vue-projet").clientWidth || 360) - 24;
@@ -3440,6 +3502,7 @@ function demarrerMoniteur() {
   if (apercu.boucle || lecture.boucle || !moniteurUtile()) return;
   const pas = () => {
     apercu.boucle = null;
+    tourAffichage += 1;
     dessinerMoniteur();
     if (moniteurUtile() && !lecture.boucle && moniteurAnime()) apercu.boucle = requestAnimationFrame(pas);
   };
@@ -3451,6 +3514,9 @@ function demarrerMoniteur() {
    chien de garde et le rattrapage de position — sans eux, un lecteur qui échoue
    en silence resterait sur une image fausse. */
 function battreMoniteur() {
+  // Les mesures de mise en page se périment ici : quatre fois par seconde, au
+  // lieu d'être refaites à chaque image depuis la boucle de lecture.
+  oublierMesuresPage();
   // Le retour dans la vue du projet est un changement comme un autre : la toile
   // y est neuve, il faut la repeindre.
   const visible = moniteurUtile();
@@ -3516,10 +3582,47 @@ const PIXELS_MONITEUR = 1280 * 720;   // plafond, quel que soit l'écran
    barre de transport, ses boutons, leurs dessins. Sur un écran à deux ou trois
    pixels par point, cela se voit comme un flou et comme un décalage. On arrondit
    donc cette hauteur une fois, et la colonne entière retombe sur la grille. */
+/* Mesurer la page oblige le navigateur à la mettre en page.
+
+   « clientWidth », « clientHeight », « getBoundingClientRect » : ces lectures
+   ont l'air gratuites, elles ne le sont pas. Le navigateur doit rendre une
+   réponse exacte, donc terminer toute mise en page en attente avant de
+   répondre. Quand la lecture écrit une position puis relit une largeur, à
+   chaque image, il refait ce calcul soixante fois par seconde — sur une piste
+   qui porte un bloc par plan.
+
+   Mesuré : la piste retirée de la mise en page (« display:none »), la lecture
+   passait de 9,3 à 17,7 images par seconde ; simplement rendue invisible
+   (« visibility:hidden »), elle restait à 8,9. Ce n'était donc ni la peinture
+   ni les toiles : c'était la mise en page, forcée depuis la boucle de lecture.
+
+   Les mesures sont donc gardées et refaites quand elles ont pu changer : au
+   redimensionnement, à la rotation, à l'entrée et à la sortie du plein écran —
+   et de toute façon quatre fois par seconde, au battement de repos, ce qui
+   borne l'erreur possible sans rien coûter. La table est faible : une vue
+   reconstruite donne des éléments neufs, qui n'y sont pas et seront mesurés. */
+let tourMesures = 0;
+const mesuresBoite = new WeakMap();
+
+function boiteDe(element) {
+  if (!element) return null;
+  let garde = mesuresBoite.get(element);
+  if (!garde || garde.tour !== tourMesures) {
+    garde = { tour: tourMesures, large: element.clientWidth, haut: element.clientHeight };
+    mesuresBoite.set(element, garde);
+  }
+  return garde;
+}
+
+const oublierMesuresPage = () => { tourMesures += 1; };
+window.addEventListener("resize", oublierMesuresPage);
+window.addEventListener("orientationchange", oublierMesuresPage);
+document.addEventListener("fullscreenchange", oublierMesuresPage);
+
 function arrondirEcran() {
   const ecran = document.querySelector(".ecran");
   if (!ecran) return;
-  const large = ecran.getBoundingClientRect().width;
+  const large = boiteDe(ecran).large;
   if (!large) return;
   const haut = Math.round((large * 9) / 16);
   const pose = `${haut}px`;
@@ -3568,8 +3671,9 @@ function ajusterMoniteur(toile) {
      l'écran garde sa petite toile : une opération en pleine taille au lieu de
      deux, et l'affichage redevient presque gratuit. */
   const densite = Math.min(2, window.devicePixelRatio || 1);
-  const large = toile.clientWidth * densite;
-  const haut = toile.clientHeight * densite;
+  const boite = boiteDe(toile);
+  const large = boite.large * densite;
+  const haut = boite.haut * densite;
   if (!large || !haut) return;
   // Le plafond porte sur le nombre de pixels, pas sur chaque côté : réduire un
   // seul côté changerait la forme de la toile et l'image y serait rognée deux
@@ -4338,6 +4442,17 @@ function prechaufferVisible() {
   const projet = projetActif();
   const cadre = $("piste");
   if (!projet || !cadre) return;
+  /* Pas pendant la lecture, pour la même raison que la pellicule elle-même.
+
+     La piste défile toute seule pour suivre la tête : chaque défilement lève
+     un événement, et cet événement relançait le préchauffage — qui parcourt
+     tout le montage, mesure chaque bloc, et met en file la capture des
+     imagettes visibles. Sur cent vingt plans, à soixante défilements par
+     seconde, c'est du travail continu pendant tout le montage, versé dans la
+     boucle même qui doit produire l'image suivante — et pour une pellicule que
+     personne ne regarde puisqu'elle ne se repeint pas en lecture. On note qu'il
+     y avait à faire, et on le fera à l'arrêt. */
+  if (lecture.demande) { bandesEnAttente = true; return; }
   const gauche = cadre.scrollLeft - cadre.clientWidth;
   const droite = cadre.scrollLeft + cadre.clientWidth * 2;
   let x = 0;
@@ -4410,6 +4525,19 @@ function peindreBandes() {
   const rail = $("rail");
   const cadre = $("piste");
   if (!projet || !rail || !cadre || $("vue-projet")?.hidden) return;
+  /* Le garde-fou est ici, pas seulement chez les appelants.
+
+     « redessinerBandes » refusait déjà de travailler pendant la lecture, mais
+     il n'est pas le seul chemin : « redessinerBandesMaintenant » existe
+     précisément pour court-circuiter la file, et les gestes qui l'empruntent ne
+     savent pas si l'on est en train de lire. Profilé pendant une lecture de
+     cent vingt plans, la peinture de la pellicule pesait encore 1 400 ms de
+     « drawImage » — c'est-à-dire qu'elle passait par la porte de service.
+
+     La règle appartient donc à la fonction qui peint : une pellicule ne se
+     repeint pas pendant la lecture. Elle ne change pas de toute façon — seule
+     la tête avance, et elle est dessinée ailleurs. */
+  if (lecture.demande) { bandesEnAttente = true; return; }
 
   const gaucheVue = cadre.scrollLeft - MARGE_BANDE;
   const droiteVue = cadre.scrollLeft + cadre.clientWidth + MARGE_BANDE;
@@ -5218,6 +5346,10 @@ function brancherPincement(cadre) {
     appliquerEchelle(lecture.echelle * (evt.deltaY < 0 ? 1.12 : 0.89), evt.clientX);
   }, { passive: false });
 
+  /* Un doigt sur la piste rend la main aux vrais blocs : on peut vouloir
+     attraper une poignée ou déplacer un plan sans avoir arrêté la lecture. */
+  cadre.addEventListener("pointerdown", degelerPiste, { passive: true });
+
   // La pellicule ne peint que le visible : elle se refait au défilement.
   let prevu = false;
   cadre.addEventListener("scroll", () => {
@@ -5424,12 +5556,175 @@ function finGeste() {
   }
 }
 
+/* Reconstruire la piste, mais pas n'importe quand.
+
+   Un import qui se termine redessine la piste entière — cent vingt blocs, leurs
+   toiles, leur pellicule. C'était déjà différé pendant un geste, pour ne pas
+   arracher le bloc qu'on tient. Ça ne l'était pas pendant la lecture : sur un
+   lien mobile, les imports finissent justement pendant qu'on regarde, et chacun
+   arrêtait l'image le temps de refaire toute la piste. Tracé au banc, la
+   reconstruction tombait quatre cents millisecondes après le début de la
+   lecture — « apresImport » → « redessinerPisteDifferee ».
+
+   Rien de ce que cette reconstruction apporte n'est visible pendant la lecture :
+   la piste est gelée, et ce qui change dedans est le bandeau d'un import qui
+   vient de finir. On note, et on le fait à l'arrêt. */
 function redessinerPisteDifferee() {
-  if (gestes) { pisteSale = true; return; }
+  if (gestes || lecture.demande) { pisteSale = true; return; }
   redessinerPiste();
 }
 
+// À l'arrêt de la lecture : ce qui a été mis de côté est repris.
+function rattraperPiste() {
+  if (!pisteSale || gestes) return;
+  pisteSale = false;
+  redessinerPiste();
+}
+
+/* --- la piste gelée ---------------------------------------------------
+
+   Pendant la lecture, la piste ne change pas : seule la tête avance, et le
+   liseré du plan courant se déplace. Ses blocs, eux, coûtent cher rien qu'à
+   exister — cent vingt éléments à composer dans une page où une vidéo joue.
+
+   On la recopie donc une fois dans une toile, au moment où la lecture commence,
+   et on retire les blocs du rendu. La recopie est fidèle par construction :
+   c'est la toile de chaque bloc qu'on recopie, pas une reconstitution. À
+   l'arrêt, les blocs reviennent — et rien n'a bougé entre-temps. */
+const SEUIL_GEL = 40;   // en dessous, le gel coûterait plus qu'il ne rapporte
+let pisteGelee = null;
+let fantomeActif = null;
+
+function figerPiste() {
+  if (pisteGelee) return;
+  const projet = projetActif();
+  const rail = $("rail");
+  const ligne = $("ligne");
+  if (!projet || !rail || !ligne || projet.plans.length < SEUIL_GEL) return;
+  const large = rail.offsetWidth;
+  const haut = rail.offsetHeight;
+  if (!large || !haut) return;
+
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const toile = document.createElement("canvas");
+  toile.className = "piste-gelee";
+  toile.id = "piste-gelee";
+  toile.width = Math.max(1, Math.round(large * dpr));
+  toile.height = Math.max(1, Math.round(haut * dpr));
+  toile.style.width = `${large}px`;
+  toile.style.height = `${haut}px`;
+  toile.style.left = `${rail.offsetLeft}px`;
+  toile.style.top = `${rail.offsetTop}px`;
+
+  const ctx = toile.getContext("2d");
+  ctx.scale(dpr, dpr);
+  const hautBloc = rail.children[0]?.offsetHeight || haut;
+  const hautTexte = rail.children[0]?.offsetTop || 0;
+  let x = 0;
+  for (let i = 0; i < rail.children.length; i += 1) {
+    const bloc = rail.children[i];
+    const plan = projet.plans[i];
+    if (!plan) break;
+    const l = largeurClip(plan);
+    /* Les bords tombent sur des pixels entiers, et le bord droit d'un bloc est
+       le bord gauche du suivant.
+
+       Sans cela, chaque bloc est peint entre deux pixels : le navigateur lisse
+       ses bords, et deux lissages voisins laissent une couture sombre. Sur des
+       blocs de trois points, cela fabrique une palissade que la piste vivante
+       n'a pas — vérifié en capture, la piste gelée sortait rayée. */
+    const gaucheBloc = Math.round(x);
+    const droiteBloc = Math.round(x + l);
+    const largeBloc = Math.max(1, droiteBloc - gaucheBloc);
+
+    // Le fond du bloc, puis sa pellicule telle qu'elle est peinte, puis le
+    // dégradé qui l'assombrit, puis son liseré : le même empilement que le CSS.
+    ctx.fillStyle = "#202020";
+    ctx.fillRect(gaucheBloc, hautTexte, largeBloc, hautBloc);
+    const bande = bloc.querySelector("canvas.bande");
+    if (bande && !bande.hidden && bande.width && bande.height) {
+      const decalage = parseFloat(bande.style.left) || 0;
+      const largeBande = parseFloat(bande.style.width) || l;
+      const gaucheBande = Math.round(x + decalage);
+      try {
+        ctx.drawImage(bande, gaucheBande, hautTexte,
+          Math.max(1, Math.round(gaucheBande + largeBande) - gaucheBande), hautBloc);
+      } catch { /* toile teintée : on garde le fond */ }
+    }
+    const ombre = ctx.createLinearGradient(0, hautTexte, 0, hautTexte + hautBloc);
+    ombre.addColorStop(0, "rgba(0,0,0,0.10)");
+    ombre.addColorStop(1, "rgba(0,0,0,0.68)");
+    ctx.fillStyle = ombre;
+    ctx.fillRect(gaucheBloc, hautTexte, largeBloc, hautBloc);
+    /* Le liseré, à la mesure du bloc.
+
+       Le CSS en pose un tout autour, à l'intérieur de la largeur. Recopié tel
+       quel sur des blocs de trois points de large, cela donne une palissade de
+       traits blancs là où l'écran montre un dégradé continu : deux traits pour
+       trois points de bloc. On ne garde donc que la séparation, et discrète,
+       tant que le bloc est trop étroit pour porter un cadre. */
+    if (l >= 6) {
+      ctx.strokeStyle = "rgba(255,255,255,0.34)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(gaucheBloc + 0.5, hautTexte + 0.5,
+        Math.max(1, largeBloc - 1), Math.max(1, hautBloc - 1));
+    }
+    /* En dessous, aucun trait. Un plan de trois points ne se distingue pas de
+       son voisin à l'œil : ce que l'écran montre alors est une texture
+       continue, et y poser un trait tous les trois points fabrique une
+       palissade qui n'existe pas dans la piste vivante. */
+    x += l;
+  }
+
+  // La boîte du rail garde sa taille : sans cela, « content-visibility » la
+  // ferait tomber à zéro et toute la piste se replierait.
+  rail.style.width = `${large}px`;
+  rail.style.height = `${haut}px`;
+  rail.classList.add("gelee");
+  ligne.append(toile);
+  pisteGelee = toile;
+
+  const fantome = document.createElement("div");
+  fantome.className = "clip-fantome";
+  fantome.style.top = `${rail.offsetTop + hautTexte}px`;
+  fantome.style.height = `${hautBloc}px`;
+  fantome.hidden = true;
+  ligne.append(fantome);
+  fantomeActif = fantome;
+  marquerFantome(lecture.index);
+}
+
+/* Le liseré du plan courant, quand les blocs sont retirés du rendu. Un seul
+   élément déplacé par transformation : le compositeur s'en charge. */
+function marquerFantome(index) {
+  if (!fantomeActif) return;
+  const projet = projetActif();
+  const plan = projet?.plans[index];
+  if (!plan) { fantomeActif.hidden = true; return; }
+  const gauche = offsets(projet.plans)[index] || 0;
+  fantomeActif.hidden = false;
+  fantomeActif.style.width = `${largeurClip(plan)}px`;
+  fantomeActif.style.transform = `translate3d(${xDeSeconde(gauche)}px,0,0)`;
+}
+
+function degelerPiste() {
+  if (!pisteGelee) return;
+  const rail = $("rail");
+  if (rail) {
+    rail.classList.remove("gelee");
+    rail.style.width = "";
+    rail.style.height = "";
+  }
+  pisteGelee.remove();
+  pisteGelee = null;
+  fantomeActif?.remove();
+  fantomeActif = null;
+}
+
 function redessinerPiste() {
+  // Une piste reconstruite rendrait l'image gelée fausse : elle montre l'état
+  // d'avant. On dégèle d'abord, quitte à regeler au prochain démarrage.
+  degelerPiste();
   const projet = projetActif();
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
@@ -5626,13 +5921,15 @@ function basculerLecture() {
     lecture.horloge = null;
     for (const lecteur of vivier()) lecteur.pause();
     arreterSon();
+    degelerPiste();
+    rattraperPiste();
     majTransport();
     reveillerMoniteur();
     // La réserve, mise en sourdine pendant la lecture, reprend ici.
     lancerImport();
     // Et la pellicule peut se remplir, puis se repeindre, de nouveau.
     servirImagettes();
-    if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); }
+    if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); prechaufferVisible(); }
     return;
   }
   /* Rien de prêt, rien à lire.
@@ -5675,6 +5972,9 @@ function basculerLecture() {
      sortie audio de la page au passage ; maintenant qu'elle est muette pour de
      bon, la musique doit être lancée pour elle-même. */
   demarrerSon();
+  // La piste devient une image le temps de la lecture : ses blocs coûtent cher
+  // rien qu'à exister, et elle ne change pas pendant qu'on regarde.
+  figerPiste();
   suivreTete();
 
   if (projet.plans[lecture.index]?.youtube) {
@@ -5721,7 +6021,7 @@ function arreter() {
   // La réserve reprend : elle se taisait pour laisser le lien à l'aperçu.
   lancerImport();
   servirImagettes();
-  if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); }
+  if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); prechaufferVisible(); }
 }
 
 // La tête suit le doigt à la milliseconde : la position du montage est tenue
@@ -5836,10 +6136,22 @@ function appliquerCible(video) {
 
 function positionCible() {
   const projet = projetActif();
-  if (!projet) return null;
+  // Un montage vide n'a pas de plan sous la tête : le dire, plutôt que de
+  // renvoyer un plan « numéro moins un » comme le faisait la recherche linéaire.
+  if (!projet || !projet.plans.length) return null;
+  /* Les débuts sont croissants : on peut donc chercher par dichotomie au lieu
+     de parcourir. Sur cent soixante-quinze plans, huit comparaisons au lieu de
+     cent soixante-quinze — et surtout aucune fonction créée à chaque image,
+     là où « findIndex » en fabriquait une par appel. */
   const debuts = offsets(projet.plans);
-  let index = debuts.findIndex((debut, i) => lecture.position < debut + duree(projet.plans[i]));
-  if (index < 0) index = projet.plans.length - 1;
+  let bas = 0;
+  let haut = debuts.length - 1;
+  while (bas < haut) {
+    const milieu = (bas + haut + 1) >> 1;
+    if (debuts[milieu] <= lecture.position) bas = milieu;
+    else haut = milieu - 1;
+  }
+  const index = bas;
   return { index, dans: Math.max(0, lecture.position - debuts[index]), plan: projet.plans[index] };
 }
 
@@ -5954,11 +6266,33 @@ function appliquerSeek(jouer = false) {
   }
 }
 
+/* Le bloc mis en évidence, retenu d'une coupe à l'autre.
+
+   La sélection balayait toute la piste à chaque coupe : « querySelectorAll »
+   sur tous les blocs, puis une bascule de classe sur chacun. Toucher la classe
+   de cent vingt éléments oblige le navigateur à refaire le style, la mise en
+   page et la peinture de la piste entière — et cela tombait une fois par
+   seconde, en pleine lecture, dans la boucle qui doit produire l'image
+   suivante. C'est de là que venaient les arrêts d'un dixième de seconde à
+   chaque changement de plan.
+
+   Deux éléments changent de classe, pas cent vingt : celui qui la perd et celui
+   qui la prend. Le bloc retenu peut avoir été détaché entre-temps — une piste
+   reconstruite donne des éléments neufs — mais retirer une classe d'un élément
+   détaché ne coûte rien et ne fait rien. */
+let clipActif = null;
+
 function selectionner(index) {
   const projet = projetActif();
-  document.querySelectorAll("#rail .clip").forEach((clip) => {
-    clip.classList.toggle("actif", Number(clip.dataset.index) === index);
-  });
+  const vise = $("rail")?.children?.[index] || null;
+  if (clipActif !== vise) {
+    clipActif?.classList.remove("actif");
+    vise?.classList.add("actif");
+    clipActif = vise;
+  }
+  // Piste gelée : les blocs ne sont plus rendus, c'est le fantôme qui porte le
+  // liseré. Un seul élément déplacé par transformation.
+  marquerFantome(index);
   const courant = $("plan-courant");
   if (courant && projet?.plans[index]) {
     courant.textContent = `Plan ${String(index + 1).padStart(2, "0")} — ${projet.plans[index].name}`;
@@ -6716,12 +7050,15 @@ function majTransport() {
   const tete = $("tete");
   if (tete) {
     const x = xDeSeconde(position);
-    const gauche = `${x}px`;
-    if (tete.style.left !== gauche) tete.style.left = gauche;
+    const glisse = `translate3d(${x}px,0,0)`;
+    if (tete.style.transform !== glisse) tete.style.transform = glisse;
     const cadre = $("piste");
     if (lecture.jouant && cadre) {
-      const marge = cadre.clientWidth * 0.4;
-      if (x - cadre.scrollLeft > cadre.clientWidth - marge || x < cadre.scrollLeft) {
+      // La largeur du cadre est relue au plus quatre fois par seconde, pas
+      // soixante : c'est elle qui forçait la mise en page de toute la piste.
+      const largeCadre = boiteDe(cadre).large;
+      const marge = largeCadre * 0.4;
+      if (x - cadre.scrollLeft > largeCadre - marge || x < cadre.scrollLeft) {
         cadre.scrollLeft = Math.max(0, x - marge);
       }
     }
@@ -6738,6 +7075,8 @@ function terminerLecture() {
   if (projet) lecture.position = total(projet);
   elementActif()?.pause();
   arreterSon();
+  degelerPiste();
+  rattraperPiste();
   majTransport();
   reveillerMoniteur();
 }
@@ -6745,6 +7084,7 @@ function terminerLecture() {
 function suivreTete() {
   if (lecture.boucle) cancelAnimationFrame(lecture.boucle);
   const pas = () => {
+    tourAffichage += 1;
     majTransport();
     // C'est cette boucle qui peint pendant la lecture — celle du moniteur se
     // tait tant qu'elle tourne. Une image montrée, un seul travail pour la

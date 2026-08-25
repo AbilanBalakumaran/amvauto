@@ -2705,6 +2705,121 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Cinq tours de mesure sur la lecture, et ce qu'ils ont donné
+
+Le tour précédent avait retiré la recopie sur toile. Cinq tours de plus, chacun
+sur le même protocole : profiler, trouver, corriger, remesurer. Trois d'entre eux
+n'ont rien donné et sont notés comme tels — c'est la moitié de l'intérêt.
+
+### Le banc mesurait douze plans, le montage en a cent vingt
+
+Premier défaut, et il invalidait tout le reste : le banc jouait douze plans. Les
+montages de l'utilisateur en portent cent six à cent soixante-quinze. Passé à
+cent vingt plans, la lecture tombe de 18 à 10 images par seconde — donc l'essentiel
+du problème ne se voyait pas. Tous les chiffres ci-dessous sont à cent vingt
+plans, processeur bridé huit fois, trois essais chacun.
+
+### Tour 2 — mesurer le montage une fois par image, pas cinq
+
+`offsets()` reconstruisait la position de départ de chaque plan à chaque appel,
+et `total()` parcourait tout le montage ; l'horloge, le timecode, le plan sous la
+tête et la bascule les redemandaient chacun pour son compte, plusieurs fois par
+image, en allouant un tableau neuf à chaque fois. Profilé : `majTransport` pesait
+7,6 % du temps, le ramasse-miettes 3,0 %.
+
+Le calcul est maintenant fait une fois par tour d'affichage et relu ensuite, et
+le plan sous la tête se trouve par dichotomie — huit comparaisons au lieu de cent
+soixante-quinze, sans créer de fonction à chaque image.
+
+**Effet mesuré sur la fluidité : nul.** Moins de travail, oui ; mais ce n'était
+pas le goulot. Gardé quand même : c'est strictement moins de travail, et le poids
+grandit avec la longueur du montage.
+
+### Tour 3 — arrêter de mesurer la page à chaque image
+
+`clientWidth`, `clientHeight`, `getBoundingClientRect` ont l'air gratuits. Ils ne
+le sont pas : pour répondre juste, le navigateur doit terminer toute mise en page
+en attente. La boucle de lecture écrivait une position puis relisait une largeur,
+soixante fois par seconde, sur une piste portant un bloc par plan.
+
+Les mesures sont gardées et refaites quand elles ont pu changer — redimensionnement,
+rotation, plein écran — et de toute façon quatre fois par seconde au battement de
+repos. `majTransport` est passé de 9,8 % à 4,5 % du temps.
+
+**Effet mesuré sur la fluidité : nul.** Encore une fois, du travail retiré qui
+n'était pas celui qui coûtait.
+
+### Tour 4 — deux blocs changent de classe, pas cent vingt
+
+À chaque coupe, la sélection balayait toute la piste (`querySelectorAll` puis une
+bascule de classe sur chaque bloc). Désormais deux éléments changent : celui qui
+perd le liseré et celui qui le prend. Et la pellicule ne se repeint plus pendant
+la lecture — le garde-fou a été déplacé dans la fonction qui peint, parce qu'un
+chemin de service (`redessinerBandesMaintenant`) le contournait : 1 400 ms de
+`drawImage` passaient encore par là.
+
+**Effet mesuré sur la fluidité : nul.** Trois tours, trois fois rien.
+
+### Tour 5 — ce n'était pas le travail, c'étaient les éléments
+
+Il fallait donc chercher ailleurs. Une expérience simple a tranché : retirer la
+piste du rendu.
+
+```
+                                          images/s      trous > 100 ms
+piste normale                                 9,8              79
+piste en « display:none »                    16,2              72
+piste en « visibility:hidden »                8,9              77
+toiles de pellicule masquées                 11,2              79
+décoration des blocs retirée                 10,4              82
+« content-visibility: hidden » sur le rail   16,0              69
+```
+
+Ce n'est ni la peinture — « visibility:hidden » ne gagne rien — ni les toiles, ni
+la décoration. C'est **le simple fait d'avoir cent vingt éléments dans le rendu
+d'une page où une vidéo joue**. Aucun réglage ne l'enlève : seul le nombre compte.
+
+Or pendant la lecture, la piste ne change pas. Elle est donc **recopiée une fois
+dans une toile** au moment où la lecture commence, ses blocs sont retirés du rendu,
+et tout revient à l'arrêt. La recopie est fidèle par construction : c'est la toile
+de chaque bloc qu'on recopie, pas une reconstitution. Deux choses continuent de
+bouger, et ce sont deux éléments légers — la tête, et un liseré fantôme pour le
+plan courant.
+
+Un détail a demandé une deuxième capture : peinte telle quelle, la piste gelée
+sortait rayée. Les bords des blocs tombaient entre deux pixels, le navigateur les
+lissait, et deux lissages voisins laissaient une couture sombre — une palissade
+sur des blocs de trois points. Les bords sont maintenant posés sur des pixels
+entiers, le bord droit d'un bloc étant le bord gauche du suivant.
+
+### Le défaut caché derrière : la piste se reconstruisait pendant la lecture
+
+Le gel ne tenait pas : tracé au banc, il sautait quatre cents millisecondes après
+le départ. La cause — `apresImport` → `redessinerPisteDifferee` → toute la piste
+refaite, cent vingt blocs, **en pleine lecture**. La reconstruction était déjà
+différée pendant un geste ; elle ne l'était pas pendant la lecture, alors que
+c'est précisément sur un lien mobile que les imports finissent pendant qu'on
+regarde. Elle est maintenant mise de côté et reprise à l'arrêt.
+
+### Le bilan des cinq tours
+
+```
+                              avant (tour 1)        après
+120 plans, images/s        9,4 · 13,3 · 10,5   18,5 · 18,9 · 19,8
+       trous > 100 ms        80 ·   74 ·   83     47 ·   50 ·   48
+ 12 plans, images/s       17,5 · 18,0 · 19,2   20,0 · 21,3
+```
+
+Sur un montage de la taille des siens, la lecture est passée de dix à dix-neuf
+images par seconde, et les arrêts d'un dixième de seconde ont été divisés par
+deux. Le gain vient d'un seul des cinq tours ; les quatre autres ont servi à
+savoir où ne pas chercher.
+
+Vérifié sans régression : démarrage (première image 68 ms après l'appui), arrêt,
+musique, plans noirs, export image par image, réouverture, et le retour de la
+piste à l'arrêt — y compris quand un doigt s'y pose pendant la lecture, ce qui
+rend la main aux vrais blocs.
+
 ## Le moniteur recopiait chaque image pour rien
 
 Trois pistes venaient d'être écartées l'une après l'autre — caler les coupes sur
