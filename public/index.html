@@ -1591,7 +1591,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 15:36";
+const VERSION_PAGE = "2026-08-25 16:02";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2364,6 +2364,9 @@ let stockagePlein = false;
 
 function sauver() {
   horodater();
+  /* Toute modification du montage passe ici : c'est le seul endroit où faire
+     avancer le numéro de version, et donc périmer l'assemblage. */
+  changerMontage();
   try {
     localStorage.setItem(CLE, JSON.stringify({
       projets: state.projets, supprimes: state.supprimes, actif: state.actif, reordre: state.reordre,
@@ -3596,6 +3599,9 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
   fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0 },
   bascules: { ...bascules }, vues: { ...vues }, arrets: { ...arrets },
   defauts: { ...defauts, enCours: Boolean(fabrique.encours) },
+  colle: { pret: Boolean(colle.url), utilise: Boolean(montageColle()), octets: colle.octets,
+    images: colle.images, encours: colle.encours, echec: colle.echec,
+    version: colle.version, versionMontage },
   segments: { prets: (projetActif()?.plans || []).filter(surSegment).length,
     total: projetActif()?.plans.length || 0, faits: fabrique.faits, rates: fabrique.rates,
     octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
@@ -3657,9 +3663,28 @@ const LARGE_SEGMENT = (() => {
   const cote = Math.max(screen?.width || 0, screen?.height || 0) || 1280;
   return Math.min(1280, Math.max(640, Math.round((cote * densite) / 2) * 2));
 })();
-/* Le débit suit la surface : un segment deux fois plus large au même débit
-   serait plus net en pixels et plus sale en compression. */
-const DEBIT_SEGMENT = Math.round(900_000 * ((LARGE_SEGMENT * LARGE_SEGMENT) / (640 * 640)));
+/* Le cadre commun de l'aperçu : 16/9 comme le moniteur, et jamais plus grand
+   que la plus grande source du montage.
+
+   Premier essai : le cadre suivait l'écran, quitte à agrandir. Un rush de 854
+   points porté à 1280 coûtait 670 ms de fabrication au lieu de 236, pour une
+   image qui n'a pas un pixel de plus à montrer. On plafonne donc à ce que les
+   rushs offrent — les sources d'un même animé font presque toujours la même
+   taille, et l'aperçu n'a rien à inventer. */
+function cadreApercu(projet) {
+  const plans = projet?.plans || [];
+  let source = 0;
+  for (const plan of plans) {
+    const l = Number(plan?.width) || 0;
+    if (l > source) source = l;
+  }
+  const large = Math.max(320, Math.min(LARGE_SEGMENT, source || LARGE_SEGMENT));
+  const l = Math.max(2, Math.round(large / 2) * 2);
+  return { large: l, haut: Math.max(2, Math.round((l * 9) / 16 / 2) * 2) };
+}
+
+// Le débit suit la surface du cadre : il est calculé au moment de la demande.
+
 const SEGMENTS_GARDES = 400;       // de quoi tenir deux montages complets
 
 const segments = new Map();        // clé → { url, taille }
@@ -3684,7 +3709,9 @@ const empreinte = (texte) => empreinteNombre(texte).toString(36);
 function cleSegment(plan) {
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return "";
-  return `seg:${empreinte(adresse)}:${entreeDe(plan).toFixed(3)}-${sortieDe(plan).toFixed(3)}:${LARGE_SEGMENT}`;
+  const cadre = cadreApercu(projetActif());
+  return `seg:${empreinte(adresse)}:${entreeDe(plan).toFixed(3)}-${sortieDe(plan).toFixed(3)}`
+    + `:${cadre.large}x${cadre.haut}@${IMAGES_PAR_SECONDE}`;
 }
 
 const segmentDe = (plan) => {
@@ -3700,8 +3727,11 @@ const surSegment = (plan) => Boolean(segmentDe(plan));
    bloc ; sur le rush, ce sont celles du montage. Tout ce qui place un lecteur
    passe par ici — et rien d'autre : la pellicule, le rendu et la conduite EDL
    continuent de parler du fichier d'origine, qui est la vérité. */
-const entreeLue = (plan) => (surSegment(plan) ? 0 : entreeDe(plan));
-const sortieLue = (plan) => (surSegment(plan) ? duree(plan) : sortieDe(plan));
+const surColle = (plan) => Boolean(montageColle()) && !rendu.encours && !rendu.parImage && !plan?.youtube;
+const entreeLue = (plan) => (surColle(plan) ? departMontage(plan)
+  : surSegment(plan) ? 0 : entreeDe(plan));
+const sortieLue = (plan) => (surColle(plan) ? departMontage(plan) + duree(plan)
+  : surSegment(plan) ? duree(plan) : sortieDe(plan));
 
 /* Dessiner la barre du cache : un trait par bloc, vert quand il est fabriqué.
 
@@ -3737,6 +3767,92 @@ function majBarreCache() {
     const x1 = Math.round(xDeSeconde(debuts[i] + duree(plan)));
     ctx.fillRect(x0, 0, Math.max(1, x1 - x0), haut);
   }
+}
+
+/* --- le montage recollé ----------------------------------------------
+
+   Quand tous les blocs ont leur segment, on les recolle en un seul fichier. Le
+   recollage ne réencode rien : les segments partagent le codec, le cadre et la
+   cadence, donc il suffit de copier leurs octets bout à bout et d'écrire un
+   seul plan de fichier. Mesuré : cinq millisecondes pour trois segments.
+
+   Ce que cela change à la lecture est ce qu'une application native obtient
+   d'une « composition » : un seul flux, un seul décodeur, **aucune coupe**.
+
+   Et cela n'ajoute aucun second chemin de lecture, ce qui avait tué l'aperçu
+   fluide d'autrefois. Tout passe par les mêmes fonctions : le montage recollé
+   est simplement « le fichier de tous les plans », et le point d'entrée d'un
+   plan y est sa position dans le montage. Le vivier constate alors que le
+   lecteur tient déjà le bon fichier au bon endroit — et ne fait rien. La coupe
+   cesse d'exister au lieu d'être mieux traitée. */
+const colle = { url: "", cle: "", duree: 0, octets: 0, images: 0, encours: false, echec: "", version: -1 };
+
+/* Le numéro de version du montage.
+
+   Un assemblage vaut pour un montage précis. Dès qu'une coupe bouge, il est
+   périmé — et jouer un assemblage périmé montrerait l'ancien montage tout en
+   affichant la nouvelle piste, ce qui est pire que tout. Vérifier la signature
+   complète à chaque image coûterait un parcours du montage ; un numéro qui
+   avance à chaque modification coûte une comparaison.
+
+   Il avance dans « sauver », par où passe toute modification du montage, et à
+   chaque segment qui entre ou sort du cache. */
+/* « var » et une déclaration de fonction, pour une raison précise : « sauver »
+   est écrit mille quatre cents lignes plus haut et appelle ceci. Un « let » ou
+   une « const » ne seraient pas encore initialisés si une sauvegarde survenait
+   pendant l'évaluation du module — les deux formes hissées, elles, le sont
+   toujours. */
+var versionMontage = 0;              // eslint-disable-line no-var
+function changerMontage() { versionMontage += 1; }
+
+/* La signature du montage : la liste de ses segments, dans l'ordre. Elle est
+   vide tant qu'un seul bloc manque — on ne recolle pas un montage à trous. */
+function signatureMontage(projet) {
+  const plans = projet?.plans || [];
+  if (plans.length < 2) return "";
+  let sig = "";
+  for (const plan of plans) {
+    if (plan.youtube) return "";
+    const cle = cleSegment(plan);
+    if (!cle || !segments.has(cle)) return "";
+    sig += `${cle};`;
+  }
+  return empreinte(sig);
+}
+
+const montageColle = () =>
+  (colle.url && colle.version === versionMontage && !window.__sansColle ? colle : null);
+
+/* Où commence ce plan dans le fichier recollé : sa place dans le montage. */
+function departMontage(plan) {
+  const projet = projetActif();
+  if (!projet) return 0;
+  const index = projet.plans.indexOf(plan);
+  if (index < 0) return 0;
+  return offsets(projet.plans)[index] || 0;
+}
+
+async function recollerMontage() {
+  const projet = projetActif();
+  const signature = signatureMontage(projet);
+  if (!signature || signature === colle.cle || colle.encours) return;
+  const fil = filFabrique();
+  if (!fil) return;
+  colle.encours = true;
+  const morceaux = projet.plans.map((plan) => segments.get(cleSegment(plan)));
+  if (morceaux.some((m) => !m)) { colle.encours = false; return; }
+  const blobs = [];
+  for (const m of morceaux) {
+    // eslint-disable-next-line no-await-in-loop
+    const garde = await fetch(m.url).then((r) => r.blob()).catch(() => null);
+    if (!garde) { colle.encours = false; return; }
+    blobs.push(garde);
+  }
+  const id = (fabrique.numero = (fabrique.numero || 0) + 1);
+  // La version est prise maintenant : si le montage change pendant l'assemblage,
+  // le résultat sera périmé en arrivant, et refusé.
+  colle.attente = { id, signature, version: versionMontage };
+  fil.postMessage({ id, morceaux: blobs });
 }
 
 /* --- le contrôle des blocs -------------------------------------------
@@ -3867,7 +3983,25 @@ function filFabrique() {
     fabrique.fil = new Worker("fabrique.js", { type: "module" });
     fabrique.possible = true;
     fabrique.fil.onmessage = (evt) => {
-      const { id, mp4, echec, octets, duree: d, verdict } = evt.data || {};
+      const { id, mp4, echec, octets, duree: d, verdict, assemble, images } = evt.data || {};
+      if (assemble) {
+        colle.encours = false;
+        const vise = colle.attente;
+        colle.attente = null;
+        if (echec || !mp4 || !vise || vise.id !== id) { colle.echec = echec || "assemblage refusé"; return; }
+        if (colle.url) URL.revokeObjectURL(colle.url);
+        colle.url = URL.createObjectURL(mp4);
+        colle.cle = vise.signature;
+        colle.octets = octets || mp4.size;
+        colle.images = images || 0;
+        colle.duree = total(projetActif() || { plans: [] });
+        colle.version = vise.version;
+        colle.echec = "";
+        // Les lecteurs tiennent encore les segments : ils prendront le fichier
+        // recollé au prochain plan posé, sans rien interrompre.
+        majBarreCache();
+        return;
+      }
       const attente = fabrique.encours;
       if (!attente || attente.id !== id) return;
       fabrique.encours = null;
@@ -3879,9 +4013,12 @@ function filFabrique() {
         fabrique.octets += octets || mp4.size;
         fabrique.duree += performance.now() - attente.depart;
         segments.set(attente.cle, { url: URL.createObjectURL(mp4), taille: mp4.size, duree: d, verdict });
+        changerMontage();
         ecrireBase(attente.cle, mp4).catch(() => {});
         rangerSegments();
         majBarreCache();
+        const projetEnCours = projetActif();
+        if (projetEnCours) majPreparation(projetEnCours);
         // Le bloc vient d'être vu image par image : s'il ne montre rien, on le
         // déplace dans son rush, à durée constante.
         jugerBloc(attente.cle, verdict);
@@ -3957,16 +4094,24 @@ async function fabriquerSuivant() {
   const fil = filFabrique();
   if (!fil) return;
   const suite = prochainAFabriquer();
-  if (!suite) return;
+  if (!suite) {
+    // Plus rien à préparer : on recolle, si ce n'est pas déjà fait.
+    recollerMontage().catch(() => { colle.encours = false; });
+    return;
+  }
   const garde = await lireBase(mediaDe(suite.plan)).catch(() => null);
   if (!(garde instanceof Blob) || !garde.size) { segmentsRates.add(suite.cle); return; }
   if (fabrique.encours) return;
   const id = (fabrique.numero = (fabrique.numero || 0) + 1);
+  const cadre = cadreApercu(projetActif());
   fabrique.encours = { id, cle: suite.cle, depart: performance.now() };
   fil.postMessage({
     id, blob: garde, cle: mediaDe(suite.plan),
     entree: entreeDe(suite.plan), sortie: sortieDe(suite.plan),
-    large: LARGE_SEGMENT, debit: DEBIT_SEGMENT,
+    // Le même cadre et la même cadence pour tous : c'est ce qui permettra de
+    // les recoller en un seul fichier sans rien réencoder.
+    large: cadre.large, haut: cadre.haut, cadence: IMAGES_PAR_SECONDE,
+    debit: Math.round(900_000 * ((cadre.large * cadre.haut) / (640 * 360))),
   });
 }
 
@@ -3980,6 +4125,7 @@ async function reprendreSegments(projet) {
     const garde = await lireBase(cle).catch(() => null);
     if (garde instanceof Blob && garde.size) {
       segments.set(cle, { url: URL.createObjectURL(garde), taille: garde.size });
+      changerMontage();
     }
   }
   majBarreCache();
@@ -5393,6 +5539,14 @@ function peindreBandes() {
 function preparerSuivants(index) {
   const projet = projetActif();
   if (!projet) return;
+  /* Rien à préparer quand le montage est recollé.
+
+     Il n'y a plus qu'un fichier et qu'un lecteur : préparer les plans à venir
+     reviendrait à ouvrir le même gros fichier sur trois autres lecteurs, à trois
+     endroits différents — c'est-à-dire à refaire exactement le travail que le
+     recollage a supprimé. Mesuré avant cette garde : vingt bascules et seize
+     trous là où il n'en fallait aucun. */
+  if (montageColle()) return;
   /* Deux lecteurs sont intouchables : celui qu'on regarde, et le sortant qui
      couvre la bascule en cours. Le second n'était pas protégé — il n'y avait pas
      de quoi — et préparer la suite lui coupait son relais en plein milieu. */
@@ -5571,6 +5725,8 @@ const alAise = () => (window.__economie ? false : window.__aise ? true : allure.
    la piste son du montage qu'on entend, jamais celle des rushs. */
 function amorcerSuivant(reste) {
   if (!lecture.demande) return;
+  // Sur le montage recollé, le plan suivant est déjà en train de se jouer.
+  if (montageColle()) return;
   // Amorcer, c'est faire jouer une deuxième vidéo pendant que la première joue.
   // C'est ce qui rend la coupe invisible quand l'appareil suit, et ce qui
   // l'empêche de suivre quand il ne suit pas.
@@ -6648,7 +6804,10 @@ function poserPlan(index, decalage = 0, enchainer = false) {
      lecteurs portent le même plan, on prend celui qui a réellement les octets ;
      quand aucun ne les a, on bascule quand même (mieux vaut une image un peu
      tardive que pas d'image) mais on le compte. */
-  const porteurs = NOMS_LECTEURS.map((nom, i) => ({ i, v: lecteurDe(nom) }))
+  /* Sur le montage recollé, on ne change jamais de lecteur : c'est le même
+     fichier, joué sans interruption, et la « coupe » n'est plus qu'un repère
+     dans la piste. */
+  const porteurs = montageColle() ? [] : NOMS_LECTEURS.map((nom, i) => ({ i, v: lecteurDe(nom) }))
     .filter(({ v }) => v && v !== video && v.dataset.plan === plan.id && v.dataset.source === source);
   const couvrant = porteurs.find(({ v }) => couvre(v, plan));
   const pret = video.dataset.plan === plan.id ? -1
@@ -6663,7 +6822,8 @@ function poserPlan(index, decalage = 0, enchainer = false) {
      quand il faut ouvrir le fichier sur place — conteneur relu, tampon à
      remplir, déplacement à faire — pendant que l'image doit continuer. C'est la
      seule mesure qui dise si la préparation d'avance fait son travail. */
-  if (video.dataset.plan !== plan.id) {
+  // Sur le montage recollé il n'y a pas de bascule : le même lecteur joue tout.
+  if (video.dataset.plan !== plan.id && !montageColle()) {
     bascules.total += 1;
     /* L'état exact du lecteur entrant à l'instant de la coupe.
 
@@ -7465,6 +7625,8 @@ function sourceDe(plan) {
      aucun déplacement à faire pour entrer dedans, et plus aucun gros fichier à
      parcourir. Pendant un rendu, en revanche, on revient au rush : le segment
      fait 640 points, ce qui suffit à regarder et pas à exporter. */
+  const entier = montageColle();
+  if (entier && !rendu.encours && !rendu.parImage && !plan.youtube) return entier.url;
   const segment = segmentDe(plan);
   if (segment) return segment.url;
   const adresse = mediaDe(plan);
@@ -7704,6 +7866,28 @@ function majPreparation(projet) {
     // Plus rien en route : reste éventuellement à dire ce qui ne viendra pas.
     finirVeille(prets, total);
     if (bouton) bouton.hidden = true;
+
+    /* Une fois les fichiers là, ce bandeau dit où en est l'aperçu.
+
+       L'accélération de l'aperçu repose sur des interfaces que tous les
+       navigateurs n'ont pas. Quand elles manquent, tout continue de marcher —
+       mais moins bien, et rien ne le disait : l'utilisateur voyait une lecture
+       qui accroche sans pouvoir savoir si c'est son appareil, son montage, ou
+       une panne. La réponse tient en une ligne, à l'endroit où il regarde. */
+    const fait = (projet.plans || []).filter(surSegment).length;
+    const totalBlocs = (projet.plans || []).length;
+    if (fabrique.possible === false) {
+      bandeau.hidden = false;
+      dit.textContent = "Aperçu accéléré indisponible sur ce navigateur — la lecture reste directe";
+      return;
+    }
+    if (totalBlocs && fait < totalBlocs) {
+      bandeau.hidden = false;
+      dit.textContent = `Aperçu : ${fait}/${totalBlocs} plans préparés`
+        + (fabrique.encours ? " · en cours" : "")
+        + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
+      return;
+    }
     bandeau.hidden = !perdus;
     if (perdus) {
       dit.textContent = `${prets}/${total} plans sur l'appareil · ${perdus} introuvable${perdus > 1 ? "s" : ""}`
@@ -9589,6 +9773,17 @@ $("btn-setting").addEventListener("click", () => {
       for (const ligne of defauts.derniers) l.push(`    ${ligne}`);
       l.push("  la durée de chaque bloc est inchangée : la musique reste calée");
       return l;
+    })(),
+    "",
+    "Montage recollé :",
+    ...(() => {
+      if (colle.echec) return [`  impossible : ${colle.echec}`];
+      if (colle.url) {
+        return [`  oui — un seul fichier de ${(colle.octets / 1e6).toFixed(1)} Mo, ${colle.images} images`,
+          "  la lecture n'a plus aucune coupe à encaisser"];
+      }
+      if (colle.encours) return ["  en cours d'assemblage"];
+      return ["  pas encore : tous les blocs doivent d'abord être préparés"];
     })(),
     "",
     "Cache de segments :",

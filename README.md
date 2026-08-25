@@ -2705,6 +2705,74 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Un seul fichier, un seul lecteur, aucune coupe
+
+Question posée : « on ne peut pas faire comme CapCut ? »
+
+**Ce que CapCut a et qu'un navigateur n'aura pas** : `AVMutableComposition`. Sur
+iOS, la timeline *est* un objet que le lecteur système joue d'un trait — l'OS
+enchaîne les morceaux sans discontinuité. Il n'existe aucun équivalent web, et
+aucun effort ne le fabrique.
+
+**Ce qu'on peut obtenir**, c'est le résultat : puisque tous les blocs ont
+maintenant leur segment, on les recolle en un seul fichier. Le recollage ne
+réencode rien — les segments partagent le codec, le cadre et la cadence, donc il
+suffit de copier leurs octets bout à bout et d'écrire un seul plan de fichier.
+
+```
+3 segments de 1,2 s recollés en 5 ms → 475 Ko · 87 images · 854×480
+déplacement au milieu du fichier assemblé : 30 ms
+```
+
+Cinq millisecondes. Chaque bloc commençant par une image-clé, se déplacer dans le
+montage reste immédiat.
+
+### Ce qu'il a fallu uniformiser d'abord
+
+Les segments suivaient chacun la définition de leur rush — plus simple, et cela
+interdisait la suite : deux fichiers de tailles différentes ne se recollent pas.
+Ils partagent maintenant un cadre unique en 16/9, plafonné à la plus grande
+source du montage (un rush de 854 points porté à 1280 coûtait 670 ms de
+fabrication au lieu de 236, pour une image qui n'a pas un pixel de plus à
+montrer), et une cadence unique — un montage fait de morceaux à vingt-trois et
+vingt-cinq images par seconde n'a pas de cadence du tout.
+
+### Aucun second chemin de lecture
+
+C'est ce qui avait tué l'aperçu fluide d'autrefois : six cents lignes de branche
+parallèle dans le moniteur, la tête de lecture, le transport, les déplacements.
+Ici, rien de tel. Le montage recollé est simplement **« le fichier de tous les
+plans »**, et le point d'entrée d'un plan y est sa position dans le montage. Le
+reste du code ne s'aperçoit de rien : il constate que le lecteur tient déjà le
+bon fichier au bon endroit, et ne fait rien.
+
+Trois gardes suffisent, et elles retirent du travail au lieu d'en ajouter : le
+vivier ne prépare plus rien, on ne change plus de lecteur, il n'y a plus rien à
+amorcer. Sans elles, le vivier ouvrait le même gros fichier sur trois autres
+lecteurs à trois endroits différents — mesuré, vingt bascules et seize trous là
+où il n'en fallait aucun.
+
+### Ce que ça donne
+
+```
+fichiers posés sur un lecteur : 1        (un seul, pour toute la lecture)
+appels à load()               : 0
+déplacements dans un fichier  : 0        (aucun, du tout)
+images présentées             : 23,4/s
+trous > 100 ms                : 4
+```
+
+Un fichier, un chargement, zéro déplacement. La coupe a cessé d'exister au lieu
+d'être mieux traitée.
+
+### Un assemblage périmé serait pire que pas d'assemblage
+
+Il montrerait l'ancien montage sous la nouvelle piste. Un numéro de version
+avance à chaque modification — dans `sauver`, par où passe tout — et l'assemblage
+porte celui pour lequel il a été fait. Une comparaison d'entiers suffit à chaque
+image ; vérifier la signature complète coûterait un parcours du montage. Dès
+qu'ils diffèrent, on revient aux segments le temps de recoller.
+
 ## Contrôler les blocs, et déplacer ceux qui ne montrent rien
 
 Un bloc peut être juste sur le papier — bonnes bornes, bon fichier — et ne rien

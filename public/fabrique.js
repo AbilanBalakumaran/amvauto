@@ -59,9 +59,64 @@ async function choisirCodec(config) {
   return null;
 }
 
+/* Recoller les segments en un seul fichier.
+
+   C'est le geste qui manquait, et il ne coûte presque rien : les segments ont
+   tous le même codec, le même cadre et la même cadence — recoller revient à
+   copier leurs octets bout à bout et à écrire un seul plan de fichier. Aucun
+   décodage, aucun encodage.
+
+   Ce que cela donne à la lecture est ce qu'une application native obtient d'une
+   « composition » : un seul flux, un seul décodeur, aucune coupe à encaisser.
+   Chaque bloc commence par une image-clé, donc se déplacer dans le montage
+   reste immédiat.
+
+   La contrainte est stricte et vérifiée : un segment qui n'a pas exactement le
+   même codec, la même taille ni la même description que le premier fait échouer
+   l'assemblage plutôt que de produire un fichier illisible. */
+async function assembler(morceaux) {
+  const ECHELLE = 90000;
+  let piste = null;
+  for (const morceau of morceaux) {
+    const donnees = new Uint8Array(await morceau.arrayBuffer());
+    const carte = lireMp4(donnees);
+    if (carte.echec) return { echec: `segment illisible : ${carte.echec}` };
+    if (!piste) {
+      piste = { id: 1, type: "video", codec: carte.codec, echelle: ECHELLE,
+        largeur: carte.largeur, hauteur: carte.hauteur,
+        description: carte.description ? new Uint8Array(carte.description) : null,
+        echantillons: [] };
+    } else if (carte.codec !== piste.codec || carte.largeur !== piste.largeur
+               || carte.hauteur !== piste.hauteur) {
+      return { echec: "segments de formats différents" };
+    }
+    for (const e of carte.echantillons) {
+      piste.echantillons.push({
+        octets: donnees.subarray(e.ou, e.ou + e.taille),
+        taille: e.taille,
+        duree: Math.max(1, Math.round((e.duree / carte.echelle) * ECHELLE)),
+        cle: e.cle,
+      });
+    }
+  }
+  if (!piste || !piste.echantillons.length) return { echec: "rien à assembler" };
+  const mp4 = ecrireMp4([piste]);
+  return { mp4, images: piste.echantillons.length, octets: mp4.size,
+    largeur: piste.largeur, hauteur: piste.hauteur };
+}
+
 self.onmessage = async (evt) => {
-  const { id, blob, cle, entree, sortie, large, debit } = evt.data || {};
+  const { id, blob, cle, entree, sortie, large, debit, haut, cadence: cadenceVoulue } = evt.data || {};
   const repondre = (quoi) => self.postMessage({ id, ...quoi });
+
+  if (Array.isArray(evt.data?.morceaux)) {
+    try {
+      repondre({ assemble: true, ...(await assembler(evt.data.morceaux)) });
+    } catch (erreur) {
+      repondre({ assemble: true, echec: String((erreur && erreur.name) || erreur || "erreur") });
+    }
+    return;
+  }
   if (typeof VideoDecoder !== "function" || typeof VideoEncoder !== "function") {
     return repondre({ echec: "codecs indisponibles" });
   }
@@ -87,9 +142,31 @@ self.onmessage = async (evt) => {
        l'animation image par image. L'aperçu, lui, tient dans quatre cents points
        sur un téléphone. Réduire, c'est moins d'octets à lire et moins de pixels
        à décoder — donc précisément ce qui manque à un appareil qui peine. */
-    const facteur = Math.min(1, large / (carte.largeur || large));
-    const l = Math.max(2, Math.round((carte.largeur * facteur) / 2) * 2);
-    const h = Math.max(2, Math.round((carte.hauteur * facteur) / 2) * 2);
+    /* Tous les segments dans le même cadre.
+
+       Ils suivaient chacun la définition de leur rush. C'était plus simple et
+       cela interdisait la suite : deux fichiers de tailles différentes ne se
+       recollent pas sans tout réencoder. Un cadre unique, et le montage entier
+       devient un assemblage d'octets — la seule façon, dans un navigateur,
+       d'obtenir ce qu'une application native obtient d'une « composition » :
+       un seul flux, un seul décodeur, aucune coupe à encaisser.
+
+       L'image du rush y est posée entière, à son format, centrée. Les bords
+       noirs sont ceux que le moniteur dessinait de toute façon. */
+    const l = Math.max(2, Math.round((large || 640) / 2) * 2);
+    const h = Math.max(2, Math.round((haut || Math.round((l * 9) / 16)) / 2) * 2);
+    const cadre = new OffscreenCanvas(l, h);
+    const ctxCadre = cadre.getContext("2d", { alpha: false });
+    const poser = (image) => {
+      const li = image.displayWidth || image.codedWidth || l;
+      const hi = image.displayHeight || image.codedHeight || h;
+      const f = Math.min(l / li, h / hi);
+      const dl = Math.max(1, Math.round(li * f));
+      const dh = Math.max(1, Math.round(hi * f));
+      ctxCadre.fillStyle = "#000";
+      ctxCadre.fillRect(0, 0, l, h);
+      ctxCadre.drawImage(image, Math.round((l - dl) / 2), Math.round((h - dh) / 2), dl, dh);
+    };
 
     const ech = carte.echantillons;
     const instant = (e) => e.instant / carte.echelle;
@@ -100,7 +177,11 @@ self.onmessage = async (evt) => {
       if (ech[i].cle && instant(ech[i]) <= entree) depuis = i;
     }
 
-    const cadence = Math.max(1, Math.round(1 / ((ech[1] ? instant(ech[1]) - instant(ech[0]) : 1 / 24) || 1 / 24)));
+    /* Et tous à la même cadence. Un montage assemblé de morceaux à vingt-trois
+       et vingt-cinq images par seconde n'a pas de cadence du tout : on rééchan-
+       tillonne sur celle du montage, en répétant ou en sautant une image quand
+       il le faut. C'est ce que fait n'importe quel banc de montage. */
+    const cadence = Math.max(1, Math.round(cadenceVoulue || 24));
     const sortieCodec = await choisirCodec({ width: l, height: h, framerate: cadence });
     if (!sortieCodec) return repondre({ echec: "aucun codec d'encodage" });
 
@@ -163,25 +244,42 @@ self.onmessage = async (evt) => {
 
     let gardees = 0;
     let casse = false;
+    const combien = Math.max(1, Math.round((sortie - entree) * cadence));
+    let prochaine = 0;          // index de la prochaine image à produire
+
+    /* Produire les images du segment à cadence fixe.
+
+       On ne recopie plus les images du rush une par une : on avance sur une
+       grille régulière, et pour chaque case on prend la dernière image décodée
+       qui lui appartient. Un rush plus lent voit ses images répétées, un rush
+       plus rapide en perd — et le segment fait exactement le nombre d'images
+       que le montage attend. */
+    const produire = (image, jusqua) => {
+      while (prochaine < combien && prochaine / cadence <= jusqua + 1e-6) {
+        poser(image);
+        const sortie2 = new VideoFrame(cadre, {
+          timestamp: Math.round((prochaine / cadence) * 1e6),
+          duration: Math.round(1e6 / cadence),
+        });
+        if (prochaine % 3 === 0) inspecter(sortie2);
+        try {
+          encodeur.encode(sortie2, { keyFrame: prochaine === 0 });
+          gardees += 1;
+        } catch { casse = true; }
+        sortie2.close();
+        prochaine += 1;
+      }
+    };
+
+    let derniere = null;
     decodeur = new VideoDecoder({
       output: (image) => {
         const t = image.timestamp / 1e6;
-        // Hors des bornes : décodée parce qu'il le fallait, jetée parce qu'elle
-        // n'appartient pas au bloc.
-        if (t < entree - 0.001 || t > sortie + 0.001) { image.close(); return; }
-        /* Le segment commence à zéro. C'est tout l'intérêt : le lecteur n'aura
-           aucun déplacement à faire pour entrer dedans. */
-        const recadree = new VideoFrame(image, {
-          timestamp: Math.max(0, Math.round((t - entree) * 1e6)),
-          duration: Math.round(1e6 / cadence),
-        });
-        image.close();
-        if (gardees % 3 === 0) inspecter(recadree);
-        try {
-          encodeur.encode(recadree, { keyFrame: gardees === 0 });
-          gardees += 1;
-        } catch { casse = true; }
-        recadree.close();
+        if (t < entree - 0.001) { image.close(); return; }
+        if (t > sortie + 0.001) { image.close(); return; }
+        // Les cases jusqu'à cette image reviennent à la précédente.
+        if (derniere) { produire(derniere.image, t - entree - 1e-6); derniere.image.close(); }
+        derniere = { image, t };
       },
       error: () => { casse = true; },
     });
@@ -203,6 +301,8 @@ self.onmessage = async (evt) => {
       }
     }
     await decodeur.flush().catch(() => { casse = true; });
+    // La dernière image remplit les cases qui restent jusqu'au bout du bloc.
+    if (derniere) { produire(derniere.image, (sortie - entree) + 1); derniere.image.close(); derniere = null; }
     await encodeur.flush().catch(() => { casse = true; });
 
     if (casse || !piste.echantillons.length) return repondre({ echec: "fabrication interrompue" });
