@@ -124,6 +124,43 @@ self.onmessage = async (evt) => {
       bitrate: debit || 900000,
       ...(sortieCodec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
 
+    /* Regarder ce qu'on décode, puisqu'on le décode.
+
+       Un bloc peut être juste sur le papier — bonnes bornes, bon fichier — et
+       ne rien montrer : un fondu au noir, un carton blanc, un plan fixe où rien
+       ne bouge. Rien dans les données d'un rush ne le dit ; il faut voir les
+       images. La fabrique les a toutes sous la main.
+
+       On échantillonne une image sur trois, réduite à trente-deux points de
+       large : de quoi mesurer une luminance moyenne et un mouvement d'une image
+       à l'autre, pour un coût qui ne se mesure pas. */
+    const controle = new OffscreenCanvas(32, 18);
+    const ctxControle = controle.getContext("2d", { willReadFrequently: true });
+    const lumas = [];
+    const bouges = [];
+    let precedent = null;
+
+    const inspecter = (image) => {
+      if (!ctxControle) return;
+      try {
+        ctxControle.drawImage(image, 0, 0, 32, 18);
+        const donnees = ctxControle.getImageData(0, 0, 32, 18).data;
+        let somme = 0;
+        let bouge = 0;
+        const gris = new Uint8Array(32 * 18);
+        for (let i = 0, k = 0; i < donnees.length; i += 4, k += 1) {
+          // Luminance perçue, en entiers : le vert pèse le plus, le bleu le moins.
+          const y = (donnees[i] * 77 + donnees[i + 1] * 150 + donnees[i + 2] * 29) >> 8;
+          gris[k] = y;
+          somme += y;
+          if (precedent) bouge += Math.abs(y - precedent[k]);
+        }
+        lumas.push(somme / gris.length);
+        if (precedent) bouges.push(bouge / gris.length);
+        precedent = gris;
+      } catch { /* image illisible : on ne saura rien de celle-là */ }
+    };
+
     let gardees = 0;
     let casse = false;
     decodeur = new VideoDecoder({
@@ -139,6 +176,7 @@ self.onmessage = async (evt) => {
           duration: Math.round(1e6 / cadence),
         });
         image.close();
+        if (gardees % 3 === 0) inspecter(recadree);
         try {
           encodeur.encode(recadree, { keyFrame: gardees === 0 });
           gardees += 1;
@@ -168,9 +206,45 @@ self.onmessage = async (evt) => {
     await encodeur.flush().catch(() => { casse = true; });
 
     if (casse || !piste.echantillons.length) return repondre({ echec: "fabrication interrompue" });
+
+    /* Le verdict sur ce bloc.
+
+       Noir ou blanc : la plupart des images échantillonnées sont dans un
+       extrême, c'est-à-dire un fondu ou un carton. Figé : d'une image à l'autre,
+       presque rien ne change — un plan d'attente, une image tenue par le rush
+       lui-même. Les seuils sont larges à dessein : on ne corrige que ce qui ne
+       fait aucun doute, parce qu'une correction déplace le montage. */
+    const moyenne = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+    const sombres = lumas.filter((x) => x < 14).length;
+    const clairs = lumas.filter((x) => x > 242).length;
+    const bouge = moyenne(bouges);
+
+    /* Le mouvement décide, la luminance ne fait que nommer.
+
+       Premier essai : « sombre = noir ». La règle était fausse et dangereuse.
+       Une scène de nuit, du sakuga sur fond noir, une silhouette sur ciel
+       étoilé — tout cela est sombre et parfaitement valable. Vérifié sur un
+       rush fabriqué exprès : deux blocs sains sur quatre étaient condamnés,
+       donc deux blocs du montage auraient été déplacés sans raison.
+
+       Ce qui fait qu'un bloc ne montre rien, ce n'est pas qu'il soit sombre :
+       c'est qu'il ne se passe rien. Un bloc n'est donc suspect que si le
+       mouvement moyen d'une image à l'autre est quasi nul — et la luminance ne
+       sert plus qu'à dire de quoi il s'agit : fondu au noir, carton blanc, ou
+       plan d'attente. */
+    const immobile = bouges.length >= 3 && bouge < 1.2;
+    const verdict = {
+      luminance: Math.round(moyenne(lumas)),
+      mouvement: Math.round(bouge * 10) / 10,
+      vues: lumas.length,
+      noir: immobile && lumas.length >= 3 && sombres >= lumas.length * 0.8,
+      blanc: immobile && lumas.length >= 3 && clairs >= lumas.length * 0.8,
+      fige: immobile,
+    };
+
     const mp4 = ecrireMp4([piste]);
     repondre({ mp4, images: piste.echantillons.length, largeur: l, hauteur: h,
-      duree: piste.echantillons.length / cadence, octets: mp4.size });
+      duree: piste.echantillons.length / cadence, octets: mp4.size, verdict });
   } catch (erreur) {
     repondre({ echec: String((erreur && erreur.name) || erreur || "erreur") });
   } finally {

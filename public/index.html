@@ -1591,7 +1591,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 15:19";
+const VERSION_PAGE = "2026-08-25 15:36";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3595,6 +3595,7 @@ function compterJouants() {
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
   fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0 },
   bascules: { ...bascules }, vues: { ...vues }, arrets: { ...arrets },
+  defauts: { ...defauts, enCours: Boolean(fabrique.encours) },
   segments: { prets: (projetActif()?.plans || []).filter(surSegment).length,
     total: projetActif()?.plans.length || 0, faits: fabrique.faits, rates: fabrique.rates,
     octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
@@ -3669,14 +3670,16 @@ const fabrique = { fil: null, encours: null, faits: 0, rates: 0, octets: 0, dure
    bornes, quelle définition. Changer une borne change la clé — le segment
    d'avant n'est plus trouvé, et le nouveau se fabrique. C'est l'invalidation la
    plus simple qui soit, et elle ne peut pas se tromper. */
-function empreinte(texte) {
+function empreinteNombre(texte) {
   let a = 0x811c9dc5;
   for (let i = 0; i < texte.length; i += 1) {
     a ^= texte.charCodeAt(i);
     a = Math.imul(a, 0x01000193) >>> 0;
   }
-  return a.toString(36);
+  return a >>> 0;
 }
+
+const empreinte = (texte) => empreinteNombre(texte).toString(36);
 
 function cleSegment(plan) {
   const adresse = mediaDe(plan);
@@ -3726,11 +3729,131 @@ function majBarreCache() {
   ctx.fillStyle = "#35c24d";
   const debuts = offsets(projet.plans);
   for (let i = 0; i < projet.plans.length; i += 1) {
-    if (!surSegment(projet.plans[i])) continue;
+    const plan = projet.plans[i];
+    const rouge = suspects.has(plan.id);
+    if (!rouge && !surSegment(plan)) continue;
+    ctx.fillStyle = rouge ? "#c8442f" : "#35c24d";
     const x0 = Math.round(xDeSeconde(debuts[i]));
-    const x1 = Math.round(xDeSeconde(debuts[i] + duree(projet.plans[i])));
+    const x1 = Math.round(xDeSeconde(debuts[i] + duree(plan)));
     ctx.fillRect(x0, 0, Math.max(1, x1 - x0), haut);
   }
+}
+
+/* --- le contrôle des blocs -------------------------------------------
+
+   Un bloc peut être juste sur le papier — bonnes bornes, bon fichier — et ne
+   rien montrer. Un fondu au noir, un carton blanc, un plan d'attente où rien ne
+   bouge : rien dans les données d'un rush ne le dit, il faut voir les images.
+   La fabrique les décode toutes de toute façon ; elle en rend donc un verdict.
+
+   Corriger, c'est déplacer la fenêtre du bloc ailleurs dans le même rush —
+   **sans jamais toucher à sa durée**. C'est la règle qui rend la correction
+   inoffensive : le montage garde exactement le même découpage dans le temps,
+   donc la musique reste calée à l'image près. Seul change ce qu'on voit.
+
+   Trois essais au plus par bloc, et seulement sur les cas qui ne font aucun
+   doute : quatre images sur cinq dans un extrême, ou un mouvement moyen
+   inférieur à un point de luminance sur deux cent cinquante-cinq. Une
+   correction déplace le travail de l'utilisateur ; elle doit être sûre. */
+const CORRECTIONS_MAX = 3;
+const corrections = new Map();          // identifiant de bloc → essais déjà faits
+const defauts = { noirs: 0, blancs: 0, figes: 0, corriges: 0, abandonnes: 0, derniers: [] };
+/* Les blocs que la correction n'a pas su sauver : un rush trop court pour offrir
+   une autre fenêtre, ou mort de bout en bout. On ne s'acharne pas — on le
+   signale en rouge sur la barre, et l'utilisateur tranche. */
+const suspects = new Set();
+
+const blocDouteux = (v) => Boolean(v && (v.noir || v.blanc || v.fige));
+
+function nommerDefaut(v) {
+  if (v.noir) return "noir";
+  if (v.blanc) return "blanc";
+  if (v.fige) return "figé";
+  return "";
+}
+
+/* Déplacer la fenêtre d'un bloc dans son rush, à durée constante.
+
+   On avance d'un pas d'une seconde et demie au moins, en repartant du début du
+   fichier quand on arrive au bout. Un rush trop court pour offrir une autre
+   fenêtre n'est pas corrigé : il n'y a nulle part où aller. */
+function corrigerBloc(plan, verdict) {
+  const projet = projetActif();
+  if (!projet || !plan) return false;
+  const longueur = dureeSource(plan);
+  const large = duree(plan);
+  const place = longueur - large;
+  if (!(place > 0.3)) {
+    // Le rush n'est pas plus long que le bloc : il n'y a nulle part où aller.
+    if (!suspects.has(plan.id)) { defauts.abandonnes += 1; suspects.add(plan.id); majBarreCache(); }
+    return false;
+  }
+
+  const essais = corrections.get(plan.id) || 0;
+  if (essais >= CORRECTIONS_MAX) {
+    if (!suspects.has(plan.id)) { defauts.abandonnes += 1; suspects.add(plan.id); majBarreCache(); }
+    return false;
+  }
+  corrections.set(plan.id, essais + 1);
+
+  /* Chaque essai va voir ailleurs, pas un peu plus loin.
+
+     Le premier essai avançait d'un pas fixe. Sur un rush dont le milieu entier
+     est mort — un fondu de quatre secondes, un plan d'attente — trois pas
+     successifs restent dans la même zone morte : vérifié, un bloc déplacé
+     trois fois n'avait pas quitté le noir.
+
+     Les essais se répartissent donc sur tout le fichier, par la suite du nombre
+     d'or : environ 62 %, 24 %, 85 % de la place disponible. Trois essais
+     couvrent alors le rush au lieu de le longer. */
+  /* Et chaque bloc part d'un endroit qui lui est propre.
+
+     Deux blocs taillés aux mêmes bornes dans le même rush sont un seul segment
+     — c'est voulu, cela divise le travail par sept. Mais s'ils sont mauvais,
+     les déplacer de la même façon les envoie au même endroit : trois blocs
+     atterrissaient sur la même seconde, vérifié. Chaque bloc a donc sa propre
+     phase, tirée de son identifiant : ils explorent le rush sans se suivre. */
+  const OR = 0.6180339887;
+  const phase = (empreinteNombre(plan.id) % 1000) / 1000;
+  const part = ((essais + 1) * OR + phase) % 1;
+  const entree = Math.max(0, Math.min(place, place * part));
+
+  plan.entree = entree;
+  plan.sortie = entree + large;
+  defauts.corriges += 1;
+  defauts.derniers.unshift(`${nommerDefaut(verdict)} → décalé à ${entree.toFixed(1)} s`);
+  defauts.derniers.length = Math.min(defauts.derniers.length, 5);
+
+  sauver();
+  enregistrer(projet);
+  // La piste montre les nouvelles bornes ; la barre du cache repart au gris pour
+  // ce bloc, dont la clé vient de changer.
+  redessinerPisteDifferee();
+  majBarreCache();
+  return true;
+}
+
+function jugerBloc(cle, verdict) {
+  const projetJuge = projetActif();
+  if (!blocDouteux(verdict)) {
+    // Un bloc redevenu bon n'est plus suspect : la correction a fonctionné.
+    for (const p of projetJuge?.plans || []) {
+      if (cleSegment(p) === cle && suspects.delete(p.id)) majBarreCache();
+    }
+    return;
+  }
+  if (verdict.noir) defauts.noirs += 1;
+  if (verdict.blanc) defauts.blancs += 1;
+  if (verdict.fige) defauts.figes += 1;
+  /* Tous les blocs qui partagent ce segment, pas seulement le premier.
+
+     Le partage de segments est ce qui rend le cache bon marché : cent vingt
+     blocs n'en demandent que dix-huit. Mais un verdict porte sur un segment, et
+     un segment peut servir à plusieurs blocs — on n'en jugeait qu'un, et les
+     autres restaient mauvais sans que rien ne le signale. */
+  const projet = projetActif();
+  const vises = (projet?.plans || []).filter((p) => cleSegment(p) === cle);
+  for (const plan of vises) corrigerBloc(plan, verdict);
 }
 
 function filFabrique() {
@@ -3744,7 +3867,7 @@ function filFabrique() {
     fabrique.fil = new Worker("fabrique.js", { type: "module" });
     fabrique.possible = true;
     fabrique.fil.onmessage = (evt) => {
-      const { id, mp4, echec, octets, duree: d } = evt.data || {};
+      const { id, mp4, echec, octets, duree: d, verdict } = evt.data || {};
       const attente = fabrique.encours;
       if (!attente || attente.id !== id) return;
       fabrique.encours = null;
@@ -3755,10 +3878,13 @@ function filFabrique() {
         fabrique.faits += 1;
         fabrique.octets += octets || mp4.size;
         fabrique.duree += performance.now() - attente.depart;
-        segments.set(attente.cle, { url: URL.createObjectURL(mp4), taille: mp4.size, duree: d });
+        segments.set(attente.cle, { url: URL.createObjectURL(mp4), taille: mp4.size, duree: d, verdict });
         ecrireBase(attente.cle, mp4).catch(() => {});
         rangerSegments();
         majBarreCache();
+        // Le bloc vient d'être vu image par image : s'il ne montre rien, on le
+        // déplace dans son rush, à durée constante.
+        jugerBloc(attente.cle, verdict);
       }
       // Le suivant, mais jamais dans la foulée : on rend la main d'abord.
       setTimeout(() => fabriquerSuivant(), 0);
@@ -9446,6 +9572,25 @@ $("btn-setting").addEventListener("click", () => {
     /* Le cache de segments : ce qui est prêt, ce que ça pèse, à quelle vitesse
        il se fabrique. Un montage entièrement fabriqué se lit sans un seul
        déplacement de fichier. */
+    /* Le contrôle des blocs : ce que la fabrique a vu en décodant, et ce qu'elle
+       a corrigé. Un bloc n'est jugé mauvais que si rien n'y bouge — la
+       luminance ne fait que nommer le défaut. */
+    "Contrôle des blocs :",
+    ...(() => {
+      const vus = defauts.noirs + defauts.blancs + defauts.figes;
+      if (!vus && !defauts.corriges) return ["  aucun bloc sans image trouvé"];
+      const l = [
+        `  sans image : ${defauts.figes} figé(s), ${defauts.noirs} noir(s), ${defauts.blancs} blanc(s)`,
+        `  déplacés dans leur rush : ${defauts.corriges}`,
+      ];
+      if (defauts.abandonnes) {
+        l.push(`  restés mauvais : ${defauts.abandonnes} — en rouge sur la barre`);
+      }
+      for (const ligne of defauts.derniers) l.push(`    ${ligne}`);
+      l.push("  la durée de chaque bloc est inchangée : la musique reste calée");
+      return l;
+    })(),
+    "",
     "Cache de segments :",
     ...(() => {
       const projet = projetActif();

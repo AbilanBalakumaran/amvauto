@@ -2705,6 +2705,77 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Contrôler les blocs, et déplacer ceux qui ne montrent rien
+
+Un bloc peut être juste sur le papier — bonnes bornes, bon fichier — et ne rien
+montrer : un fondu au noir, un carton blanc, un plan d'attente où rien ne bouge.
+Rien dans les données d'un rush ne le dit ; il faut voir les images.
+
+**La fabrique les décode toutes de toute façon.** Elle en rend donc un verdict,
+pour un coût qui ne se mesure pas : une image sur trois, réduite à trente-deux
+points de large, dans une toile hors écran. Une luminance moyenne, un mouvement
+moyen d'une image à l'autre.
+
+### La première règle était fausse, et dangereuse
+
+« Sombre = noir ». Une scène de nuit, du sakuga sur fond noir, une silhouette sur
+ciel étoilé : tout cela est sombre et parfaitement valable. Vérifié sur un rush
+fabriqué exprès — quatre secondes de mouvement, quatre de noir, quatre de figé,
+quatre de mouvement — **deux blocs sains sur quatre étaient condamnés**, donc deux
+blocs du montage auraient été déplacés sans raison.
+
+Ce qui fait qu'un bloc ne montre rien, ce n'est pas qu'il soit sombre : c'est
+qu'il ne s'y passe rien. Un bloc n'est suspect que si le mouvement moyen est
+quasi nul ; la luminance ne sert plus qu'à nommer le défaut. Les quatre verdicts
+sont alors justes :
+
+```
+  1–2,5 s   attendu sain   trouvé sain   luminance  9, mouvement  9,3
+  5–6,5 s   attendu noir   trouvé noir   luminance  0, mouvement  0
+  9–10,5 s  attendu figé   trouvé figé   luminance 19, mouvement  0
+ 13–14,5 s  attendu sain   trouvé sain   luminance  9, mouvement 12,1
+```
+
+### Corriger sans déplacer le montage
+
+La fenêtre du bloc va ailleurs dans le même rush, **à durée constante**. C'est la
+règle qui rend la correction inoffensive : le découpage dans le temps ne change
+pas d'un millième, donc la musique reste calée à l'image près.
+
+```
+durée totale du montage, avant : 7,200 s
+durée totale du montage, après : 7,200 s
+
+  d0 : 1–2,2      → inchangé          (sain)
+  d1 : 5–6,2      → 3,70–4,90         (noir, déplacé)
+  d2 : 9–10,2     → 0,19–1,39         (figé, déplacé)
+  d3 : 13–14,2    → inchangé          (sain)
+  d4 : 5,5–6,7    → 14,25–15,45       (noir, déplacé)
+  d5 : 9,5–10,7   → 1,60–2,80         (figé, déplacé)
+```
+
+### Deux défauts trouvés en corrigeant
+
+**Les essais se suivaient au lieu d'explorer.** Un pas fixe reste dans la même
+zone morte quand elle est longue : un bloc déplacé trois fois n'avait pas quitté
+le noir. Les essais se répartissent maintenant sur tout le fichier par la suite
+du nombre d'or — environ 62 %, 24 %, 85 % de la place disponible.
+
+**Un seul bloc était jugé sur plusieurs.** Le partage de segments est ce qui rend
+le cache bon marché : cent vingt blocs n'en demandent que dix-huit. Mais un
+verdict porte sur un segment, et un segment sert à plusieurs blocs — on n'en
+corrigeait qu'un. Tous sont corrigés, et chacun reçoit sa propre phase de
+recherche, tirée de son identifiant : sans cela, trois blocs identiques
+atterrissaient sur la même seconde.
+
+### Ce qui reste visible
+
+Trois essais au plus par bloc. Ce que la correction n'a pas su sauver — un rush
+trop court pour offrir une autre fenêtre, ou mort de bout en bout — s'affiche
+**en rouge sur la barre du cache**, et l'utilisateur tranche. Le diagnostic
+compte les défauts trouvés, les corrections faites et les cinq dernières en
+clair.
+
 ## Fabriquer pendant qu'on regarde : ce qui manquait pour que ce soit instantané
 
 Le cache donnait la fluidité, pas l'instantané. Il ne travaillait que **hors
