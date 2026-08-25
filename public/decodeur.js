@@ -222,12 +222,33 @@ function lireMp4(donnees) {
 }
 
 
+/* Les cartes de fichiers déjà lues, gardées par adresse.
+
+   Lire la carte d'un MP4, c'est parcourir ses tables : où est chaque image,
+   laquelle est une image-clé, à quel instant. Sur un rush de six mégaoctets
+   cela se compte en dizaines de millisecondes — et on la relisait à chaque
+   demande, alors qu'un montage revient sans cesse au même fichier. Trois cartes
+   suffisent à couvrir ce qui se joue à un instant donné, et une carte ne pèse
+   que ses tables : quelques dizaines de milliers d'entrées, pas les images. */
+const cartes = new Map();
+const CARTES_GARDEES = 3;
+
+function carteDe(cle, donnees) {
+  if (cle && cartes.has(cle)) return cartes.get(cle);
+  const carte = lireMp4(donnees);
+  if (cle && !carte.echec) {
+    cartes.set(cle, carte);
+    while (cartes.size > CARTES_GARDEES) cartes.delete(cartes.keys().next().value);
+  }
+  return carte;
+}
+
 self.onmessage = async (evt) => {
-  const { id, blob, entree, fin, large, combien } = evt.data || {};
+  const { id, blob, entree, fin, large, combien, cle, pas } = evt.data || {};
   const repondre = (quoi, transferts) => self.postMessage({ id, ...quoi }, transferts || []);
   try {
     const donnees = new Uint8Array(await blob.arrayBuffer());
-    const carte = lireMp4(donnees);
+    const carte = carteDe(cle, donnees);
     if (carte.echec) return repondre({ echec: carte.echec });
 
     const config = { codec: carte.codec, codedWidth: carte.largeur, codedHeight: carte.hauteur };
@@ -244,12 +265,24 @@ self.onmessage = async (evt) => {
       if (ech[i].cle && ech[i].instant / carte.echelle <= entree) depuis = i;
     }
 
+    /* Les images retenues sont étalées sur toute la plage demandée.
+
+       On gardait les premières venues jusqu'à en avoir assez : sur une plage
+       longue, cela donnait le début en entier et rien ensuite — une réserve qui
+       s'épuise juste au moment où elle devrait servir. Un pas régulier couvre au
+       contraire toute la plage : une image tous les deux ou trois vingt-quatrièmes
+       de seconde tient largement le temps qu'un lecteur démarre, et coûte
+       d'autant moins de mémoire. */
+    const ecart = pas > 0 ? pas : 0;
+    let prochaine = entree - 0.02;
     const prises = [];
     let cassee = false;
     const dec = new VideoDecoder({
       output: (img) => {
         const t = img.timestamp / 1e6;
         if (t < entree - 0.02 || t > fin + 0.02 || prises.length >= combien) { img.close(); return; }
+        if (t < prochaine) { img.close(); return; }
+        prochaine = t + ecart;
         prises.push({ t, img });
       },
       error: () => { cassee = true; },

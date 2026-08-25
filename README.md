@@ -2705,6 +2705,134 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Le cran au-dessus : deux pistes écartées, une retenue
+
+Demande : « il faut aller à un cran plus haut pour que ce soit fluide ». Le cran
+au-dessus se cherche d'abord par la mesure, parce que deux des trois candidats
+évidents ne survivent pas à l'arithmétique.
+
+### Ce qui a rendu la suite pensable : recopier une image est gratuit
+
+La recopie d'une vidéo dans une toile avait été retirée parce qu'elle coûtait
+21 % à 43 % du temps de lecture. Mais une image déjà décodée n'est pas une vidéo :
+elle est déjà du côté du processeur graphique. Mesuré sur la même toile de
+380 points :
+
+```
+                    dessiner la vidéo    dessiner l'image décodée
+processeur ×1            0,40 ms                 0,00 ms
+processeur ×4            1,80 ms                 0,00 ms
+processeur ×8            4,20 ms                 0,00 ms   (pire cas 2,6)
+```
+
+Sous la résolution du chronomètre dans les trois cas. Une réserve d'images ne
+coûte donc que sa mémoire, jamais son affichage.
+
+### Piste écartée : approfondir la réserve
+
+Portée de trois dixièmes de seconde à une seconde et quart, avec un pas régulier
+pour couvrir toute la plage. Résultat mesuré : **12,5 images par seconde au lieu
+de 17 à 20**, et des arrêts jusqu'à 4,8 secondes. Décoder seize images par plan
+sur deux plans sature la machine plus sûrement que la réserve ne la soulage.
+Revenue à sa profondeur d'origine.
+
+Elle a tout de même révélé un piège, posé par une correction antérieure : montrer
+une image décodée **masquait le lecteur** — un point sur un point — et un
+navigateur déprioritise une vidéo qu'on ne voit pas. Le lecteur ne rattrapait
+donc jamais son retard, la réserve restait seule à l'écran, et l'aperçu tombait à
+une image par seconde. Tant que la réserve était courte, elle s'épuisait et le
+lecteur reprenait la main ; en l'approfondissant, la boucle ne se refermait plus.
+Le lecteur vivant garde maintenant sa taille dans tous les cas ; seule change la
+couche qui est devant.
+
+Second défaut mis au jour : on couvrait dès que le lecteur s'écartait de
+0,15 seconde de l'horloge. Or un lecteur qui joue normalement dérive de quelques
+centièmes — l'horloge du montage n'attend personne. La bonne question n'est pas
+« est-il à l'heure » mais **« avance-t-il »** : un lecteur qui progresse garde la
+main même en retard, ses images sont plus fraîches que celles de la réserve. On ne
+couvre plus que lorsqu'il est réellement immobile.
+
+### Piste écartée : les proxies à images-clés rapprochées
+
+C'est la réponse des bancs de montage professionnels, et elle enlèverait pour de
+bon le GOP de deux secondes mesuré sur tous les rushs. Mais le parcours depuis
+l'image-clé avait déjà été chronométré : **19 ms au ras d'une image-clé, 44 ms au
+plus loin**. Vingt-cinq millisecondes d'écart, quand les trous à expliquer en font
+cent à trois cents. Fabriquer un proxy par rush pour gagner vingt-cinq
+millisecondes ne se défend pas. Écartée avant d'être construite.
+
+### Piste retenue : l'application se met à la portée de l'appareil
+
+Le banc a fini par établir le fait décisif :
+
+```
+             images/s   trous > 100 ms
+processeur ×1   21,2           1
+processeur ×2   23,7           0
+processeur ×4   20,9           8
+processeur ×8   17,6          20
+```
+
+Le montage ne change pas ; la machine, si. Or l'application demandait toujours la
+même chose à toutes : **trois lecteurs en vol au moment d'une coupe** — le sortant
+qui couvre le relais, le courant, et le suivant qu'on amorce. Sur un appareil qui
+suit, c'est ce qui rend la coupe invisible. Sur un appareil qui ne suit pas, c'est
+ce qui l'empêche de suivre — et sur un iPhone, qui borne le nombre de vidéos
+décodées simultanément, cela peut être refusé net.
+
+Elle regarde donc ce qu'elle obtient — les images réellement présentées, comptées
+par `requestVideoFrameCallback` sur le seul lecteur affiché — et juge sur deux
+secondes : plus de trois accrocs, elle passe en économie ; un ou moins, elle
+revient au confort. Deux seuils différents, pour ne pas osciller.
+
+En économie : pas de relais, pas d'amorce, **un seul lecteur en vol**. Une coupe
+un peu plus sèche, mais une image qui avance.
+
+Vérifié : à ×8 l'allure change deux fois pendant une lecture, à ×1 jamais.
+**Le gain, lui, n'est pas mesurable ici** — et c'est attendu : un Chromium de
+bureau n'a pas de limite de décodeurs simultanés à contourner. Ce réglage vise
+précisément le cas que ce banc ne sait pas reproduire, et il ne coûte rien quand
+l'appareil se porte bien, puisqu'il reste alors en confort.
+
+### Au passage : le fil de décodage relisait chaque fichier
+
+Lire la carte d'un MP4 — où est chaque image, laquelle est une image-clé —
+se compte en dizaines de millisecondes, et on la relisait à chaque demande, alors
+qu'un montage revient sans cesse au même rush. Trois cartes sont maintenant
+gardées, ce qui couvre ce qui se joue à un instant donné.
+
+## La PWA se mettait à jour au chargement — c'est-à-dire presque jamais
+
+Une application installée sur l'écran d'accueil ne se « charge » pas : on la
+quitte, on y revient, et le système rend la page telle qu'elle était, minuteries
+gelées comprises. Ni l'événement `load`, ni l'intervalle d'une heure ne se
+produisent alors. **Une version déployée pouvait rester invisible des jours** — en
+laissant croire qu'un correctif n'avait rien changé.
+
+Le retour au premier plan déclenche donc une vérification, au plus une par
+demi-minute pour qu'un aller-retour vers la galerie photo ne coûte pas une
+requête. `pageshow` couvre le retour depuis le cache de navigation, où
+`visibilitychange` ne se déclenche pas toujours.
+
+Second défaut, plus discret : le garde-fou anti-boucle ne regardait que la
+présence de sa marque, pas sa valeur. Une fois une mise à jour passée, la
+suivante — dans la même session, ce qui est la règle pour une application qu'on
+ne ferme jamais — n'était plus jamais rechargée toute seule, seulement signalée
+par un bandeau.
+
+Vérifié en simulant deux versions successives servies par le serveur :
+
+```
+1. après le premier chargement : worker actif, page contrôlée
+2. version 2099 servie          : rechargement, marque = 2099-01-01
+3. DEUXIÈME version servie      : rechargement, marque = 2099-06-06
+   bandeau : affiché seulement ensuite
+```
+
+Les en-têtes, eux, étaient déjà justes — `sw.js` en `max-age=0, must-revalidate`,
+la page en `no-store`. Le défaut n'était pas dans le cache mais dans le moment où
+l'on regarde.
+
 ## Comment un bloc de montage est traité, et ce qui n'allait pas
 
 Remarque de l'utilisateur : « ce n'est pas un problème de cache ou de mémoire,

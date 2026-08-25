@@ -657,10 +657,13 @@ main {
   display: block;
   background: #000;
   object-fit: contain;
-  /* Au-dessus du lecteur du rendu : celui-ci doit rester à sa taille réelle pour
-     que le navigateur le décode à pleine vitesse, mais il n'a pas à être vu. */
+  /* Au-dessus du lecteur du rendu — qui doit rester à sa taille réelle pour que
+     le navigateur le décode à pleine vitesse, mais n'a pas à être vu — et
+     au-dessus du lecteur vivant, dont elle couvre l'image le temps d'une coupe.
+     L'écran vide et le bandeau de préparation restent devant, à l'étage 3 comme
+     elle mais plus loin dans le document. */
   position: relative;
-  z-index: 2;
+  z-index: 3;
 }
 /* Le lecteur qui fabrique l'aperçu, lui, se montre : il occupe le moniteur le
    temps de la fabrication. Un navigateur ralentit le rendu d'une vidéo qu'on ne
@@ -715,9 +718,11 @@ main {
      en dessous de l'écran vide et du bandeau de préparation, qui restent à 3. */
   z-index: 2;
 }
-/* La toile passe dessous quand le lecteur occupe le moniteur. Elle n'est pas
-   masquée : la masquer ferait clignoter au retour, et elle garde son contenu
-   prêt pour l'instant où elle reprendra la main. */
+/* La toile passe dessous quand le lecteur est à l'heure, et repasse au-dessus
+   pour couvrir une coupe. Elle n'est jamais masquée : la masquer ferait
+   clignoter au retour, et elle garde son contenu prêt. Le lecteur, lui, garde
+   sa taille dans les deux cas — une vidéo qu'on masque est une vidéo que le
+   navigateur cesse de servir en priorité. */
 .moniteur.derriere { z-index: 1; }
 .bandeau-version {
   position: fixed;
@@ -1580,7 +1585,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 11:29";
+const VERSION_PAGE = "2026-08-25 12:01";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3226,6 +3231,21 @@ function creerLecteur(nom) {
     majTransport();
     arreterSon();
   });
+
+  /* Compter ce que l'écran reçoit vraiment.
+
+     « requestVideoFrameCallback » ne se déclenche que lorsque ce lecteur
+     présente une image. En n'écoutant que celui qui occupe le moniteur, on
+     compte exactement ce que l'œil voit — ni les images produites en coulisse
+     par les lecteurs qui se préparent, ni les tours de boucle où rien n'a
+     changé. C'est de cette mesure, et d'elle seule, que dépend l'allure. */
+  if (typeof video.requestVideoFrameCallback === "function") {
+    const battre = () => {
+      if (video.classList.contains("scene") && lecture.demande) noterImage();
+      video.requestVideoFrameCallback(battre);
+    };
+    video.requestVideoFrameCallback(battre);
+  }
   return video;
 }
 
@@ -3281,6 +3301,28 @@ oublierApercus().catch(() => {});
    téléphone n'y laisse pas sa mémoire : trois dixièmes de seconde tiennent en
    une poignée d'images, et l'on n'en garde que pour le plan courant et les deux
    suivants. */
+/* La réserve d'images décodées d'avance.
+
+   Elle couvrait trois dixièmes de seconde au début de chaque plan : de quoi
+   masquer une bascule qui se passe bien, pas de quoi masquer un lecteur qui
+   démarre à froid — et un démarrage à froid se compte en centaines de
+   millisecondes, parfois plus d'une seconde.
+
+   Elle couvre maintenant une seconde et quart, ce qui dépasse tout ce qu'on a
+   mesuré. Non pas image par image — ce serait trente images par plan et
+   plusieurs dizaines de mégaoctets — mais à pas régulier : seize images étalées
+   sur la plage, soit une tous les huit centièmes. Une coupe couverte à treize
+   images par seconde pendant une demi-seconde se lit comme du mouvement ; un
+   arrêt sur image se voit toujours.
+
+   Ce qui rend cela possible : recopier une image déjà décodée est gratuit.
+   Mesuré sur la même toile — dessiner la vidéo coûte 0,40 ms sans bridage,
+   1,80 ms à ×4, 4,20 ms à ×8 ; dessiner une image décodée reste sous la
+   résolution du chronomètre dans les trois cas. La réserve ne coûte donc que sa
+   mémoire, et rien à l'affichage.
+
+   La mémoire, justement : seize images de 512 points sur deux plans font une
+   vingtaine de mégaoctets, contre quarante-cinq à pleine cadence en 640. */
 const AVANCE_IMAGES = 0.34;
 const PLANS_EN_MEMOIRE = 2;
 const LARGE_MEMOIRE = 640;
@@ -3367,10 +3409,16 @@ async function amorcerImages(plan) {
   const entree = entreeDe(plan);
   const id = (moteur.numero += 1);
   moteur.enCours.set(id, { plan: plan.id, entree });
+  const fin = Math.min(sortieDe(plan), entree + AVANCE_IMAGES);
   fil.postMessage({
-    id, blob: garde, entree,
-    fin: Math.min(sortieDe(plan), entree + AVANCE_IMAGES),
+    id, blob: garde, entree, fin,
     large: LARGE_MEMOIRE, combien: IMAGES_PAR_PLAN,
+    // La carte du fichier se garde d'une demande à l'autre : un montage revient
+    // sans cesse au même rush, et la relire à chaque fois est du travail refait.
+    cle: adresse,
+    // Un pas régulier, pour que la réserve couvre toute la plage et pas
+    // seulement son début.
+    pas: Math.max(0, (fin - entree) / Math.max(1, IMAGES_PAR_PLAN)),
   });
 }
 
@@ -3404,6 +3452,37 @@ function aJour(video, plan) {
   if (!video || !plan || video.readyState < 2 || !video.videoWidth) return false;
   if (video.dataset.plan !== plan.id) return false;
   return Math.abs(video.currentTime - sourceMaintenant(plan)) <= 0.15;
+}
+
+/* Le lecteur délivre-t-il encore des images ?
+
+   « À jour » ne suffisait pas à décider quand couvrir. Un lecteur qui joue
+   normalement dérive de quelques centièmes derrière l'horloge du montage —
+   c'est normal, l'horloge n'attend personne — et cette dérive dépassait le
+   seuil dès que la machine peinait. Tant que la réserve était courte, elle
+   s'épuisait et le lecteur reprenait la main de lui-même. En l'approfondissant,
+   elle répondait pour tout instant : on montrait alors sa cadence à elle, treize
+   images par seconde, alors que le lecteur en produisait vingt-quatre. Mesuré :
+   zéro image du lecteur, l'aperçu entier servi par la réserve.
+
+   La bonne question n'est donc pas « est-il à l'heure » mais « avance-t-il ».
+   Un lecteur qui progresse garde la main, même en retard : ses images sont plus
+   fraîches que celles de la réserve. On ne couvre que lorsqu'il est réellement
+   immobile — démarrage, déplacement, décodeur en attente. */
+const ARRET_LECTEUR = 90;   // millisecondes sans nouvelle image = immobile
+const avancee = { element: null, temps: -1, quand: 0 };
+
+function immobile(video) {
+  if (!video) return true;
+  if (video.paused || video.seeking || video.readyState < 2) return true;
+  const maintenant = performance.now();
+  if (avancee.element !== video || video.currentTime !== avancee.temps) {
+    avancee.element = video;
+    avancee.temps = video.currentTime;
+    avancee.quand = maintenant;
+    return false;
+  }
+  return maintenant - avancee.quand > ARRET_LECTEUR;
 }
 
 /* L'image décodée d'avance qui correspond à cet instant du fichier, s'il y en a
@@ -3582,7 +3661,7 @@ function vignetteDe(plan) {
      boucle d'images rapide prend le relais ;
    — sinon un battement lent de quatre par seconde fait vivre le chien de garde
      et la convergence des déplacements, sans rien repeindre. */
-const apercu = { boucle: null, veille: null, jusqua: 0, marque: 0, peinte: -1, toile: null, source: null, temps: -1, large: 0, montre: null };
+const apercu = { boucle: null, veille: null, jusqua: 0, marque: 0, peinte: -1, toile: null, source: null, temps: -1, large: 0, montre: null, couvre: null };
 
 // Y a-t-il seulement quelqu'un pour voir l'image ?
 function moniteurUtile() {
@@ -3891,7 +3970,8 @@ function dessinerMoniteur() {
        la musique : l'horloge du montage n'attend personne, seul l'affichage
        patiente. */
     source = lecture.bascule.sortant;
-  } else if (plan && lecture.demande && !aJour(video, plan) && imageDavance(plan, sourceMaintenant(plan))) {
+  } else if (plan && lecture.demande && !aJour(video, plan) && immobile(video)
+             && imageDavance(plan, sourceMaintenant(plan))) {
     /* Le lecteur n'est pas encore arrivé sur cet instant — il démarre, il
        cherche son image-clé, il attend son décodeur. On a justement ces
        images-là en mémoire : on les montre, et le lecteur reprendra la main dès
@@ -4008,7 +4088,22 @@ function dessinerMoniteur() {
      Pendant un rendu, non : c'est la toile qu'on enregistre, et une toile qu'on
      ne peint pas ne produit aucune image. */
   const direct = Boolean(lu) && !rendu.encours && !rendu.parImage;
-  montrerLecteur(direct ? lu : null);
+
+  /* Le lecteur reste à sa taille même quand la toile le couvre.
+
+     C'était un piège que la version précédente avait posé : montrer une image
+     décodée masquait le lecteur — un point sur un point, opacité un centième —
+     et un navigateur déprioritise une vidéo qu'on ne voit pas. Le lecteur ne
+     rattrapait donc jamais son retard, la réserve restait seule à l'écran, et
+     l'aperçu tombait à une image par seconde. Tant que la réserve était courte
+     elle s'épuisait vite et le lecteur reprenait la main ; en l'approfondissant,
+     la boucle ne se refermait plus du tout.
+
+     Le lecteur vivant garde donc toujours sa place. Ce qui change, c'est
+     seulement l'étage : la toile passe au-dessus le temps de couvrir, et
+     repasse dessous dès que le lecteur est à l'heure. */
+  const vivant = lu || (rendu.encours || rendu.parImage ? null : elementActif());
+  montrerLecteur(vivant, !direct);
   if (direct) {
     // La copie de secours reste prise, à sa cadence : c'est elle qui couvre la
     // coupe suivante, et elle coûte deux recopies par seconde au lieu de vingt-quatre.
@@ -4073,11 +4168,15 @@ function dessinerMoniteur() {
    l'autre montreraient le mauvais plan pendant une bascule. On ne touche au
    document que lorsque la marque change vraiment, sinon on redéclencherait un
    calcul de style à chaque image, ce qu'on cherche précisément à éviter. */
-function montrerLecteur(lu) {
-  if (apercu.montre === lu) return;
-  apercu.montre = lu;
-  for (const autre of vivier()) autre.classList.toggle("scene", autre === lu);
-  $("moniteur")?.classList.toggle("derriere", Boolean(lu));
+function montrerLecteur(lu, couvre) {
+  if (apercu.montre !== lu) {
+    apercu.montre = lu;
+    for (const autre of vivier()) autre.classList.toggle("scene", autre === lu);
+  }
+  if (apercu.couvre !== couvre) {
+    apercu.couvre = couvre;
+    $("moniteur")?.classList.toggle("derriere", Boolean(lu) && !couvre);
+  }
 }
 
 /* La copie de secours : la dernière image réellement vue, en réduction.
@@ -4909,10 +5008,70 @@ const AVANCE_BASCULE = 0.35;
    que le suivant présente sa première image, pas davantage. */
 const RELAIS_SORTANT = 400;
 
+/* --- l'allure : ce que l'appareil peut réellement tenir ----------------
+
+   Tout ce qui suit part d'un constat que le banc d'essai a fini par établir :
+   la même application rend vingt-quatre images par seconde sans un seul arrêt
+   sur un processeur à peine bridé, et se met à hoqueter quand on le bride huit
+   fois. Le montage ne change pas ; la machine, si.
+
+   Or l'application demandait toujours la même chose, quelle que soit la
+   machine : trois lecteurs en vol au moment d'une coupe — le sortant qui couvre
+   le relais, le courant, et le suivant qu'on amorce — plus un fil de décodage,
+   plus une copie de secours deux fois par seconde. Sur un appareil qui suit,
+   c'est ce qui rend la coupe invisible. Sur un appareil qui ne suit pas, c'est
+   exactement ce qui l'empêche de suivre — et sur un iPhone, qui borne le nombre
+   de vidéos décodées en même temps, cela peut être refusé net.
+
+   Elle regarde donc ce qu'elle obtient, et se met à sa portée : moins de
+   lecteurs en vol, pas de relais, pas d'amorce. Une coupe un peu plus sèche,
+   mais une image qui avance — ce qui est toujours préférable. */
+const allure = {
+  aise: true,          // vrai tant que l'appareil suit
+  vues: 0,             // images présentées depuis le dernier bilan
+  trous: 0,            // intervalles trop longs depuis le dernier bilan
+  bilan: 0,            // date du dernier bilan
+  derniere: 0,         // date de la dernière image présentée
+  bascules: 0,         // nombre de fois où l'on a changé d'allure
+};
+
+const TROU_ALLURE = 120;      // ms entre deux images : au-delà, ça se voit
+const FENETRE_ALLURE = 2000;  // on juge sur deux secondes, pas sur un accident
+
+/* Une image vient d'être présentée. C'est le seul signal honnête : ce que l'œil
+   reçoit, pas ce que le code croit produire. */
+function noterImage() {
+  const maintenant = performance.now();
+  if (allure.derniere && maintenant - allure.derniere > TROU_ALLURE) allure.trous += 1;
+  allure.derniere = maintenant;
+  allure.vues += 1;
+  if (!allure.bilan) { allure.bilan = maintenant; return; }
+  if (maintenant - allure.bilan < FENETRE_ALLURE) return;
+
+  /* Le jugement : sur deux secondes, plus de trois accrocs veut dire que
+     l'appareil ne tient pas l'allure. Moins d'un, qu'il la tient largement — et
+     l'on peut lui rendre le confort. L'écart entre les deux seuils évite de
+     basculer sans arrêt autour d'une valeur. */
+  const aiseAvant = allure.aise;
+  if (allure.trous > 3) allure.aise = false;
+  else if (allure.trous <= 1) allure.aise = true;
+  if (allure.aise !== aiseAvant) allure.bascules += 1;
+  allure.vues = 0;
+  allure.trous = 0;
+  allure.bilan = maintenant;
+}
+
+// L'interrupteur du banc d'essai, pour mesurer les deux allures à volonté.
+const alAise = () => (window.__economie ? false : window.__aise ? true : allure.aise);
+
 /* Lancer le plan suivant juste avant qu'on en ait besoin, en sourdine : c'est
    la piste son du montage qu'on entend, jamais celle des rushs. */
 function amorcerSuivant(reste) {
   if (!lecture.demande) return;
+  // Amorcer, c'est faire jouer une deuxième vidéo pendant que la première joue.
+  // C'est ce qui rend la coupe invisible quand l'appareil suit, et ce qui
+  // l'empêche de suivre quand il ne suit pas.
+  if (!alAise()) return;
   const attente = elementAttente();
   if (!attente || attente.dataset.amorce === "oui" || !attente.dataset.plan) return;
   /* On lance le lecteur d'exactement ce qu'on l'a garé en avance — pas d'une
@@ -6027,11 +6186,14 @@ function poserPlan(index, decalage = 0, enchainer = false) {
        bascule est survenue entre-temps : un lecteur qu'on laisse courir finit
        par atteindre la fin de son fichier et fait avancer le montage tout
        seul. */
+    /* Le relais coûte un lecteur en vol de plus. Sur un appareil qui peine, ou
+       qui refuse la troisième vidéo, il ne couvre rien et prend la place : on
+       arrête le sortant tout de suite. */
     setTimeout(() => {
       if (sortant === elementActif()) return;
       sortant.pause();
       if (lecture.bascule?.sortant === sortant) lecture.bascule = null;
-    }, RELAIS_SORTANT);
+    }, alAise() ? RELAIS_SORTANT : 0);
     lecture.actif = pret;
     video = elementActif();
     /* On note l'instant de la bascule et la position de départ du nouveau
@@ -9040,6 +9202,16 @@ $("btn-setting").addEventListener("click", () => {
        lecteur qui tienne ce fichier, placé sur la borne d'entrée, déjà lancé au
        moment de la coupe. Ces quatre lignes disent si c'est ce qui se passe —
        et, quand ce n'est pas le cas, laquelle des trois conditions manque. */
+    "Allure :",
+    ...(() => {
+      const l = [alAise()
+        ? "  confortable — relais et amorce actifs, la coupe est couverte"
+        : "  économie — un seul lecteur en vol : l'appareil ne tenait pas l'allure"];
+      if (window.__economie || window.__aise) l.push("  (forcée par le banc d'essai)");
+      l.push(`  changements d'allure depuis l'ouverture : ${allure.bascules}`);
+      return l;
+    })(),
+    "",
     "Blocs et lecteurs :",
     ...(() => {
       const b = bascules;
