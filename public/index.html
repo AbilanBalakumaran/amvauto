@@ -687,6 +687,38 @@ main {
   top: 0;
   left: 0;
 }
+
+/* Sauf celui qu'on regarde.
+
+   Recopier chaque image de la vidéo dans la toile coûte très cher : mesuré à
+   5,3 ms par image sur une machine de bureau, 33,5 ms sur un processeur bridé
+   huit fois — 21 % à 43 % de tout le temps de lecture, pour une toile de 380
+   points de large. Une vidéo dessinée dans une toile doit redescendre du
+   processeur graphique à chaque image ; un lecteur affiché tel quel, non : le
+   navigateur le compose lui-même, sans repasser par nous.
+
+   Le lecteur qui tient l'image se montre donc directement, à la place de la
+   toile, dès qu'il est à jour. La toile reprend la main pour tout ce qu'elle
+   seule sait faire — une image décodée d'avance, une image tenue pendant une
+   coupe, une imagette pendant qu'on fait défiler, et le rendu. */
+.lecteur-cache.scene {
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 1;
+  object-fit: contain;
+  background: #000;
+  /* Le même étage que la toile qu'il remplace : au-dessus du lecteur de rendu,
+     en dessous de l'écran vide et du bandeau de préparation, qui restent à 3. */
+  z-index: 2;
+}
+/* La toile passe dessous quand le lecteur occupe le moniteur. Elle n'est pas
+   masquée : la masquer ferait clignoter au retour, et elle garde son contenu
+   prêt pour l'instant où elle reprendra la main. */
+.moniteur.derriere { z-index: 1; }
 .bandeau-version {
   position: fixed;
   top: 0;
@@ -1518,7 +1550,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 03:29";
+const VERSION_PAGE = "2026-08-25 04:06";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3377,7 +3409,7 @@ function vignetteDe(plan) {
      boucle d'images rapide prend le relais ;
    — sinon un battement lent de quatre par seconde fait vivre le chien de garde
      et la convergence des déplacements, sans rien repeindre. */
-const apercu = { boucle: null, veille: null, jusqua: 0, marque: 0, peinte: -1, toile: null, source: null, temps: -1, large: 0 };
+const apercu = { boucle: null, veille: null, jusqua: 0, marque: 0, peinte: -1, toile: null, source: null, temps: -1, large: 0, montre: null };
 
 // Y a-t-il seulement quelqu'un pour voir l'image ?
 function moniteurUtile() {
@@ -3749,6 +3781,30 @@ function dessinerMoniteur() {
   const instant = !lu ? -1
     : lecture.demande ? Math.round(lu.currentTime * 30) / 30
     : lu.currentTime;
+
+  /* Quand la source est un lecteur, on le montre au lieu de le recopier.
+
+     C'est le seul cas où la toile ne servait à rien : elle recevait l'image du
+     lecteur pour la remontrer telle quelle, au format près — travail que le
+     navigateur fait déjà, et mieux, puisqu'il n'a pas à faire redescendre
+     l'image du processeur graphique. Le format est tenu par « object-fit », le
+     letterbox par le fond noir : le résultat à l'écran est le même.
+
+     Pendant un rendu, non : c'est la toile qu'on enregistre, et une toile qu'on
+     ne peint pas ne produit aucune image. */
+  const direct = Boolean(lu) && !rendu.encours && !rendu.parImage;
+  montrerLecteur(direct ? lu : null);
+  if (direct) {
+    // La copie de secours reste prise, à sa cadence : c'est elle qui couvre la
+    // coupe suivante, et elle coûte deux recopies par seconde au lieu de vingt-quatre.
+    copierDerniere(lu, largeur, hauteur);
+    apercu.toile = toile;
+    apercu.source = source;
+    apercu.temps = instant;
+    apercu.large = toile.width;
+    apercu.peinte = apercu.marque;
+    return;
+  }
   // La toile elle-même fait partie de la comparaison : revenir dans la vue du
   // projet en reconstruit une, vierge, et croire l'avoir déjà peinte la
   // laissait noire.
@@ -3793,17 +3849,43 @@ function dessinerMoniteur() {
   // En réduction, et deux fois par seconde pendant la lecture : ce filet ne sert
   // qu'au moment où le lecteur décroche, et la copie coûte une image de plus à
   // peindre. À l'arrêt on la rafraîchit plus souvent, le travail est nul.
+  copierDerniere(source === video ? video : null, largeur, hauteur);
+}
+
+/* Montrer ce lecteur-là, et lui seul, à la place de la toile — ou aucun.
+
+   Un seul élément à la fois porte la marque : deux lecteurs affichés l'un sur
+   l'autre montreraient le mauvais plan pendant une bascule. On ne touche au
+   document que lorsque la marque change vraiment, sinon on redéclencherait un
+   calcul de style à chaque image, ce qu'on cherche précisément à éviter. */
+function montrerLecteur(lu) {
+  if (apercu.montre === lu) return;
+  apercu.montre = lu;
+  for (const autre of vivier()) autre.classList.toggle("scene", autre === lu);
+  $("moniteur")?.classList.toggle("derriere", Boolean(lu));
+}
+
+/* La copie de secours : la dernière image réellement vue, en réduction.
+
+   Elle sert quand le lecteur décroche — pendant une coupe, pendant un
+   déplacement — et c'est la seule raison de faire encore redescendre une image
+   du processeur graphique quand le lecteur s'affiche tout seul. Deux fois par
+   seconde en lecture suffit : la tenue ne dure de toute façon que sept dixièmes
+   de seconde. */
+function copierDerniere(video, largeur, hauteur) {
+  if (!video || !largeur || !hauteur) return;
   const maintenant = performance.now();
-  if (source === video && maintenant - derniereImage.quand > (lecture.demande ? 500 : 100)) {
-    derniereImage.quand = maintenant;
-    const largeurCopie = 320;
-    const hauteurCopie = Math.max(1, Math.round((largeurCopie * hauteur) / largeur));
-    if (derniereImage.toile.width !== largeurCopie || derniereImage.toile.height !== hauteurCopie) {
-      derniereImage.toile.width = largeurCopie;
-      derniereImage.toile.height = hauteurCopie;
-    }
-    derniereImage.toile.getContext("2d").drawImage(video, 0, 0, largeurCopie, hauteurCopie);
+  if (maintenant - derniereImage.quand <= (lecture.demande ? 500 : 100)) return;
+  derniereImage.quand = maintenant;
+  const largeurCopie = 320;
+  const hauteurCopie = Math.max(1, Math.round((largeurCopie * hauteur) / largeur));
+  if (derniereImage.toile.width !== largeurCopie || derniereImage.toile.height !== hauteurCopie) {
+    derniereImage.toile.width = largeurCopie;
+    derniereImage.toile.height = hauteurCopie;
   }
+  try {
+    derniereImage.toile.getContext("2d").drawImage(video, 0, 0, largeurCopie, hauteurCopie);
+  } catch { /* image pas encore lisible : la prochaine fois */ }
 }
 
 // Combien de temps une image peut survivre à son plan, le temps que le suivant

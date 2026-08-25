@@ -2705,6 +2705,69 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Le moniteur recopiait chaque image pour rien
+
+Trois pistes venaient d'être écartées l'une après l'autre — caler les coupes sur
+les images-clés, assembler un flux continu, élargir le décodage d'avance. Toutes
+cherchaient au même endroit : le décodage. Restait à mesurer l'autre moitié du
+travail, celle qui vient après — l'affichage.
+
+Le moniteur est une toile. À chaque image, la vidéo y était recopiée
+(`ctx.drawImage(video, …)`) pour être remontrée telle quelle. Chronométré
+pendant la lecture, sur une toile de 380 points de large :
+
+```
+                    médiane par image   part du temps de lecture
+processeur ×1            5,3 ms                 20,7 %
+processeur ×4           17,7 ms                 37,8 %
+processeur ×8           33,5 ms                 43,0 %
+```
+
+**Un tiers à la moitié du temps de lecture partait dans une recopie qui
+n'ajoutait rien.** Et la part grandit à mesure que l'appareil ralentit — donc
+elle est plus lourde sur un téléphone que sur la machine qui l'a mesurée.
+
+La raison est matérielle : une vidéo est décodée par le processeur graphique et
+composée par lui. La dessiner dans une toile oblige l'image à en redescendre, à
+chaque image, pour un résultat que le navigateur savait produire seul. La toile
+ne servait qu'à recadrer — ce que `object-fit: contain` et un fond noir font sans
+rien coûter.
+
+### Le lecteur se montre, la toile garde ce qu'elle seule sait faire
+
+Quand la source est un lecteur, il occupe désormais le moniteur directement. La
+toile reprend la main pour tout le reste, où elle est irremplaçable : une image
+décodée d'avance, une image tenue pendant une coupe, une imagette pendant qu'on
+fait défiler au doigt, et le rendu — une toile qu'on ne peint pas ne produit
+aucun fichier, donc le rendu peint toujours.
+
+Mesuré aux images réellement présentées à l'écran (`requestVideoFrameCallback`,
+donc ce que l'œil reçoit), douze coupes de 1,1 s, processeur ×8, trois essais de
+chaque :
+
+```
+                          toile                    lecteur direct
+images par seconde   15,4 · 14,3 · 11,8          17,5 · 18,0 · 19,2
+trous > 60 ms         123 ·  118 ·  102            71 ·   72 ·   79
+dont > 100 ms          32 ·   39 ·   75            15 ·   20 ·   15
+```
+
+Les intervalles ne se recouvrent pas : le pire essai de la nouvelle version bat
+le meilleur de l'ancienne, sur les trois mesures. C'est la première fois de cette
+série qu'un écart survient au bruit — les tentatives précédentes tenaient dans la
+dispersion d'un même réglage.
+
+Recopies sur la toile pendant une lecture : **221 → 6**.
+
+### Ce que la mesure a coûté en tests
+
+`depart.mjs` surveillait la lecture en interceptant `drawImage` sur la toile.
+Cette sonde ne voit plus rien, et concluait « aucune image à l'écran » alors que
+l'image était bien là — le test était devenu aveugle avant d'être faux. Il écoute
+maintenant aussi les images présentées par le lecteur montré, ce qui est la même
+chose vue de l'écran : première image 132 ms après l'appui, 198 images vives, un
+seul trou.
+
 ## Caler les coupes sur les images-clés : proposé, mesuré, abandonné
 
 L'idée était bonne sur le papier, et c'est la première que proposent les manuels :
