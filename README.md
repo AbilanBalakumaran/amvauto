@@ -2705,6 +2705,79 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Le cache de segments : l'aperçu fluide, mais par blocs et en tâche de fond
+
+Ce dépôt savait déjà ce qu'il fallait faire, et depuis longtemps. Le proxy unique
+avait donné **zéro** interruption là où la lecture des rushs en compte quarante à
+quatre-vingt-onze. Il a été retiré pour une raison juste — une à deux minutes
+d'attente, à refaire à chaque modification — et cette raison ne visait pas la
+technique mais la politique : tout fabriquer, d'un coup, sur un bouton.
+
+Aucun banc de montage ne fait cela. Tous tiennent un cache de rendu qui travaille
+en tâche de fond, par morceaux, et qui ne refait que ce qui a changé : la barre
+verte de Premiere, le *background rendering* de Final Cut, le *smart cache* de
+DaVinci. **Ici le morceau est le bloc.**
+
+### Ce qu'est un segment
+
+Un petit MP4 qui contient exactement un bloc et qui **commence à zéro**. Le lire
+ne demande plus aucun déplacement : le lecteur ouvre un fichier de cent
+cinquante kilo-octets et le joue du début à la fin. Ni gros fichier à parcourir,
+ni image-clé à retrouver, ni discontinuité à encaisser.
+
+```
+un bloc de 1,5 s  →  169 Ko · 37 images · 640×360 · fabriqué en 210 ms
+```
+
+Sept fois plus vite que le temps réel, sur le fil de la fabrique, sans jamais
+toucher à la boucle d'affichage.
+
+### L'invalidation la plus simple qui soit
+
+La clé d'un segment décrit ce qu'il contient : quel rush, quelles bornes, quelle
+définition. **Rogner un plan change la clé** — l'ancien segment n'est plus trouvé,
+le nouveau se fabrique. Rien à surveiller, rien à invalider à la main, et deux
+blocs identiques partagent le même segment sans qu'on ait à le prévoir. Mesuré :
+cent vingt blocs tirés de six rushs n'ont demandé que **dix-huit segments**.
+
+### Ce que ça donne
+
+Comparaison appariée, cent vingt blocs, processeur bridé huit fois, trois essais
+de chaque, dans la même session :
+
+```
+                     sans cache            avec cache
+images par seconde  17,4 · 19,2 · 19,5   23,3 · 23,2 · 22,8
+trous > 100 ms        19 ·  20 ·  17        2 ·   1 ·   3
+```
+
+**Vingt-trois images par seconde sur vingt-quatre, et les trous divisés par
+sept.** C'est la lecture d'un fichier, parce que c'en est une.
+
+Le cache complet du montage : cent vingt blocs prêts, **2,2 Mo**, une trentaine de
+secondes de travail invisible — et il se retrouve tel quel à la visite suivante.
+
+### Les garde-fous
+
+- **La fabrique ne travaille jamais pendant la lecture.** Elle avance sur le
+  battement de repos, quatre fois par seconde, et se tait dès qu'on regarde,
+  dès qu'un doigt touche la piste, dès qu'un rendu commence.
+- **Le rendu n'utilise jamais les segments.** Un segment fait 640 points : c'est
+  assez pour regarder, pas pour exporter. Vérifié en relisant le fichier
+  produit : 960 × 540, celle du rush.
+- **La réserve d'images décodées se tait sur un bloc fabriqué** — il n'y a plus
+  de déplacement à couvrir.
+- Une barre au-dessus de la piste montre ce qui est prêt, en vert. Une seule
+  toile pour tout le montage, redessinée quand le cache change et jamais pendant
+  la lecture.
+
+### Ce que le partage a coûté en rangement
+
+Le multiplexeur MP4 vivait dans la page, le démultiplexeur dans le fil de
+décodage. La fabrique a besoin des deux. Ils sont sortis dans `mp4.js` et
+`demux.js`, importés par la page comme par les deux fils — un multiplexeur
+recopié se corrige une fois sur trois.
+
 ## Le défaut était à nous : on tirait le lecteur en arrière pendant qu'il jouait
 
 Après avoir éliminé le décodeur, le réseau, le vivier et le fil de décodage, il

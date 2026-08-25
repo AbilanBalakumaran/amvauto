@@ -1039,6 +1039,12 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   touch-action: pan-x;
 }
 .ligne { position: relative; min-width: 100%; }
+/* La barre du cache : vert là où le bloc est déjà fabriqué.
+
+   C'est la barre rouge/verte de n'importe quel banc de montage, et elle sert à
+   la même chose : savoir d'un coup d'œil ce qui se lira sans effort. Une seule
+   toile, pas un élément par bloc — la leçon de la piste gelée. */
+.barre-cache { display: block; width: 100%; height: 3px; margin-bottom: 2px; border-radius: 2px; }
 /* La piste gelée : une seule image à la place de cent vingt blocs.
 
    Mesuré sur cent vingt plans, processeur bridé huit fois : la piste retirée du
@@ -1585,7 +1591,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 14:06";
+const VERSION_PAGE = "2026-08-25 14:58";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3147,6 +3153,8 @@ function editeur(projet) {
   bloc.append(ecran, transport(), pisteComplete(projet));
   lecture.actif = 0;
   reprendreMusique(projet).catch(() => {});
+  // Ce qui a déjà été fabriqué est retrouvé ; le reste se fera en tâche de fond.
+  reprendreSegments(projet).catch(() => {});
   reveillerMoniteur(1500);
   // Le battement de repos ne se met en route qu'une fois, et ne s'arrête plus :
   // c'est lui qui repère le retour dans la vue du projet.
@@ -3385,7 +3393,7 @@ function moteurPossible() {
 function filDecodage() {
   if (moteur.fil || !moteurPossible()) return moteur.fil;
   try {
-    moteur.fil = new Worker("decodeur.js");
+    moteur.fil = new Worker("decodeur.js", { type: "module" });
     moteur.fil.onmessage = (evt) => {
       const { id, images, echec } = evt.data || {};
       const attente = moteur.enCours.get(id);
@@ -3423,6 +3431,9 @@ function filDecodage() {
    solde par « on n'aura pas d'avance pour celui-là », jamais par une erreur. */
 async function amorcerImages(plan) {
   if (!plan || !moteurPossible()) return;
+  /* Inutile sur un bloc déjà fabriqué : il n'y a plus de déplacement à couvrir,
+     et les instants de la réserve seraient ceux du rush, pas ceux du segment. */
+  if (surSegment(plan)) return;
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return;
   if (moteur.pretes.has(plan.id) || moteur.refuses.has(plan.id)) return;
@@ -3470,9 +3481,9 @@ function rangerMemoire() {
 /* Où en est le montage, ramené au temps du fichier de ce plan. */
 function sourceMaintenant(plan) {
   const projet = projetActif();
-  if (!projet) return entreeDe(plan);
+  if (!projet) return entreeLue(plan);
   const debut = offsets(projet.plans)[lecture.index] || 0;
-  return entreeDe(plan) + Math.max(0, lecture.position - debut);
+  return entreeLue(plan) + Math.max(0, lecture.position - debut);
 }
 
 /* Le lecteur montre-t-il déjà le bon instant du bon plan ? */
@@ -3549,8 +3560,8 @@ const COUVERTURE_MINIMALE = 2;
 
 function couvre(video, plan) {
   if (!video || !plan) return false;
-  const debut = entreeDe(plan);
-  const fin = Math.min(sortieDe(plan), debut + COUVERTURE_MINIMALE);
+  const debut = entreeLue(plan);
+  const fin = Math.min(sortieLue(plan), debut + COUVERTURE_MINIMALE);
   try {
     for (let i = 0; i < video.buffered.length; i += 1) {
       if (video.buffered.start(i) <= debut + 0.05 && video.buffered.end(i) >= fin - 0.05) return true;
@@ -3584,6 +3595,9 @@ function compterJouants() {
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
   fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0 },
   bascules: { ...bascules }, vues: { ...vues }, arrets: { ...arrets },
+  segments: { prets: (projetActif()?.plans || []).filter(surSegment).length,
+    total: projetActif()?.plans.length || 0, faits: fabrique.faits, rates: fabrique.rates,
+    octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
   copie: `${derniereImage.toile.width}x${derniereImage.toile.height}`,
   moniteur: `${$("moniteur")?.width || 0}x${$("moniteur")?.height || 0}`,
   enCours: [...moteur.enCours.values()].map((x) => x.plan),
@@ -3599,6 +3613,217 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
 
 /* Préparer d'avance le plan courant et les suivants. Appelé au même moment que
    la préparation des lecteurs, et sans jamais rien attendre. */
+/* --- le cache de segments ---------------------------------------------
+
+   Un bloc de montage est un fichier et deux bornes. Le lire coûte un
+   déplacement dans un gros fichier, puis une seconde de lecture, puis un autre
+   déplacement ailleurs — et chaque coupe est une discontinuité que le décodeur
+   encaisse comme il peut. Mesuré dans ce dépôt : quarante à quatre-vingt-onze
+   interruptions par lecture des rushs, contre **zéro** quand le montage tient
+   dans un seul fichier.
+
+   L'outil avait su fabriquer ce fichier unique, et il a été retiré pour une
+   bonne raison : une à deux minutes d'attente, à refaire à chaque modification.
+   Un aperçu qu'il faut fabriquer avant de regarder n'est plus un aperçu.
+
+   Ce qui était faux n'était pas la technique mais la politique. Aucun banc de
+   montage ne fabrique tout d'un coup : tous tiennent un cache de rendu qui
+   travaille en tâche de fond, par morceaux, et qui ne refait que ce qui a
+   changé. C'est la barre verte au-dessus de la timeline de Premiere, le
+   « background rendering » de Final Cut, le « smart cache » de DaVinci.
+
+   Ici le morceau est le bloc. Mesuré : un bloc d'une seconde et demie devient un
+   MP4 de 169 Ko en 210 ms — sept fois plus vite que le temps réel. Cent vingt
+   blocs font donc une vingtaine de mégaoctets et une trentaine de secondes de
+   travail invisible. Et rogner un plan ne refait qu'un segment, pas le film.
+
+   Le segment commence à zéro : le lire ne demande plus aucun déplacement. */
+
+const LARGE_SEGMENT = 640;         // la définition d'un aperçu, pas d'un rendu
+const DEBIT_SEGMENT = 900_000;
+const SEGMENTS_GARDES = 400;       // de quoi tenir deux montages complets
+
+const segments = new Map();        // clé → { url, taille }
+const segmentsRates = new Set();
+const fabrique = { fil: null, encours: null, faits: 0, rates: 0, octets: 0, duree: 0, possible: null };
+
+/* La clé d'un segment décrit exactement ce qu'il contient : quel rush, quelles
+   bornes, quelle définition. Changer une borne change la clé — le segment
+   d'avant n'est plus trouvé, et le nouveau se fabrique. C'est l'invalidation la
+   plus simple qui soit, et elle ne peut pas se tromper. */
+function empreinte(texte) {
+  let a = 0x811c9dc5;
+  for (let i = 0; i < texte.length; i += 1) {
+    a ^= texte.charCodeAt(i);
+    a = Math.imul(a, 0x01000193) >>> 0;
+  }
+  return a.toString(36);
+}
+
+function cleSegment(plan) {
+  const adresse = mediaDe(plan);
+  if (!adresse || plan.youtube) return "";
+  return `seg:${empreinte(adresse)}:${entreeDe(plan).toFixed(3)}-${sortieDe(plan).toFixed(3)}:${LARGE_SEGMENT}`;
+}
+
+const segmentDe = (plan) => {
+  if (!plan || rendu.encours || rendu.parImage) return null;
+  if (window.__sansCache) return null;      // interrupteur du banc d'essai
+  const cle = cleSegment(plan);
+  return cle ? segments.get(cle) || null : null;
+};
+
+const surSegment = (plan) => Boolean(segmentDe(plan));
+
+/* Les bornes vues par le lecteur. Sur un segment elles sont zéro et la durée du
+   bloc ; sur le rush, ce sont celles du montage. Tout ce qui place un lecteur
+   passe par ici — et rien d'autre : la pellicule, le rendu et la conduite EDL
+   continuent de parler du fichier d'origine, qui est la vérité. */
+const entreeLue = (plan) => (surSegment(plan) ? 0 : entreeDe(plan));
+const sortieLue = (plan) => (surSegment(plan) ? duree(plan) : sortieDe(plan));
+
+/* Dessiner la barre du cache : un trait par bloc, vert quand il est fabriqué.
+
+   Redessinée seulement quand le cache change ou que la piste est refaite —
+   jamais dans la boucle de lecture. Une seule toile pour tout le montage. */
+function majBarreCache() {
+  const toile = $("barre-cache");
+  const projet = projetActif();
+  if (!toile || !projet?.plans.length) return;
+  const large = Math.max(1, Math.round(xDeSeconde(total(projet))));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const haut = 3;
+  if (toile.width !== Math.round(large * dpr) || toile.height !== Math.round(haut * dpr)) {
+    toile.width = Math.max(1, Math.round(large * dpr));
+    toile.height = Math.max(1, Math.round(haut * dpr));
+  }
+  toile.style.width = `${large}px`;
+  const ctx = toile.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, large, haut);
+  ctx.fillStyle = "rgba(255,255,255,0.10)";
+  ctx.fillRect(0, 0, large, haut);
+  ctx.fillStyle = "var(--vert)";
+  ctx.fillStyle = "#35c24d";
+  const debuts = offsets(projet.plans);
+  for (let i = 0; i < projet.plans.length; i += 1) {
+    if (!surSegment(projet.plans[i])) continue;
+    const x0 = Math.round(xDeSeconde(debuts[i]));
+    const x1 = Math.round(xDeSeconde(debuts[i] + duree(projet.plans[i])));
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), haut);
+  }
+}
+
+function filFabrique() {
+  if (fabrique.fil || fabrique.possible === false) return fabrique.fil;
+  if (typeof Worker !== "function" || typeof VideoEncoder !== "function"
+      || typeof VideoDecoder !== "function" || typeof VideoFrame !== "function") {
+    fabrique.possible = false;
+    return null;
+  }
+  try {
+    fabrique.fil = new Worker("fabrique.js", { type: "module" });
+    fabrique.possible = true;
+    fabrique.fil.onmessage = (evt) => {
+      const { id, mp4, echec, octets, duree: d } = evt.data || {};
+      const attente = fabrique.encours;
+      if (!attente || attente.id !== id) return;
+      fabrique.encours = null;
+      if (echec || !mp4) {
+        fabrique.rates += 1;
+        segmentsRates.add(attente.cle);
+      } else {
+        fabrique.faits += 1;
+        fabrique.octets += octets || mp4.size;
+        fabrique.duree += performance.now() - attente.depart;
+        segments.set(attente.cle, { url: URL.createObjectURL(mp4), taille: mp4.size, duree: d });
+        ecrireBase(attente.cle, mp4).catch(() => {});
+        rangerSegments();
+        majBarreCache();
+      }
+      // Le suivant, mais jamais dans la foulée : on rend la main d'abord.
+      setTimeout(() => fabriquerSuivant(), 0);
+    };
+    fabrique.fil.onerror = () => { fabrique.possible = false; fabrique.fil = null; fabrique.encours = null; };
+  } catch {
+    fabrique.possible = false;
+    fabrique.fil = null;
+  }
+  return fabrique.fil;
+}
+
+/* Ce qui n'est plus au programme s'en va. Sans cette borne, un montage retouché
+   cent fois laisserait cent fois ses segments périmés sur l'appareil. */
+function rangerSegments() {
+  if (segments.size <= SEGMENTS_GARDES) return;
+  const projet = projetActif();
+  const utiles = new Set((projet?.plans || []).map(cleSegment));
+  for (const cle of [...segments.keys()]) {
+    if (segments.size <= SEGMENTS_GARDES) break;
+    if (utiles.has(cle)) continue;
+    URL.revokeObjectURL(segments.get(cle).url);
+    segments.delete(cle);
+    effacerBase(cle).catch(() => {});
+  }
+}
+
+/* Le prochain bloc à fabriquer : celui qu'on va voir le plus tôt.
+
+   On part de la tête de lecture et on avance, en repassant par le début comme
+   le fait la lecture. Ce qui se regarde dans deux secondes vaut mieux que ce qui
+   se regarde dans deux minutes. */
+function prochainAFabriquer() {
+  const projet = projetActif();
+  if (!projet?.plans.length) return null;
+  const n = projet.plans.length;
+  for (let k = 0; k < n; k += 1) {
+    const plan = projet.plans[(lecture.index + k) % n];
+    if (!plan || plan.youtube || !mediaDe(plan)) continue;
+    const cle = cleSegment(plan);
+    if (!cle || segments.has(cle) || segmentsRates.has(cle)) continue;
+    if (!estLocal(plan)) continue;         // le rush n'est pas encore là
+    return { plan, cle };
+  }
+  return null;
+}
+
+async function fabriquerSuivant() {
+  if (fabrique.encours || rendu.encours || rendu.parImage) return;
+  // Jamais pendant qu'on regarde : la fabrique prendrait le processeur à
+  // l'image qu'elle est censée servir. Elle travaille entre deux lectures.
+  if (lecture.demande || lecture.scrub) return;
+  const fil = filFabrique();
+  if (!fil) return;
+  const suite = prochainAFabriquer();
+  if (!suite) return;
+  const garde = await lireBase(mediaDe(suite.plan)).catch(() => null);
+  if (!(garde instanceof Blob) || !garde.size) { segmentsRates.add(suite.cle); return; }
+  if (fabrique.encours) return;
+  const id = (fabrique.numero = (fabrique.numero || 0) + 1);
+  fabrique.encours = { id, cle: suite.cle, depart: performance.now() };
+  fil.postMessage({
+    id, blob: garde, cle: mediaDe(suite.plan),
+    entree: entreeDe(suite.plan), sortie: sortieDe(suite.plan),
+    large: LARGE_SEGMENT, debit: DEBIT_SEGMENT,
+  });
+}
+
+/* Ce qui a été fabriqué lors d'une visite précédente est retrouvé au lieu d'être
+   refait : c'est tout l'intérêt d'un cache. */
+async function reprendreSegments(projet) {
+  if (!projet?.plans.length) return;
+  for (const plan of projet.plans) {
+    const cle = cleSegment(plan);
+    if (!cle || segments.has(cle)) continue;
+    const garde = await lireBase(cle).catch(() => null);
+    if (garde instanceof Blob && garde.size) {
+      segments.set(cle, { url: URL.createObjectURL(garde), taille: garde.size });
+    }
+  }
+  majBarreCache();
+}
+
 /* --- la lecture ne s'arrête pas au bout -------------------------------
 
    Un aperçu de montage se regarde en boucle : on repasse la séquence pour voir
@@ -3764,6 +3989,12 @@ function demarrerMoniteur() {
    chien de garde et le rattrapage de position — sans eux, un lecteur qui échoue
    en silence resterait sur une image fausse. */
 function battreMoniteur() {
+  /* La fabrique de segments avance ici, entre deux lectures.
+
+     Elle se garde elle-même : rien pendant qu'on regarde, rien pendant un
+     rendu, rien tant qu'un segment est en cours. Le battement n'est qu'une
+     occasion régulière de reprendre le travail là où il en était. */
+  fabriquerSuivant().catch(() => {});
   // Les mesures de mise en page se périment ici : quatre fois par seconde, au
   // lieu d'être refaites à chaque image depuis la boucle de lecture.
   oublierMesuresPage();
@@ -3802,7 +4033,7 @@ function veillerCoherence(video, plan) {
   if (!cible || cible.plan.youtube) { veille.depuis = 0; return; }
 
   const bonPlan = video?.dataset.plan === cible.plan.id;
-  const attendu = entreeDe(cible.plan) + cible.dans;
+  const attendu = entreeLue(cible.plan) + cible.dans;
   const bonneImage = video && video.readyState >= 1 && Math.abs(video.currentTime - attendu) <= 0.35;
   // Un déplacement en cours ou une cible encore en route ne sont pas un écart.
   const enRoute = video?.seeking || video?.dataset.vise !== undefined || lecture.cible;
@@ -4058,7 +4289,7 @@ function dessinerMoniteur() {
        patiente. */
     source = lecture.bascule.sortant;
   } else if (video && video.readyState >= 2 && video.videoWidth
-             && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeDe(plan) - 0.15)) {
+             && !(plan && video.dataset.plan === plan.id && video.currentTime < entreeLue(plan) - 0.15)) {
     // La dernière condition écarte une image située avant le point d'entrée :
     // elle a été retirée du montage, elle n'a rien à faire à l'écran, même une
     // fraction de seconde pendant qu'un plan se met en place.
@@ -5078,10 +5309,10 @@ function preparerPlan(video, plan) {
      que le démarrage qu'on voulait éviter. Un lecteur déjà lancé dérive de
      quelques dizaines de millisecondes — invisible — alors qu'un déplacement se
      voit. On ne le replace donc plus quand il roule déjà au bon endroit. */
-  const avance = Math.min(AVANCE_BASCULE, entreeDe(plan));
+  const avance = Math.min(AVANCE_BASCULE, entreeLue(plan));
   video.dataset.avance = String(avance);
   video.dataset.amorce = "";
-  const garer = () => demanderPosition(video, entreeDe(plan) - avance);
+  const garer = () => demanderPosition(video, entreeLue(plan) - avance);
   video.addEventListener("loadedmetadata", garer, { once: true });
   if (video.readyState >= 1) garer();
 }
@@ -5375,6 +5606,10 @@ function pisteComplete(projet) {
     ligne.style.setProperty("--depart", `${xDeSeconde(rythme.depart)}px`);
   }
 
+  const barre = document.createElement("canvas");
+  barre.className = "barre-cache";
+  barre.id = "barre-cache";
+
   const regle = document.createElement("div");
   regle.className = "regle";
   regle.id = "regle";
@@ -5411,7 +5646,7 @@ function pisteComplete(projet) {
   tete.id = "tete";
   tete.innerHTML = '<span class="tete-poignee"></span>';
 
-  ligne.append(regle, rail, bande, tete);
+  ligne.append(barre, regle, rail, bande, tete);
   cadre.append(ligne);
 
   brancherScrub(regle);
@@ -6192,6 +6427,8 @@ function redessinerPiste() {
   // Une piste reconstruite rendrait l'image gelée fausse : elle montre l'état
   // d'avant. On dégèle d'abord, quitte à regeler au prochain démarrage.
   degelerPiste();
+  // La barre du cache est refaite avec le reste, une fois la piste posée.
+  setTimeout(() => majBarreCache(), 0);
   const projet = projetActif();
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
@@ -6283,7 +6520,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
       chaud: pret >= 0,
       joue: entrant ? !entrant.paused : false,
       pret: entrant ? entrant.readyState : -1,
-      ecart: entrant ? Math.round((entrant.currentTime - entreeDe(plan)) * 1000) : null,
+      ecart: entrant ? Math.round((entrant.currentTime - entreeLue(plan)) * 1000) : null,
       amorce: entrant ? entrant.dataset.amorce === "oui" : false,
       avance: entrant ? Number(entrant.dataset.avance || 0) : 0,
     });
@@ -6338,7 +6575,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
       quand: performance.now(),
       depart: video.currentTime,
       sortant,
-      fin: planSortant ? sortieDe(planSortant) : Infinity,
+      fin: planSortant ? sortieLue(planSortant) : Infinity,
     };
   }
   /* Deux questions différentes, longtemps confondues en une seule.
@@ -6378,7 +6615,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
      l'avance et coûtait le déplacement qu'on cherchait à éviter. Un quart de
      seconde de tolérance — bien plus que la dérive réelle, bien moins qu'une
      coupe — et l'enchaînement se fait sans rien redémarrer ni rien déplacer. */
-  const vise = entreeDe(plan) + decalage;
+  const vise = entreeLue(plan) + decalage;
   /* Un lecteur qui roule déjà au bon endroit du bon fichier n'est pas replacé —
      même si le bloc, lui, a changé. Deux blocs taillés bout à bout dans le même
      rush s'enchaînent alors sans le moindre déplacement, comme sur un banc de
@@ -6541,7 +6778,7 @@ function basculerLecture() {
     video.poster = (!rogne(cible.plan) && cible.plan.preview) || "";
     video.src = source;
   }
-  viser(video, entreeDe(cible.plan) + cible.dans, cible.plan);
+  viser(video, entreeLue(cible.plan) + cible.dans, cible.plan);
   preparerSuivants(cible.index);
   amorcerAvance(cible.index);
 
@@ -6835,7 +7072,7 @@ function appliquerSeek(jouer = false) {
   if (!video) return;
 
   if (index === lecture.index && video.dataset.plan === plan.id) {
-    const vise = entreeDe(plan) + dans;
+    const vise = entreeLue(plan) + dans;
     const poser = () => {
       demanderPosition(video, Math.min(vise, video.duration || vise));
       if (jouer) video.play().catch(() => {});
@@ -7061,6 +7298,14 @@ async function effacerBase(adresse) {
    même origine, ce qui ne teinte plus la toile du moniteur — bénéfice de
    surcroît. */
 function sourceDe(plan) {
+  /* Le segment fabriqué d'abord, quand il existe.
+
+     Il contient exactement ce bloc et commence à zéro : le lecteur n'a plus
+     aucun déplacement à faire pour entrer dedans, et plus aucun gros fichier à
+     parcourir. Pendant un rendu, en revanche, on revient au rush : le segment
+     fait 640 points, ce qui suffit à regarder et pas à exporter. */
+  const segment = segmentDe(plan);
+  if (segment) return segment.url;
   const adresse = mediaDe(plan);
   if (!adresse) return "";
   return locales.get(adresse) || `/api/media?u=${encodeURIComponent(adresse)}`;
@@ -7597,7 +7842,7 @@ function positionCourante() {
   const video = elementActif();
   if (video && !video.paused && video.readyState >= 2 && !lecture.cible && !lecture.secousse) {
     const plan = projet.plans[lecture.index];
-    const reelle = (offsets(projet.plans)[lecture.index] || 0) + video.currentTime - entreeDe(plan);
+    const reelle = (offsets(projet.plans)[lecture.index] || 0) + video.currentTime - entreeLue(plan);
     if (Math.abs(reelle - position) > 0.35) {
       position = reelle;
       lecture.horloge = { debut: performance.now(), depart: reelle };
@@ -7708,7 +7953,7 @@ function suivreTete() {
       amorcerSuivant(fin - lecture.position);
       const auBout = lecture.position >= fin - 0.02
         || (video && !video.paused && video.dataset.plan === plan?.id
-            && video.currentTime >= sortieDe(plan) - 0.02);
+            && video.currentTime >= sortieLue(plan) - 0.02);
       if (auBout) {
         if (lecture.index + 1 < projet.plans.length) planSuivant();
         else if (bouclePossible()) rebouclerLecture();
@@ -8530,226 +8775,9 @@ async function reprendreRendu(projet) {
    Le « moov » est écrit en dernier parce qu'il faut connaître la taille de
    chaque échantillon pour le remplir. Les lecteurs l'acceptent à la fin. */
 
-const CODEC_MP4 = new TextEncoder();
-
-function nombreVersOctets(valeur, taille) {
-  const octets = new Uint8Array(taille);
-  for (let i = taille - 1; i >= 0; i -= 1) { octets[i] = valeur & 0xff; valeur = Math.floor(valeur / 256); }
-  return octets;
-}
-
-const u8 = (...v) => new Uint8Array(v);
-const u16 = (v) => nombreVersOctets(v, 2);
-const u32 = (v) => nombreVersOctets(v, 4);
-const u64 = (v) => nombreVersOctets(v, 8);
-
-/* Une boîte : sa taille, son nom, son contenu. Tout le format n'est que cela,
-   emboîté. */
-function boiteMp4(nom, ...morceaux) {
-  const corps = [];
-  let taille = 8;
-  for (const m of morceaux) {
-    const octets = m instanceof Uint8Array ? m : new Uint8Array(m);
-    corps.push(octets);
-    taille += octets.length;
-  }
-  const sortie = new Uint8Array(taille);
-  sortie.set(u32(taille), 0);
-  sortie.set(CODEC_MP4.encode(nom), 4);
-  let position = 8;
-  for (const m of corps) { sortie.set(m, position); position += m.length; }
-  return sortie;
-}
-
-// Une boîte « pleine version » : un octet de version, trois de drapeaux.
-const boiteMp4Pleine = (nom, version, drapeaux, ...morceaux) =>
-  boiteMp4(nom, u8(version), nombreVersOctets(drapeaux, 3), ...morceaux);
-
-const MATRICE = new Uint8Array([
-  0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0x40, 0, 0, 0,
-]);
-
-/* La description du codec, telle que l'encodeur nous l'a donnée. Pour H.264
-   c'est le « avcC » — profils, niveaux, jeux de paramètres — sans quoi aucun
-   lecteur ne sait démarrer le décodage. */
-function entreeVideo(piste) {
-  const avc = piste.codec.startsWith("avc1");
-  if (!avc && !piste.codec.startsWith("vp8")) {
-    throw new Error(`codec non emballable : ${piste.codec}`);
-  }
-  const specifique = avc
-    ? boiteMp4("avcC", piste.description)
-    /* Profil 0, niveau 1.0, huit bits par composante, sous-échantillonnage
-       4:2:0 : la description minimale d'un flux VP8, telle que la réclame le
-       conteneur. */
-    : boiteMp4("vpcC", u8(1, 0, 0, 0), u8(0, 10, 0x08 << 4 | 0x01 << 1, 0), u16(0));
-  const nom = avc ? "avc1" : "vp08";
-  return boiteMp4(
-    nom,
-    u8(0, 0, 0, 0, 0, 0), u16(1),                    // réservé, index de donnée
-    u16(0), u16(0), u32(0), u32(0), u32(0),          // version, révision, fabricant
-    u16(piste.largeur), u16(piste.hauteur),
-    u32(0x00480000), u32(0x00480000),                // 72 points par pouce
-    u32(0), u16(1),
-    new Uint8Array(32),                              // nom du compresseur
-    u16(0x0018), u16(0xffff),                        // profondeur, table de couleurs
-    specifique,
-  );
-}
-
-/* Le son. « mp4a » réclame un « esds » qui enveloppe la configuration que rend
-   l'encodeur ; Opus se contente d'un « dOps ». On écrit celui qui correspond. */
-function entreeAudio(piste) {
-  const commun = [
-    u8(0, 0, 0, 0, 0, 0), u16(1),
-    u32(0), u32(0),
-    u16(piste.canaux), u16(16), u16(0), u16(0),
-    u32(piste.echantillonnage * 65536),
-  ];
-  if (piste.codec.startsWith("mp4a")) {
-    const config = piste.description || new Uint8Array([0x11, 0x90]);
-    const descripteurDecodeur = boiteMp4Descripteur(0x04, [
-      u8(0x40, 0x15),                                 // AAC, flux audio
-      nombreVersOctets(0, 3), u32(0), u32(0),         // tampon, débits
-      boiteMp4Descripteur(0x05, [config]),
-    ]);
-    const esds = boiteMp4Pleine("esds", 0, 0,
-      boiteMp4Descripteur(0x03, [u16(1), u8(0), descripteurDecodeur, boiteMp4Descripteur(0x06, [u8(2)])]));
-    return boiteMp4("mp4a", ...commun, esds);
-  }
-  return boiteMp4("Opus", ...commun,
-    boiteMp4("dOps", u8(0), u8(piste.canaux), u16(312), u32(piste.echantillonnage), u16(0), u8(0)));
-}
-
-/* Les descripteurs MPEG-4 ont leur propre encodage de longueur, sur sept bits
-   par octet. C'est le seul endroit du format où l'on compte ainsi. */
-function boiteMp4Descripteur(marque, morceaux) {
-  const contenu = [];
-  let taille = 0;
-  for (const m of morceaux) { contenu.push(m); taille += m.length; }
-  const longueur = [];
-  let reste = taille;
-  do { longueur.unshift((reste & 0x7f) | (longueur.length ? 0x80 : 0)); reste >>= 7; } while (reste);
-  const sortie = new Uint8Array(1 + longueur.length + taille);
-  sortie[0] = marque;
-  sortie.set(longueur, 1);
-  let position = 1 + longueur.length;
-  for (const m of contenu) { sortie.set(m, position); position += m.length; }
-  return sortie;
-}
-
-/* La table des durées : autant de lignes que de changements de cadence. Une
-   vidéo à cadence fixe tient en une seule ligne. */
-function tableDurees(echantillons) {
-  const lignes = [];
-  for (const e of echantillons) {
-    const derniere = lignes[lignes.length - 1];
-    if (derniere && derniere.duree === e.duree) derniere.compte += 1;
-    else lignes.push({ compte: 1, duree: e.duree });
-  }
-  const corps = [u32(lignes.length)];
-  for (const l of lignes) corps.push(u32(l.compte), u32(l.duree));
-  return boiteMp4Pleine("stts", 0, 0, ...corps);
-}
-
-function tableTailles(echantillons) {
-  const corps = [u32(0), u32(echantillons.length)];
-  for (const e of echantillons) corps.push(u32(e.taille));
-  return boiteMp4Pleine("stsz", 0, 0, ...corps);
-}
-
-function tablePositions(echantillons) {
-  const corps = [u32(echantillons.length)];
-  for (const e of echantillons) corps.push(u32(e.decalage));
-  return boiteMp4Pleine("stco", 0, 0, ...corps);
-}
-
-// Un échantillon par bloc : le plus simple, et le plus sûr.
-const tableBlocs = () => boiteMp4Pleine("stsc", 0, 0, u32(1), u32(1), u32(1), u32(1));
-
-function tableCles(echantillons) {
-  const cles = [];
-  echantillons.forEach((e, i) => { if (e.cle) cles.push(i + 1); });
-  if (cles.length === echantillons.length) return new Uint8Array(0);
-  const corps = [u32(cles.length)];
-  for (const c of cles) corps.push(u32(c));
-  return boiteMp4Pleine("stss", 0, 0, ...corps);
-}
-
-function pisteMoov(piste, dureeFilm, echelleFilm) {
-  const dureePiste = piste.echantillons.reduce((somme, e) => somme + e.duree, 0);
-  const dureeEnFilm = Math.round((dureePiste / piste.echelle) * echelleFilm);
-  const video = piste.type === "video";
-
-  const tkhd = boiteMp4Pleine("tkhd", 0, 3,
-    u32(0), u32(0), u32(piste.id), u32(0), u32(dureeEnFilm),
-    u32(0), u32(0), u16(0), u16(video ? 0 : 0x0100), u16(0), u16(0),
-    MATRICE,
-    u32(video ? piste.largeur * 65536 : 0), u32(video ? piste.hauteur * 65536 : 0));
-
-  const mdhd = boiteMp4Pleine("mdhd", 0, 0,
-    u32(0), u32(0), u32(piste.echelle), u32(dureePiste), u16(0x55c4), u16(0));
-
-  const hdlr = boiteMp4Pleine("hdlr", 0, 0,
-    u32(0), CODEC_MP4.encode(video ? "vide" : "soun"), u32(0), u32(0), u32(0), u8(0));
-
-  const entete = video
-    ? boiteMp4Pleine("vmhd", 0, 1, u16(0), u16(0), u16(0), u16(0))
-    : boiteMp4Pleine("smhd", 0, 0, u16(0), u16(0));
-
-  const dinf = boiteMp4("dinf", boiteMp4Pleine("dref", 0, 0, u32(1), boiteMp4Pleine("url ", 0, 1)));
-
-  const stbl = boiteMp4("stbl",
-    boiteMp4Pleine("stsd", 0, 0, u32(1), video ? entreeVideo(piste) : entreeAudio(piste)),
-    tableDurees(piste.echantillons),
-    tableCles(piste.echantillons),
-    tableBlocs(),
-    tableTailles(piste.echantillons),
-    tablePositions(piste.echantillons));
-
-  return boiteMp4("trak", tkhd,
-    boiteMp4("mdia", mdhd, hdlr, boiteMp4("minf", entete, dinf, stbl)));
-}
-
-/* Assemble le fichier. « pistes » porte, pour chacune, ses échantillons déjà
-   encodés et la position qu'ils occuperont dans le « mdat ». */
-function ecrireMp4(pistes) {
-  const echelleFilm = 1000;
-  let duree = 0;
-  for (const piste of pistes) {
-    const t = piste.echantillons.reduce((somme, e) => somme + e.duree, 0) / piste.echelle;
-    duree = Math.max(duree, t);
-  }
-  const dureeFilm = Math.round(duree * echelleFilm);
-
-  const ftyp = boiteMp4("ftyp", CODEC_MP4.encode("isom"), u32(512),
-    CODEC_MP4.encode("isomiso2avc1mp41"));
-
-  // Les octets, dans l'ordre : d'abord toute la vidéo, puis tout le son.
-  const corps = [];
-  let decalage = ftyp.length + 8;
-  for (const piste of pistes) {
-    for (const e of piste.echantillons) {
-      e.decalage = decalage;
-      decalage += e.taille;
-      corps.push(e.octets);
-    }
-  }
-  const tailleMdat = decalage - ftyp.length - 8;
-  const teteMdat = new Uint8Array(8);
-  teteMdat.set(u32(tailleMdat + 8), 0);
-  teteMdat.set(CODEC_MP4.encode("mdat"), 4);
-
-  const mvhd = boiteMp4Pleine("mvhd", 0, 0,
-    u32(0), u32(0), u32(echelleFilm), u32(dureeFilm), u32(0x00010000), u16(0x0100), u16(0),
-    u32(0), u32(0), MATRICE, u32(0), u32(0), u32(0), u32(0), u32(0), u32(0),
-    u32(pistes.length + 1));
-
-  const moov = boiteMp4("moov", mvhd, ...pistes.map((p) => pisteMoov(p, dureeFilm, echelleFilm)));
-  return new Blob([ftyp, teteMdat, ...corps, moov], { type: "video/mp4" });
-}
+/* Le multiplexeur MP4 vit maintenant dans « mp4.js » : la fabrique de segments
+   en a besoin depuis son fil, et un multiplexeur recopié se corrige mal. */
+import { ecrireMp4 } from "./mp4.js";
 
 
 /* --- rendre image par image, hors du temps réel -----------------------
@@ -9380,6 +9408,26 @@ $("btn-setting").addEventListener("click", () => {
        même pour chacune : le lecteur est à sa taille native, une image décodée
        d'avance fait 640 points, la copie de secours la taille du moniteur, une
        imagette 160. Un aperçu sain est presque entièrement « lecteur ». */
+    /* Le cache de segments : ce qui est prêt, ce que ça pèse, à quelle vitesse
+       il se fabrique. Un montage entièrement fabriqué se lit sans un seul
+       déplacement de fichier. */
+    "Cache de segments :",
+    ...(() => {
+      const projet = projetActif();
+      const total = projet?.plans.length || 0;
+      const prets = (projet?.plans || []).filter(surSegment).length;
+      if (fabrique.possible === false) return ["  indisponible sur ce navigateur"];
+      const l = [`  ${prets} bloc(s) prêts sur ${total}`];
+      if (fabrique.faits) {
+        l.push(`  fabriqués : ${fabrique.faits} · ${(fabrique.octets / 1e6).toFixed(1)} Mo`
+          + ` · ${Math.round(fabrique.duree / fabrique.faits)} ms par bloc`);
+      }
+      if (fabrique.rates) l.push(`  refusés : ${fabrique.rates}`);
+      if (fabrique.encours) l.push("  un bloc est en cours de fabrication");
+      if (prets && prets === total) l.push("  → tout le montage se lit sans déplacement de fichier");
+      return l;
+    })(),
+    "",
     "Arrêts de lecture :",
     ...(() => {
       const l = [`  le lecteur s'est arrêté faute d'images : ${arrets.attentes} fois`];
