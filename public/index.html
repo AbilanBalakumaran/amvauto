@@ -1580,7 +1580,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 10:35";
+const VERSION_PAGE = "2026-08-25 11:29";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1593,6 +1593,32 @@ if ("serviceWorker" in navigator) {
       enregistrement.update().catch(() => {});
       // Toutes les heures aussi, pour une application laissée ouverte.
       setInterval(() => enregistrement.update().catch(() => {}), 3600000);
+
+      /* Et surtout : à chaque retour dans l'application.
+
+         Une application installée sur l'écran d'accueil ne se « charge » presque
+         jamais. On la quitte, on y revient, et iOS rend la page telle qu'elle
+         était — même document, mêmes minuteries gelées pendant l'absence. Ni
+         l'événement « load », ni l'intervalle d'une heure ne se produisent
+         alors : une version déployée pouvait rester invisible des jours durant,
+         et l'on croyait qu'un correctif n'avait rien changé.
+
+         Le retour au premier plan est le seul moment où l'on est certain que
+         l'utilisateur regarde. On en profite, sans en abuser : une vérification
+         par demi-minute au plus, sinon chaque aller-retour vers la galerie
+         photo déclencherait une requête. */
+      let derniereVerif = Date.now();
+      const verifierAuRetour = () => {
+        if (document.hidden) return;
+        if (Date.now() - derniereVerif < 30000) return;
+        derniereVerif = Date.now();
+        enregistrement.update().catch(() => {});
+        verifierVersion();
+      };
+      document.addEventListener("visibilitychange", verifierAuRetour);
+      // « pageshow » couvre le retour depuis le cache de navigation, où
+      // « visibilitychange » ne se déclenche pas toujours.
+      window.addEventListener("pageshow", (evt) => { if (evt.persisted) verifierAuRetour(); });
 
       // Au tout premier lancement, le worker prend la main sur une page qui
       // n'en avait pas : recharger n'apporterait rien et ferait clignoter
@@ -1635,7 +1661,15 @@ function verifierVersion(reste = 2) {
       if (marque) marque.textContent = `version ${VERSION_PAGE}`;
       if (!version || version === VERSION_PAGE) return;
 
-      if (!sessionStorage.getItem("amvauto-maj")) {
+      /* Un rechargement automatique par version, pas un par session.
+
+         Le garde-fou ne regardait que la présence de la marque, pas sa valeur :
+         une fois une mise à jour passée, la suivante — dans la même session, ce
+         qui est la règle pour une application installée qu'on ne ferme jamais —
+         n'était plus jamais rechargée toute seule. Elle n'obtenait qu'un
+         bandeau. On compare donc la version, ce qui laisse une tentative
+         automatique à chacune, sans jamais boucler sur la même. */
+      if (sessionStorage.getItem("amvauto-maj") !== version) {
         sessionStorage.setItem("amvauto-maj", version);
         const maj = navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null);
         Promise.resolve(maj)
