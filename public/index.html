@@ -1591,7 +1591,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 15:09";
+const VERSION_PAGE = "2026-08-25 15:19";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3796,6 +3796,10 @@ function prochainAFabriquer() {
   if (!projet?.plans.length) return null;
   const n = projet.plans.length;
   for (let k = 0; k < n; k += 1) {
+    /* On saute le bloc en cours quand la lecture tourne : lui fabriquer un
+       segment maintenant changerait sa source sous le lecteur qui le joue, pour
+       une seconde qui est déjà à l'écran. On le fera au tour suivant. */
+    if (k === 0 && lecture.demande) continue;
     const plan = projet.plans[(lecture.index + k) % n];
     if (!plan || plan.youtube || !mediaDe(plan)) continue;
     const cle = cleSegment(plan);
@@ -3808,9 +3812,22 @@ function prochainAFabriquer() {
 
 async function fabriquerSuivant() {
   if (fabrique.encours || rendu.encours || rendu.parImage) return;
-  // Jamais pendant qu'on regarde : la fabrique prendrait le processeur à
-  // l'image qu'elle est censée servir. Elle travaille entre deux lectures.
-  if (lecture.demande || lecture.scrub) return;
+  /* Elle travaille aussi pendant qu'on regarde, et c'est ce qui la rend utile.
+
+     Elle se taisait pendant la lecture, par prudence. Conséquence : un montage
+     qu'on vient de faire n'était jamais fluide au premier lancement — et c'est
+     précisément là qu'on appuie sur lecture. Il fallait attendre sans rien
+     regarder pour avoir le droit de regarder.
+
+     Elle avance donc devant la tête de lecture, un bloc à la fois, tant que
+     l'appareil tient l'allure. Dès qu'il ne la tient plus, elle se tait : la
+     mesure qui décide est la même que pour le relais et l'amorce — les images
+     réellement présentées, comptées sur le lecteur affiché.
+
+     Un doigt sur la piste l'arrête aussi : à ce moment-là tout le processeur
+     doit aller à l'image sous le doigt. */
+  if (lecture.scrub) return;
+  if (lecture.demande && !alAise()) return;
   const fil = filFabrique();
   if (!fil) return;
   const suite = prochainAFabriquer();

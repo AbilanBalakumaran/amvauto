@@ -2705,6 +2705,56 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Fabriquer pendant qu'on regarde : ce qui manquait pour que ce soit instantané
+
+Le cache donnait la fluidité, pas l'instantané. Il ne travaillait que **hors
+lecture** — par prudence. Conséquence : un montage qu'on vient de faire n'était
+jamais fluide au premier lancement, et c'est précisément là qu'on appuie sur
+lecture. Il fallait attendre sans rien regarder pour avoir le droit de regarder.
+
+La fabrique avance donc maintenant **devant la tête de lecture**, un bloc à la
+fois, pendant qu'on regarde. Trois garde-fous suffisent :
+
+- elle saute le bloc en cours — lui fabriquer un segment changerait sa source
+  sous le lecteur qui le joue, pour une seconde déjà à l'écran ;
+- elle se tait dès qu'un doigt touche la piste, où tout le processeur doit aller
+  à l'image sous le doigt ;
+- elle se tait dès que **l'allure** dit que l'appareil ne suit plus — la même
+  mesure que pour le relais et l'amorce, les images réellement présentées.
+
+### Départ à froid, cache vide, on appuie tout de suite
+
+```
+                        sans cache        avec fabrique en lecture
+première moitié          17 à 19/s               22,2/s
+seconde moitié                                   20,7/s
+trous > 100 ms            17 à 20                 3 à 6
+arrêts « waiting »          2 à 8                   1
+cache après 20 s              —              120 blocs sur 120
+```
+
+**Le montage se fabrique pendant qu'on le regarde**, et il est entièrement prêt
+au bout d'une vingtaine de secondes de lecture — c'est-à-dire avant la fin du
+premier tour de boucle.
+
+### Et le « je clique, ça part »
+
+```
+délai entre l'appui et la première image : 83 · 76 · 77 ms
+```
+
+Sous le seuil où l'œil distingue un délai d'un déclenchement.
+
+### Ce que ça a donné à la boucle
+
+Le pire trou d'un tour complet est passé de 117-166 ms à 67-100 ms.
+
+### Le travail s'arrête tout seul
+
+Une fois le montage entièrement fabriqué, il n'y a plus rien à faire : la
+fabrique ne trouve plus de bloc à préparer et ne consomme plus rien. Elle ne
+repart que si l'on modifie une coupe — et alors pour un seul bloc.
+
 ## Le cache de segments : l'aperçu fluide, mais par blocs et en tâche de fond
 
 Ce dépôt savait déjà ce qu'il fallait faire, et depuis longtemps. Le proxy unique
