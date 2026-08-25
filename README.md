@@ -2705,6 +2705,59 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## Le chargement se suit, se suspend et s'arrête
+
+Rapatrier cent soixante-quinze rushs en 4G prend du temps et de la batterie. Cela
+se faisait déjà en tâche de fond, mais sans rien pour le suivre ni pour
+l'interrompre : on subissait.
+
+### Une notification vivante, pas une notification de fin
+
+Il y avait « Me prévenir quand c'est prêt » — un message, à la fin. Il y a
+maintenant une notification **qui se met à jour à chaque plan arrivé**, avec une
+étiquette fixe pour qu'elle se remplace au lieu de s'empiler, et silencieuse :
+un téléphone qui vibre cent soixante-quinze fois est un téléphone qu'on éteint.
+
+```
+« Chargement des plans » · 4/10 plans sur l'appareil · 10 Mo restants
+   étiquette amvauto-transfert · silencieuse · boutons [suspendre, arreter]
+```
+
+### Trois gestes, et trois raisons différentes
+
+**Suspendre** interrompt sans rien perdre. Chaque fichier en cours garde les
+octets déjà reçus — le chemin d'abandon écrit le morceau partiel et ne le compte
+pas comme un échec — donc la reprise repart de là, jamais de zéro. C'est le geste
+du métro, du forfait qui s'épuise, de la batterie à dix pour cent.
+
+**Reprendre** remet en file ce qui manque, sans retélécharger ce qui est là.
+
+**Arrêter** vide la file et efface les morceaux partiels : on renonce, et on
+récupère la place. Ce qui est entièrement arrivé reste.
+
+Les deux états ne se disent pas pareil, parce qu'ils ne veulent pas dire la même
+chose : « Chargement suspendu · 2/14 plans gardés · 19 Mo restants » quand le
+travail attend, « Chargement arrêté · 5/14 plans gardés » quand il a été jeté.
+
+### Les boutons existent à deux endroits, et ce n'est pas un doublon
+
+Dans la notification là où le système l'accepte — Android, ordinateur. Et sous le
+bandeau de l'application, toujours : **une notification web n'accepte aucun bouton
+sur iPhone**, et c'est justement l'appareil qui en a le plus besoin. Le service
+worker relaie les appuis à la page, qui seule porte les téléchargements ; sans
+page ouverte, il l'ouvre.
+
+### Mesuré
+
+```
+1. pendant le chargement : 1/14 plans · 21 Mo à venir · bouton « Suspendre »
+2. après « Suspendre »   : 2/14 plans gardés · 19 Mo restants · bouton « Reprendre »
+3. figé pendant 4 s ?    : oui — rien n'avance plus
+4. après « Reprendre »   : 4/14 plans · 16 Mo à venir
+5. après « Arrêter »     : 5/14 plans gardés
+6. morceaux partiels restants : 0
+```
+
 ## Un seul fichier, un seul lecteur, aucune coupe
 
 Question posée : « on ne peut pas faire comme CapCut ? »

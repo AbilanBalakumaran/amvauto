@@ -6,7 +6,7 @@
 // ouverte. Sans cette estampille automatique, il faudrait penser à incrémenter
 // un numéro à chaque déploiement — et l'oublier une fois suffit à figer
 // l'application chez l'utilisateur.
-const VERSION = "2026-08-25 16:02";
+const VERSION = "2026-08-25 16:21";
 const CACHE = `amvauto-${VERSION}`;
 
 const COQUILLE = [
@@ -57,6 +57,29 @@ self.addEventListener("activate", (event) => {
 /* Une notification tapée ramène dans l'application plutôt que d'ouvrir un
    second onglet. Si une fenêtre est déjà là, on la remet devant. */
 self.addEventListener("notificationclick", (event) => {
+  /* Un bouton de la notification n'ouvre pas l'application : il agit.
+
+     « Suspendre », « Reprendre », « Arrêter » sont des gestes qu'on fait
+     justement parce qu'on n'a pas envie de rouvrir l'application — dans le
+     métro, quand la batterie tombe. Le worker les relaie donc à la page si elle
+     est là, et la notification reste ouverte pour montrer le nouvel état.
+
+     Sans page ouverte, il n'y a rien à relayer : les téléchargements sont
+     portés par elle. On l'ouvre alors, et l'état s'y appliquera. */
+  const action = event.action;
+  if (action) {
+    event.waitUntil((async () => {
+      const fenetres = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      if (fenetres.length) {
+        for (const fenetre of fenetres) fenetre.postMessage({ transfert: action });
+        return undefined;
+      }
+      event.notification.close();
+      if (self.clients.openWindow) return self.clients.openWindow("./");
+      return undefined;
+    })());
+    return;
+  }
   event.notification.close();
   event.waitUntil((async () => {
     const fenetres = await self.clients.matchAll({ type: "window", includeUncontrolled: true });

@@ -1045,6 +1045,16 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
    la même chose : savoir d'un coup d'œil ce qui se lira sans effort. Une seule
    toile, pas un élément par bloc — la leçon de la piste gelée. */
 .barre-cache { display: block; width: 100%; height: 3px; margin-bottom: 2px; border-radius: 2px; }
+/* Les trois gestes du chargement, sous le bandeau : suspendre, reprendre,
+   arrêter. Petits, côte à côte, et toujours atteignables au pouce. */
+.transferts { display: inline-flex; gap: 6px; margin-left: 8px; vertical-align: middle; }
+.transferts button {
+  border: 1px solid var(--trait); border-radius: 999px; padding: 3px 10px;
+  background: #1b1b1b; color: var(--texte); font: 600 0.68rem/1 system-ui, sans-serif;
+  cursor: pointer; min-height: 26px;
+}
+.transferts button.on { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
+.transferts[hidden] { display: none; }
 /* La piste gelée : une seule image à la place de cent vingt blocs.
 
    Mesuré sur cent vingt plans, processeur bridé huit fois : la piste retirée du
@@ -1591,7 +1601,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 16:02";
+const VERSION_PAGE = "2026-08-25 16:21";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3150,7 +3160,10 @@ function editeur(projet) {
   const preparationDit = document.createElement("span");
   preparationDit.className = "preparation-dit";
   preparationDit.id = "preparation-dit";
-  preparation.append(preparationDit, boutonVeille());
+  /* Les trois gestes, sous le bandeau. Ils doivent être là même quand la
+     notification porte les mêmes : sur iPhone, une notification web n'accepte
+     aucun bouton, et ce serait justement l'appareil qui en a le plus besoin. */
+  preparation.append(preparationDit, boutonsTransfert(), boutonVeille());
 
   ecran.append(moniteur, ...lecteurs, vide, preparation);
   bloc.append(ecran, transport(), pisteComplete(projet));
@@ -7718,6 +7731,8 @@ function planifierImport(plan) {
 }
 
 async function lancerImport() {
+  // Suspendu : la file reste en place, elle ne se vide simplement plus.
+  if (transfert.suspendu) return;
   if (importsEnCours >= IMPORTS_PARALLELES) return;
   const plan = fileImport.shift();
   if (!plan) return;
@@ -7819,6 +7834,7 @@ async function lancerImport() {
     enImport.delete(adresse);
     importsEnCours -= 1;
     majImports();
+    majNotificationTransfert();
     apresImport(plan);
     setTimeout(lancerImport, 60);
   }
@@ -7874,6 +7890,8 @@ function majPreparation(projet) {
        mais moins bien, et rien ne le disait : l'utilisateur voyait une lecture
        qui accroche sans pouvoir savoir si c'est son appareil, son montage, ou
        une panne. La réponse tient en une ligne, à l'endroit où il regarde. */
+    const transferts = $("transferts");
+    if (transferts) transferts.hidden = true;
     const fait = (projet.plans || []).filter(surSegment).length;
     const totalBlocs = (projet.plans || []).length;
     if (fabrique.possible === false) {
@@ -7895,7 +7913,10 @@ function majPreparation(projet) {
     }
     return;
   }
-  if (bouton) { bouton.hidden = false; majBoutonVeille(); }
+  if (bouton) { bouton.hidden = false; }
+  const transferts = $("transferts");
+  if (transferts) transferts.hidden = false;
+  majBoutonsTransfert();
 
   /* Une attente chiffrée vaut mieux qu'une barre qui avance : on sait s'il faut
      rester devant ou poser le téléphone. Le débit vient de ce qui a réellement
@@ -7905,6 +7926,16 @@ function majPreparation(projet) {
   const duree = attente > 90 ? `~${Math.round(attente / 60)} min` : attente > 5 ? `~${Math.round(attente)} s` : "";
 
   bandeau.hidden = false;
+  if (transfert.suspendu) {
+    /* Suspendu et arrêté ne se disent pas pareil : dans un cas le travail
+       attend, dans l'autre il a été jeté. La file vide fait la différence. */
+    const arrete = !fileImport.length && !arretsImport.size;
+    dit.textContent = (arrete ? "Chargement arrêté" : "Chargement suspendu")
+      + ` · ${prets}/${total} plans gardés sur l'appareil`
+      + (arrete ? "" : ` · ${(octets / 1e6).toFixed(0)} Mo restants`)
+      + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
+    return;
+  }
   dit.textContent =
     `${prets}/${total} plans sur l'appareil · ${(octets / 1e6).toFixed(0)} Mo à venir` +
     (duree ? ` · ${duree}` : "") +
@@ -7937,6 +7968,164 @@ function majPreparation(projet) {
    sans le dire vide une batterie, et une permission qu'on n'a pas demandée est
    une permission qu'on n'obtient pas. */
 const sentinelle = { verrou: null, voulue: false, prevenir: false };
+
+/* --- suspendre, reprendre, arrêter les transferts ---------------------
+
+   Rapatrier cent soixante-quinze rushs en 4G prend du temps et de la batterie,
+   et cela ne doit pas être subi. Trois gestes suffisent, et ils existent tous
+   les trois parce qu'ils répondent à trois besoins différents :
+
+   « Suspendre » interrompt sans rien perdre. Chaque fichier en cours garde les
+   octets déjà reçus — la reprise repart de là, jamais de zéro. C'est le geste
+   du métro, du forfait qui s'épuise, de la batterie à dix pour cent.
+
+   « Reprendre » remet en file ce qui manque, sans retélécharger ce qui est là.
+
+   « Arrêter » vide la file et efface les morceaux partiels : on renonce, et on
+   récupère la place. Ce que l'on a déjà entièrement rapatrié reste. */
+const transfert = { suspendu: false };
+
+function suspendreTransferts() {
+  transfert.suspendu = true;
+  // Chaque interruption garde ses octets : c'est le chemin d'abandon normal,
+  // qui écrit le morceau partiel et ne compte pas comme un échec.
+  for (const arret of arretsImport.values()) arret.abort();
+  majImports();
+  const projet = projetActif();
+  if (projet) majPreparation(projet);
+  majNotificationTransfert();
+}
+
+function reprendreTransferts() {
+  transfert.suspendu = false;
+  const projet = projetActif();
+  if (projet) {
+    for (const plan of projet.plans) {
+      const adresse = mediaDe(plan);
+      if (!adresse || plan.youtube) continue;
+      if (locales.has(adresse) || importsRates.has(adresse)) continue;
+      planifierImport(plan);
+    }
+    majPreparation(projet);
+  }
+  lancerImport();
+  majNotificationTransfert();
+}
+
+async function arreterTransferts() {
+  transfert.suspendu = true;
+  for (const arret of arretsImport.values()) arret.abort();
+  const restants = fileImport.splice(0, fileImport.length);
+  // Les morceaux partiels n'ont plus de raison d'être : on rend la place.
+  const adresses = new Set(restants.map((plan) => mediaDe(plan)).filter(Boolean));
+  for (const arret of arretsImport.keys()) adresses.add(arret);
+  for (const adresse of adresses) {
+    await effacerBase(cleParticelle(adresse)).catch(() => {});
+  }
+  essaisImport.clear();
+  majImports();
+  const projet = projetActif();
+  if (projet) majPreparation(projet);
+  fermerNotificationTransfert();
+}
+
+/* La notification qui montre l'avancement.
+
+   Une seule, qui se remplace elle-même — d'où l'étiquette fixe. Silencieuse :
+   elle se met à jour à chaque fichier arrivé, et un téléphone qui vibre cent
+   soixante-quinze fois est un téléphone qu'on éteint. Les boutons ne sont
+   affichés que là où le système les accepte ; sur iPhone ils n'existent pas, et
+   les mêmes gestes restent sous le bandeau de l'application. */
+async function majNotificationTransfert() {
+  if (!sentinelle.prevenir || !("serviceWorker" in navigator)) return;
+  const projet = projetActif();
+  if (!projet) return;
+  const { total, prets, perdus, octets } = resteAImporter(projet);
+  if (!total || prets + perdus >= total) return fermerNotificationTransfert();
+  try {
+    const enregistrement = await navigator.serviceWorker.ready;
+    const actions = [];
+    if ("actions" in Notification.prototype) {
+      actions.push(transfert.suspendu
+        ? { action: "reprendre", title: "Reprendre" }
+        : { action: "suspendre", title: "Suspendre" });
+      actions.push({ action: "arreter", title: "Arrêter" });
+    }
+    await enregistrement.showNotification(
+      transfert.suspendu ? "Chargement suspendu" : "Chargement des plans",
+      {
+        body: `${prets}/${total} plans sur l'appareil`
+          + (octets ? ` · ${(octets / 1e6).toFixed(0)} Mo restants` : "")
+          + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : ""),
+        icon: "icons/icon-192.png",
+        badge: "icons/icon-192.png",
+        tag: "amvauto-transfert",
+        silent: true,
+        renotify: false,
+        requireInteraction: false,
+        actions,
+      },
+    );
+  } catch { /* notifications refusées : le bandeau suffit */ }
+}
+
+async function fermerNotificationTransfert() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const enregistrement = await navigator.serviceWorker.ready;
+    const ouvertes = await enregistrement.getNotifications({ tag: "amvauto-transfert" });
+    for (const notification of ouvertes) notification.close();
+  } catch { /* rien à fermer */ }
+}
+
+/* Le service worker relaie les appuis sur les boutons de la notification :
+   c'est lui qui les reçoit, la page qui sait quoi en faire. */
+navigator.serviceWorker?.addEventListener?.("message", (evt) => {
+  const action = evt.data?.transfert;
+  if (action === "suspendre") suspendreTransferts();
+  else if (action === "reprendre") reprendreTransferts();
+  else if (action === "arreter") arreterTransferts().catch(() => {});
+});
+
+function boutonsTransfert() {
+  const boite = document.createElement("span");
+  boite.className = "transferts";
+  boite.id = "transferts";
+
+  const pause = document.createElement("button");
+  pause.type = "button";
+  pause.id = "btn-transfert-pause";
+  pause.addEventListener("click", () => {
+    if (transfert.suspendu) reprendreTransferts();
+    else suspendreTransferts();
+    majBoutonsTransfert();
+  });
+
+  const stop = document.createElement("button");
+  stop.type = "button";
+  stop.id = "btn-transfert-stop";
+  stop.textContent = "Arrêter";
+  stop.addEventListener("click", async () => {
+    const projet = projetActif();
+    const { total, prets } = projet ? resteAImporter(projet) : { total: 0, prets: 0 };
+    if (!confirm(`Arrêter le chargement ?\n\n${prets}/${total} plans sont déjà sur l'appareil et y restent.`
+      + " Ce qui n'est arrivé qu'à moitié sera effacé.")) return;
+    await arreterTransferts();
+    majBoutonsTransfert();
+  });
+
+  boite.append(pause, stop);
+  return boite;
+}
+
+function majBoutonsTransfert() {
+  const pause = $("btn-transfert-pause");
+  if (pause) {
+    pause.textContent = transfert.suspendu ? "Reprendre" : "Suspendre";
+    pause.classList.toggle("on", transfert.suspendu);
+  }
+  majBoutonVeille();
+}
 
 function boutonVeille() {
   const bouton = document.createElement("button");
