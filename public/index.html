@@ -1518,7 +1518,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 03:07";
+const VERSION_PAGE = "2026-08-25 03:12";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7068,6 +7068,24 @@ function ouvrirExport(projet) {
     livraison.before(note);
     livrerRendu(garde.blob, garde.extension, projet, livraison);
   }).catch(() => {});
+
+  /* Et ce qui a été gardé en ligne, s'il y a un code. C'est ce qu'on vient
+     chercher depuis un autre appareil — ou après avoir vidé celui-ci. */
+  listerGrenier().then((rendus) => {
+    if (!rendus.length || !document.body.contains(corps)) return;
+    const titre = document.createElement("div");
+    titre.className = "lecteur-meta";
+    titre.style.marginTop = "10px";
+    titre.textContent = `Gardés en ligne sous ton code — ${rendus.length} rendu(s)`;
+    livraison.after(titre);
+    let apres = titre;
+    for (const rendu of rendus) {
+      const ligne = lienGrenier(rendu);
+      apres.after(ligne);
+      apres = ligne;
+    }
+  }).catch(() => {});
+
   boite.append(corps);
   fond.replaceChildren(boite);
   fond.hidden = false;
@@ -8171,6 +8189,82 @@ function livrerRendu(blob, extension, projet, hote, cadence = 0) {
   voir.rel = "noopener";
   voir.textContent = "Ouvrir dans un onglet";
   hote.append(voir);
+
+  hote.append(boutonGrenier(blob, nom, projet));
+}
+
+/* --- le grenier : garder un rendu ailleurs que sur ce téléphone -------
+
+   Le coffre garde les décisions du montage — elles sont irremplaçables et
+   tiennent dans quelques dizaines de kilo-octets. Un rendu, lui, pèse dix
+   mégaoctets : trop pour le coffre, dont une valeur est plafonnée à
+   vingt-cinq. Il se refabrique, certes, mais le refabriquer prend des minutes
+   sur un téléphone — et si l'on oublie de l'enregistrer avant de fermer, tout
+   est à refaire.
+
+   Il monte donc dans un rangement à part, sous le même code que le coffre. Trois
+   rendus gardés par code : au quatrième, le plus ancien s'en va. */
+function boutonGrenier(blob, nom, projet) {
+  const bloc = document.createElement("div");
+  bloc.className = "lecteur-meta";
+  bloc.style.marginTop = "8px";
+
+  if (!coffre.code) {
+    bloc.textContent = "Active la sauvegarde en ligne dans les réglages pour garder ce rendu ailleurs que sur ce téléphone.";
+    return bloc;
+  }
+
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.textContent = `Garder en ligne (${(blob.size / 1e6).toFixed(1)} Mo)`;
+  const dit = document.createElement("span");
+  dit.style.cssText = "display:block;margin-top:6px";
+
+  bouton.addEventListener("click", async () => {
+    bouton.disabled = true;
+    dit.textContent = "Envoi…";
+    try {
+      const reponse = await fetch(`/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(nom)}`, {
+        method: "PUT",
+        headers: { "content-type": blob.type || "video/mp4" },
+        body: blob,
+      });
+      const charge = await reponse.json().catch(() => ({}));
+      if (!reponse.ok) throw new Error(charge.error || `refus ${reponse.status}`);
+      dit.textContent = `Gardé en ligne · ${charge.rendus?.length || 1} rendu(s) sous ton code`;
+      bouton.textContent = "Renvoyer";
+    } catch (erreur) {
+      dit.textContent = `L'envoi a échoué : ${erreur.message}`;
+    } finally {
+      bouton.disabled = false;
+    }
+  });
+
+  bloc.append(bouton, dit);
+  return bloc;
+}
+
+/* Ce que le grenier contient déjà, pour le reprendre sur un autre appareil. */
+async function listerGrenier() {
+  if (!coffre.code) return [];
+  try {
+    const reponse = await fetch(`/api/grenier?code=${encodeURIComponent(coffre.code)}`, { cache: "no-store" });
+    if (!reponse.ok) return [];
+    return (await reponse.json()).rendus || [];
+  } catch {
+    return [];
+  }
+}
+
+function lienGrenier(rendu) {
+  const ligne = document.createElement("div");
+  ligne.className = "lecteur-meta";
+  const lien = document.createElement("a");
+  lien.href = `/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(rendu.nom)}`;
+  lien.download = rendu.nom;
+  lien.textContent = `${rendu.nom} · ${(rendu.taille / 1e6).toFixed(1)} Mo`;
+  ligne.append(lien);
+  return ligne;
 }
 
 $("btn-setting").addEventListener("click", () => {

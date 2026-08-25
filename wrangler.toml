@@ -21,6 +21,13 @@ run_worker_first = true
 binding = "COFFRE"
 id = "7e8485da6b724b1b93045c6aaf0a993d"
 
+# Le grenier : les rendus, qui pèsent trop pour le coffre — une valeur y est
+# plafonnée à vingt-cinq mégaoctets. Trois par code, et rien d'autre n'y monte.
+# Le nom du seau n'est pas un secret : sans le compte, il ne donne accès à rien.
+[[r2_buckets]]
+binding = "GRENIER"
+bucket_name = "amvauto-rendus"
+
 # Workers AI : le modèle de langue qui écrit les paroles. Il tourne sur ce même
 # compte, sans clé à part, et le plan gratuit donne dix mille neurones par jour
 # — une chanson en coûte une quarantaine.

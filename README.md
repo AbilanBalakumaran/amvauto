@@ -2625,12 +2625,14 @@ ranger un proxy, pas le produire. Le seul produit Cloudflare qui transcode est
 Stream, payant, et qui supposerait d'héberger les rushs d'anime sous le compte
 de l'utilisateur — un risque qui dépasse la facture.
 
-Vérifié au passage sur le compte, par l'API : **R2 n'est pas activé**
+Vérifié au passage sur le compte, par l'API : R2 n'était alors pas activé
 (« Please enable R2 through the Cloudflare Dashboard »), et l'activation demande
 un moyen de paiement même pour les dix gigaoctets offerts. Ce n'est pas un
 paiement mais une vérification d'identité : du stockage à sortie gratuite est la
 cible d'abus la plus évidente, d'où la carte. Les ressources déjà employées —
-Workers, KV, Workers AI — sont bornées par nature et n'en demandent pas.
+Workers, KV, Workers AI — sont bornées par nature et n'en demandent pas. R2 a
+depuis été activé, et sert au grenier décrit plus bas — pas à fabriquer des
+proxies, ce que le fait ci-dessus interdit toujours.
 
 Autre vérification utile : Sakugabooru ne propose **aucune version légère** de
 ses fichiers (`montage: null`), et ses rushs font 854 × 480 pour six à dix
@@ -2661,6 +2663,47 @@ durer six heures.
 Et les fichiers eux-mêmes sont gardés un mois au bord au lieu d'un jour : leurs
 adresses sont des empreintes du contenu (`/data/<empreinte>.mp4`), donc ce
 qu'elles désignent ne changera jamais.
+
+## Le grenier : là où un rendu attend, hors du téléphone
+
+Le coffre garde les décisions — l'ordre des plans, les coupes, les noms. Elles
+sont irremplaçables et pèsent peu : soixante plans font trente-sept kilo-octets.
+Un rendu, lui, pèse dix mégaoctets. Il se refabrique, mais le refabriquer prend
+des minutes sur un téléphone, et il ne rentre pas dans le coffre : **une valeur
+KV est plafonnée à vingt-cinq mégaoctets**. C'est exactement le trou que R2
+comble, et le seul.
+
+Le grenier (`worker/src/grenier.js`, route `/api/grenier`, seau
+`amvauto-rendus`) tient sur quatre règles :
+
+- **Même clé que le coffre.** Le code de vingt caractères tiré au sort sur
+  l'appareil sert d'adresse. Pas de compte, rien de neuf à retenir.
+- **Le code est vérifié avant que R2 soit touché**, somme de contrôle comprise.
+  Un point d'entrée qui accepterait n'importe quoi sur un compte à sortie
+  gratuite serait un hébergeur de fichiers offert au premier venu.
+- **Trois rendus par code.** Au quatrième, le plus ancien s'efface. La place
+  occupée est bornée sans avoir à surveiller quoi que ce soit.
+- **Seulement des rendus** : `video/mp4`, `video/webm`, `application/zip`, cent
+  mégaoctets au plus — la limite d'un corps de requête chez Cloudflare.
+
+Essayé sur le Worker déployé, avec un code jetable et un vrai rendu de 1,6 Mo :
+
+```
+  code bidon (PUT)      : {"error":"code invalide"}          403
+  mauvais type (PUT)    : {"error":"ce grenier ne prend que des rendus"}
+  dépôt légitime        : rangé, listé avec sa taille
+  reprise (octets)      : 200 · 1 599 462 o · 0,314 s
+  identique à l'envoi ? : oui
+  liste sans code       : {"error":"code invalide"}
+```
+
+L'objet d'essai a été effacé après la mesure : le seau est reparti vide.
+
+Ce que le grenier ne fait pas : accélérer la prévisualisation. Un rendu déposé
+là est un résultat, pas un ingrédient — il ne remplace ni les rushs ni les
+proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleurs
+et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
+un rendu ne meurt plus avec l'onglet qui l'a produit.
 
 ## Décoder d'avance, sur un autre fil
 

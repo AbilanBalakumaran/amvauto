@@ -6,6 +6,7 @@ import { themes } from "./animethemes.js";
 import { coffre } from "./coffre.js";
 import { genererMusique } from "./musique.js";
 import { relayerMedia } from "./media.js";
+import { grenier } from "./grenier.js";
 import { ecrireParoles } from "./paroles.js";
 import { accorderParoles } from "./accord.js";
 import { lireScene } from "./scene.js";
@@ -333,6 +334,7 @@ export default {
         }
         if (url.pathname === "/api/media") return await relayerMedia(request, url);
         if (url.pathname === "/api/coffre") return await coffre(request, url, env);
+        if (url.pathname === "/api/grenier") return await grenier(request, url, env);
         if (url.pathname === "/api/musique") return await genererMusique(request, url, env);
         if (url.pathname === "/api/paroles") return await ecrireParoles(request, url, env);
         if (url.pathname === "/api/scene") return await lireScene(request, url, env);
