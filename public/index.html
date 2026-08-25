@@ -1580,7 +1580,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 07:23";
+const VERSION_PAGE = "2026-08-25 08:05";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3347,8 +3347,8 @@ function rangerMemoire() {
   const projet = projetActif();
   if (!projet) return;
   const gardes = new Set();
-  for (let i = lecture.index; i < lecture.index + PLANS_EN_MEMOIRE && i < projet.plans.length; i += 1) {
-    gardes.add(projet.plans[i].id);
+  for (const i of [lecture.index, ...plansApres(lecture.index, PLANS_EN_MEMOIRE - 1)]) {
+    if (projet.plans[i]) gardes.add(projet.plans[i].id);
   }
   for (const [id, tenue] of moteur.pretes) {
     if (gardes.has(id)) continue;
@@ -3389,18 +3389,64 @@ function imageDavance(plan, temps) {
   return choisie || tenue.images[0].image;
 }
 
+/* Une fenêtre sur l'état interne, pour le banc d'essai et pour le diagnostic.
+   La bande son n'est pas dans le document — c'est un « Audio » construit à la
+   main — donc rien ne permettait de l'observer du dehors. */
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
   enCours: [...moteur.enCours.values()].map((x) => x.plan),
-  images: [...moteur.pretes.values()].map((x) => `${x.entree.toFixed(2)}→${x.fin.toFixed(2)} (${x.images.length})`) });
+  images: [...moteur.pretes.values()].map((x) => `${x.entree.toFixed(2)}→${x.fin.toFixed(2)} (${x.images.length})`),
+  son: lecture.audio
+    ? { pause: lecture.audio.paused, boucle: lecture.audio.loop,
+        ou: Math.round(lecture.audio.currentTime * 10) / 10,
+        duree: Math.round((lecture.audio.duration || 0) * 10) / 10 }
+    : null,
+  tete: Math.round(lecture.position * 10) / 10,
+  plan: lecture.index,
+  boucleLecture: bouclePossible() });
 
 /* Préparer d'avance le plan courant et les suivants. Appelé au même moment que
    la préparation des lecteurs, et sans jamais rien attendre. */
+/* --- la lecture ne s'arrête pas au bout -------------------------------
+
+   Un aperçu de montage se regarde en boucle : on repasse la séquence pour voir
+   si une coupe tombe juste, et s'arrêter à la fin oblige à rappuyer chaque fois.
+   La lecture revient donc au début et continue, plans et musique.
+
+   Deux exceptions, et elles sont nécessaires. Un rendu en temps réel filme
+   l'aperçu : s'il bouclait, le fichier n'aurait pas de fin. Et un montage d'un
+   seul plan n'a pas de « suivant » à préparer — on le laisserait se doubler
+   lui-même. */
+const bouclePossible = () => {
+  const projet = projetActif();
+  return Boolean(projet) && projet.plans.length > 1 && !rendu.encours && !rendu.parImage;
+};
+
+/* Les plans qui viennent après celui-ci, en repassant par le début si la
+   lecture boucle. C'est ce qui fait que le premier plan est déjà chargé, et
+   déjà décodé, au moment où la séquence se referme. */
+function plansApres(index, combien) {
+  const projet = projetActif();
+  if (!projet) return [];
+  const n = projet.plans.length;
+  const suite = [];
+  for (let k = 1; k <= combien; k += 1) {
+    let i = index + k;
+    if (i >= n) {
+      if (!bouclePossible()) break;
+      i -= n;
+      if (i === index || i >= n) break;
+    }
+    suite.push(i);
+  }
+  return suite;
+}
+
 function amorcerAvance(index) {
   if (!moteurPossible()) return;
   const projet = projetActif();
   if (!projet) return;
-  for (let i = index; i < index + PLANS_EN_MEMOIRE && i < projet.plans.length; i += 1) {
-    amorcerImages(projet.plans[i]).catch(() => {});
+  for (const i of [index, ...plansApres(index, PLANS_EN_MEMOIRE - 1)]) {
+    if (projet.plans[i]) amorcerImages(projet.plans[i]).catch(() => {});
   }
   rangerMemoire();
 }
@@ -4685,7 +4731,7 @@ function preparerSuivants(index) {
      de quoi — et préparer la suite lui coupait son relais en plein milieu. */
   const gardes = new Set([elementActif(), lecture.bascule?.sortant]);
   const manquants = [];
-  for (let i = index + 1; i <= index + AVANCE_PLANS && i < projet.plans.length; i += 1) {
+  for (const i of plansApres(index, AVANCE_PLANS)) {
     const plan = projet.plans[i];
     if (!plan || plan.youtube || !mediaDe(plan)) continue;
     // Même règle qu'à l'affichage : préparer un plan que la réserve rapatrie
@@ -5529,8 +5575,37 @@ function chargerSon(projet, fichier) {
 
 function demarrerSon() {
   if (!lecture.audio) return;
-  lecture.audio.currentTime = Math.min(positionCourante(), lecture.audio.duration || 0);
+  /* Le morceau tourne en rond, comme le montage.
+
+     Une chanson plus courte que le montage se terminait, et le reste de
+     l'aperçu se regardait en silence — « je veux que les plans et la musique ne
+     s'arrêtent jamais ». Elle repart donc à zéro d'elle-même, et la position se
+     calcule au reste de la division : où que soit la tête, le son est à
+     l'endroit correspondant du morceau. */
+  lecture.audio.loop = true;
+  const longueur = lecture.audio.duration || 0;
+  const ou = positionCourante();
+  lecture.audio.currentTime = longueur > 0 ? ou % longueur : 0;
   lecture.audio.play().catch(() => {});
+}
+
+/* Le retour au début, sans rien arrêter.
+
+   Ni pause, ni son coupé, ni piste dégelée : la lecture se poursuit, elle
+   recommence simplement la séquence. Le premier plan est déjà chargé sur un
+   lecteur du vivier et ses premières images sont déjà décodées, parce que
+   « plansApres » les a préparés en repassant par le début. */
+function rebouclerLecture() {
+  const projet = projetActif();
+  if (!projet?.plans.length) { terminerLecture(); return; }
+  lecture.position = 0;
+  lecture.horloge = { debut: performance.now(), depart: 0 };
+  poserPlan(0, 0, lecture.demande);
+  if (lecture.audio) {
+    lecture.audio.loop = true;
+    lecture.audio.currentTime = 0;
+    if (lecture.demande) lecture.audio.play().catch(() => {});
+  }
 }
 
 function arreterSon() {
@@ -5897,6 +5972,8 @@ function planSuivant() {
        arrive un toutes les quelques secondes — d'où un montage qui « ne s'arrête
        pas » quand on appuie sur le bouton. */
     poserPlan(lecture.index + 1, 0, lecture.demande);
+  } else if (bouclePossible() && lecture.demande) {
+    rebouclerLecture();
   } else {
     arreter();
     poserPlan(0, 0);
@@ -7017,7 +7094,20 @@ function positionCourante() {
     }
   }
 
+  /* L'horloge a dépassé le bout du montage.
+
+     C'est le filet, pas le chemin normal : d'ordinaire c'est la fin du dernier
+     plan qui déclenche le retour au début. Quand l'horloge arrive là d'abord —
+     un plan qui patine, une tête posée à la main tout au bout — on la ramène au
+     début plutôt que de tout arrêter. */
   if (position >= duree_totale) {
+    if (bouclePossible() && lecture.demande) {
+      /* Ramener l'horloge au début ne suffit pas : le plan affiché serait resté
+         le dernier, et la tête aurait indiqué zéro pendant qu'on regarde la fin.
+         C'est toute la lecture qu'on replace, séquence comprise. */
+      rebouclerLecture();
+      return lecture.position;
+    }
     position = duree_totale;
     lecture.position = position;
     terminerLecture();
@@ -7110,6 +7200,7 @@ function suivreTete() {
             && video.currentTime >= sortieDe(plan) - 0.02);
       if (auBout) {
         if (lecture.index + 1 < projet.plans.length) planSuivant();
+        else if (bouclePossible()) rebouclerLecture();
         else terminerLecture();
       }
     }
@@ -8768,6 +8859,22 @@ $("btn-setting").addEventListener("click", () => {
        c'est voulu, mais ça rend le silence indéchiffrable de loin. Ces trois
        lignes tranchent : soit il tourne et sert des images, soit il ne tourne
        pas et l'on sait pourquoi. */
+    "Lecture en boucle :",
+    ...(() => {
+      const lignes = [bouclePossible()
+        ? "  oui — la séquence repart au début sans s'arrêter"
+        : "  non (rendu en cours, ou montage d'un seul plan)"];
+      if (lecture.audio) {
+        const longue = lecture.audio.duration || 0;
+        lignes.push(`  musique : ${lecture.audio.paused ? "en pause" : "en cours"}`
+          + ` · ${Math.round(lecture.audio.currentTime * 10) / 10} s sur ${Math.round(longue * 10) / 10} s`
+          + `${lecture.audio.loop ? " · en boucle" : ""}`);
+      } else {
+        lignes.push("  musique : aucune");
+      }
+      return lignes;
+    })(),
+    "",
     "Décodage d'avance :",
     ...(() => {
       if (!moteurPossible()) return [`  indisponible — ${moteur.raison || "désactivé"}`];

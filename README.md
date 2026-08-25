@@ -2705,6 +2705,61 @@ proxies, que Cloudflare ne sait toujours pas fabriquer. Son intérêt est ailleu
 et concret : un export lancé sur le téléphone se récupère sur l'ordinateur, et
 un rendu ne meurt plus avec l'onglet qui l'a produit.
 
+## L'aperçu ne s'arrête plus au bout
+
+Demande : « pendant la prévisualisation je veux que les plans et la musique ne
+s'arrêtent jamais, je veux que ça continue toujours ». C'est la bonne manière de
+regarder un montage — on repasse la séquence pour voir si une coupe tombe juste,
+et s'arrêter à la fin oblige à rappuyer chaque fois.
+
+La lecture revient donc au début et poursuit. Ni pause, ni son coupé, ni piste
+dégelée : c'est la même lecture qui continue, elle recommence simplement la
+séquence.
+
+### Ce qu'il fallait préparer pour que le retour ne marque pas
+
+Le vivier de lecteurs et le décodage d'avance travaillaient sur les plans
+« suivants » au sens du tableau : arrivés au dernier, ils ne préparaient plus
+rien, et le retour au début aurait été un démarrage à froid — exactement la pause
+qu'on a passé des semaines à supprimer. Une seule fonction, `plansApres`, dit
+maintenant quels plans viennent après celui-ci **en repassant par le début**.
+Le premier plan est donc déjà chargé sur un lecteur et ses premières images déjà
+décodées quand la séquence se referme.
+
+### La musique non plus ne se tait
+
+Une chanson plus courte que le montage se terminait, et le reste de l'aperçu se
+regardait en silence. Elle tourne maintenant en rond, et sa position se calcule au
+reste de la division : où que soit la tête, le son est à l'endroit correspondant
+du morceau. Mesuré pendant une boucle — tête à 1,0 s, son à 1,0 s sur 29,9 s,
+`loop` actif, jamais en pause.
+
+### Deux endroits où la boucle ne doit pas s'appliquer
+
+**Un rendu en temps réel filme l'aperçu.** S'il bouclait, le fichier n'aurait pas
+de fin. Le rendu désactive donc la boucle, et c'est vérifié plutôt que supposé :
+rendu en temps réel d'un montage de 5 s, terminé en 6 s, fichier livré.
+
+**Un montage d'un seul plan** n'a pas de suivant à préparer — il se doublerait
+lui-même.
+
+### Mesuré
+
+```
+montage de 5 s, joué 16 s —
+  retours au début : 3
+  lecture toujours en cours à la fin : oui
+  images présentées : 360 · plus long trou : 117 ms
+  son : en cours, en boucle, 1,0 s — la tête est à 1,0 s
+```
+
+Sans régression : démarrage (première image 104 ms après l'appui), arrêt sur le
+bouton, plans noirs, export image par image, rendu en temps réel, gel et retour de
+la piste, et la fluidité à cent vingt plans inchangée.
+
+Le diagnostic (« Setting ») porte deux lignes de plus : si la boucle est active, et
+où en est la musique.
+
 ## Cinq tours de mesure sur la lecture, et ce qu'ils ont donné
 
 Le tour précédent avait retiré la recopie sur toile. Cinq tours de plus, chacun
