@@ -2801,6 +2801,38 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+### « Je n'ai jamais vu la notification des chargements »
+
+Trois raisons possibles, et **une seule est un défaut** :
+
+1. **il n'y a rien à charger.** C'est la plus fréquente et la moins soupçonnée :
+   un projet dont les quatre-vingt-huit plans sont déjà sur l'appareil n'a rien
+   à annoncer, et la notification se referme au lieu de s'afficher ;
+2. **l'application est au premier plan.** iPhone n'affiche aucune bannière pour
+   l'application qu'on est en train de regarder — et sur iPhone il faut
+   justement rester dedans pour que le chargement continue, le système suspend
+   une application web mise derrière. La notification d'avancement était donc
+   posée pendant les seules secondes où elle ne pouvait pas se voir ;
+3. **les notifications sont coupées** — et cela, l'interrupteur le dit.
+
+Le premier point se règle en le disant : une ligne vivante dans Options annonce
+l'état réel — « les 88 plans sont déjà sur l'appareil, il n'y a rien à charger,
+donc rien à notifier », « 3 plans sur 10, le reste arrive », « chargement
+suspendu ». Elle suit le même rythme que le bandeau et ne coûte qu'un texte,
+seulement quand l'onglet est ouvert.
+
+Le second se règle en changeant le moment : la notification est **reposée quand
+l'application passe derrière**, ce qui est le seul instant où un iPhone accepte
+de l'afficher.
+
+```
+1. sans projet   : aucun projet ouvert, donc rien à charger
+2. en cours      : 3 plans sur 10, le reste arrive
+3. au départ     : 1 notification reposée — « 5/10 plans sur l'appareil · 8 Mo restants »
+4. tout chargé   : les 10 plans sont déjà là — rien à notifier
+5. suspendu      : chargement suspendu, 2 plans sur 10 déjà là
+```
+
 ### Le bouton d'essai, parce que « ça marche ou pas ? » se vérifie
 
 Question posée en regardant l'écran : « ça marche ou pas, et pourquoi iPhone ne

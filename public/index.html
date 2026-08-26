@@ -1614,6 +1614,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
           <button type="button" id="btn-notifs" class="interrupteur" role="switch" aria-checked="false">Notifications</button>
         </span>
       </div>
+      <p class="note-reglage" id="etat-chargement"></p>
       <p class="note-reglage" id="note-notifs"></p>
 
       <h2>Version</h2>
@@ -1637,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 03:00";
+const VERSION_PAGE = "2026-08-26 03:05";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -8069,6 +8070,8 @@ function majReglages() {
   const essai = $("btn-test-notif");
   if (essai) essai.hidden = !actives;
 
+  majEtatChargement();
+
   const etat = $("etat-notifs");
   if (etat) {
     if (permission === "absente") etat.textContent = "Ce navigateur ne sait pas afficher de notification.";
@@ -8081,6 +8084,7 @@ function majReglages() {
   const note = $("note-notifs");
   if (note && Date.now() - messageEssai > 25000) {
     note.textContent = "Deux notifications existent\u00a0: l'avancement du chargement — silencieuse, remplacée à chaque plan arrivé plutôt qu'empilée — et «\u00a0ton AMV est prêt\u00a0». "
+      + "Sur iPhone, aucune bannière ne s'affiche pour l'application qu'on regarde\u00a0: celle du chargement est reposée au moment où tu quittes l'application. "
       + "Ce réglage ne retire pas l'autorisation donnée à l'appareil, il fait taire l'application\u00a0: pour la retirer vraiment, c'est Réglages puis Notifications sur iPhone, "
       + "les réglages du site sur Android.";
   }
@@ -8118,6 +8122,44 @@ async function fermerToutesNotifications() {
     const enregistrement = await navigator.serviceWorker.ready;
     for (const notification of await enregistrement.getNotifications()) notification.close();
   } catch { /* rien à fermer */ }
+}
+
+/* « Je n'ai jamais vu la notification des chargements. »
+
+   Trois raisons possibles, et une seule est un défaut :
+
+   1. il n'y a rien à charger — tous les plans sont déjà sur l'appareil, donc
+      rien à annoncer ;
+   2. l'application est au premier plan — iPhone n'affiche aucune bannière pour
+      l'application qu'on est en train de regarder, et sur iPhone il faut
+      justement rester dedans pour que le chargement continue. La notification
+      est donc surtout utile sur Android et sur ordinateur ; elle est maintenant
+      reposée au moment où l'on quitte l'application, ce qui est le seul instant
+      où elle peut se voir ;
+   3. les notifications sont coupées — et cela, l'interrupteur au-dessus le dit.
+
+   Cette ligne dit laquelle des trois, plutôt que de laisser chercher. */
+function majEtatChargement() {
+  const ligne = $("etat-chargement");
+  if (!ligne) return;
+  const projet = projetActif();
+  if (!projet || !projet.plans?.length) {
+    ligne.textContent = "En ce moment : aucun projet ouvert, donc rien à charger et rien à annoncer.";
+    return;
+  }
+  const { total, prets, perdus } = resteAImporter(projet);
+  if (!total) {
+    ligne.textContent = "En ce moment : aucun fichier à rapatrier dans ce projet.";
+  } else if (prets + perdus >= total) {
+    ligne.textContent = `En ce moment\u00a0: les ${total} plans sont déjà sur l'appareil`
+      + (perdus ? ` (dont ${perdus} introuvable${perdus > 1 ? "s" : ""})` : "")
+      + ". Il n'y a rien à charger, donc rien à notifier — c'est la raison la plus fréquente de ne jamais voir la notification.";
+  } else if (transfert.suspendu) {
+    ligne.textContent = `En ce moment\u00a0: chargement suspendu, ${prets} plan${prets > 1 ? "s" : ""} sur ${total} déjà là.`;
+  } else {
+    ligne.textContent = `En ce moment\u00a0: ${prets} plan${prets > 1 ? "s" : ""} sur ${total}, le reste arrive.`
+      + " La notification se met à jour à chaque plan reçu, et se repose quand tu quittes l'application.";
+  }
 }
 
 /* Le bouton d'essai, parce qu'un réglage qu'on ne peut pas vérifier n'en est
@@ -8399,7 +8441,15 @@ function relacherVeille() {
 /* Le verrou d'écran est perdu dès que la page passe derrière : c'est la règle,
    pas un défaut. On le reprend au retour, tant que l'attente dure. */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return void (sentinelle.verrou = null);
+  if (document.hidden) {
+    sentinelle.verrou = null;
+    /* iPhone n'affiche aucune bannière pour l'application qui est devant : la
+       notification d'avancement était donc postée pendant les seules secondes
+       où elle ne pouvait pas se voir. On la repose au moment du départ, quand
+       l'application n'est plus au premier plan. */
+    majNotificationTransfert();
+    return;
+  }
   prendreVeille();
   sentinelle.autorisee = permissionNotifs() === "granted";
   majReglages();
@@ -8448,6 +8498,9 @@ function majImports() {
   if (majPrevue) { clearTimeout(majPrevue); majPrevue = null; }
   majDerniere = maintenant;
   peindreImports();
+  // La ligne d'Infos suit le même rythme que le bandeau : elle ne coûte qu'un
+  // texte, et seulement quand l'onglet est ouvert.
+  if (!$("vue-apropos")?.hidden) majEtatChargement();
 }
 
 // L'interface reflète l'avancement, et le plan courant bascule sur sa copie
