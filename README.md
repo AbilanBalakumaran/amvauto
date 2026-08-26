@@ -2801,6 +2801,30 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Deux affichages, une seule vérité
+
+La bannière du système disait « 42/88 · 48 % · 3 sans segment », l'écran disait
+« 39/88 plans préparés · 4 sans segment ». Les deux étaient exacts, et c'est
+bien le problème : **ils affichaient deux grandeurs différentes sous la même
+forme**. L'une comptait les blocs traités — réussis plus refusés —, l'autre les
+blocs réussis. Deux fractions « n/88 » côte à côte, dont l'une paraît fausse.
+
+La sortie n'était pas de choisir laquelle des deux garder, mais de changer ce
+qu'on mesure. Le but n'est pas « préparer les quatre-vingt-huit », c'est
+**préparer tout ce qui peut l'être**. Un bloc définitivement refusé sort donc du
+but au lieu d'être compté comme fait : l'avancement redevient une seule grandeur
+— des plans préparés sur des plans préparables —, il atteint cent pour cent, et
+il veut dire quelque chose.
+
+Et la phrase est écrite une fois, dans `phraseApercu`, pour les deux affichages.
+Ils ne peuvent plus diverger que par l'instant où ils ont été écrits, et l'heure
+affichée à côté de la bannière suffit à le dire.
+
+```
+écran   : 8/8 plans préparés · 2 sans segment — fichier illisible, même après reprise (BIN)
+système : 8/8 plans préparés · 2 sans segment — fichier illisible, même après reprise (BIN)
+```
+
 ## « Cet appareil ne sait pas lire le MP4 »
 
 Une phrase impossible, et c'est elle qui a livré la vraie cause. Un iPhone lit

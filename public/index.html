@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 09:56";
+const VERSION_PAGE = "2026-08-26 10:11";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -8484,14 +8484,11 @@ function majPreparation(projet) {
       return;
     }
     const refusesEnCours = bilan.refuses;
-    /* Refusés compris : sans cela, dix blocs sans segment gardaient l'affichage
-       dans la phase « préparation » pour toujours, et la fin n'arrivait jamais. */
-    if (totalBlocs && bilan.traites < totalBlocs) {
+    /* Refusés sortis du but : sans cela, dix blocs sans segment gardaient
+       l'affichage dans la phase « préparation » pour toujours. */
+    if (totalBlocs && !bilan.fini) {
       bandeau.hidden = false;
-      const refuses = refusesEnCours;
-      dit.textContent = `Aperçu : ${fait}/${totalBlocs} plans préparés`
-        + resteApercu(bilan.traites, totalBlocs)
-        + (refuses ? ` · ${refuses} sans segment — ${raisonDominante()}` : "")
+      dit.textContent = `Aperçu : ${phraseApercu(projet, false)}`
         + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
       majNotificationTransfert();
       return;
@@ -8500,10 +8497,12 @@ function majPreparation(projet) {
     const refusesFinaux = refusesEnCours;
     bandeau.hidden = !perdus && !refusesFinaux;
     if (perdus || refusesFinaux) {
+      // Même vocabulaire qu'en cours de route : « préparés », toujours, pour
+      // qu'on ne croie pas lire une autre grandeur.
       dit.textContent = [
-        `${prets}/${total} plans sur l'appareil`,
-        perdus ? `${perdus} introuvable${perdus > 1 ? "s" : ""}` : "",
+        `${bilan.faits}/${bilan.preparables} plans préparés`,
         refusesFinaux ? `${refusesFinaux} sans segment — ${raisonDominante()}` : "",
+        perdus ? `${perdus} introuvable${perdus > 1 ? "s" : ""}` : "",
       ].filter(Boolean).join(" · ");
     }
     return;
@@ -9027,20 +9026,13 @@ function barreTexte(part) {
 }
 
 async function majNotificationApercu(projet) {
-  const { concernes, faits, refuses, traites } = bilanApercu(projet);
-  const restants = Math.max(0, concernes - traites);
-  if (!concernes || !restants || fabrique.possible === false) {
+  const { concernes, fini } = bilanApercu(projet);
+  if (!concernes || fini || fabrique.possible === false) {
     marquerPastille(0);
     return fermerNotificationTransfert();
   }
   marquerPastille(1);
-
-  const part = traites / concernes;
-  // La fraction et le pourcentage disent la même chose, et les refus sont
-  // nommés à côté plutôt que fondus dedans.
-  const texte = `${barreTexte(part)}  ${traites}/${concernes}  ${Math.round(part * 100)} %`
-    + (refuses ? ` · ${refuses} sans segment (${raisonDominante()})` : "")
-    + resteApercu(traites, concernes);
+  const texte = phraseApercu(projet, true);
   const maintenant = Date.now();
   if (texte === avis.texte || maintenant - avis.quand < RYTHME_AVIS) return;
   avis.texte = texte;
@@ -9105,7 +9097,34 @@ function bilanApercu(projet) {
     if (segments.has(cle)) faits += 1;
     else if (segmentsRates.has(cle)) refuses += 1;
   }
-  return { concernes, faits, refuses, traites: faits + refuses };
+  /* Le but, ce n'est pas « préparer les quatre-vingt-huit », c'est « préparer
+     tout ce qui peut l'être ». Un bloc définitivement refusé sort donc du but
+     au lieu d'être compté comme fait : l'avancement reste une seule et même
+     grandeur — des plans préparés sur des plans préparables — il atteint cent
+     pour cent, et il veut dire quelque chose.
+
+     C'est ce qui manquait pour que la bannière et l'écran disent la même
+     chose : ils affichaient tous deux « n/88 », mais l'un comptait les traités
+     et l'autre les préparés. Deux grandeurs différentes sous la même forme. */
+  const preparables = Math.max(0, concernes - refuses);
+  return {
+    concernes, faits, refuses, preparables,
+    part: preparables ? faits / preparables : 1,
+    fini: faits >= preparables,
+  };
+}
+
+/* La phrase de l'avancement, écrite une fois pour tout le monde.
+
+   La bannière de l'écran et celle du système n'ont pas le droit de se
+   contredire : elles sortent du même calcul et de la même mise en forme. */
+function phraseApercu(projet, avecBarre) {
+  const bilan = bilanApercu(projet);
+  const { faits, preparables, refuses, part } = bilan;
+  return (avecBarre ? `${barreTexte(part)}  ` : "")
+    + `${faits}/${preparables} préparés · ${Math.round(part * 100)} %`
+    + (refuses ? ` · ${refuses} sans segment (${raisonDominante()})` : "")
+    + resteApercu(faits, preparables);
 }
 
 /* La raison la plus fréquente des refus, dite en clair.
@@ -9153,11 +9172,11 @@ function annoncerApercuPret(projet, total) {
   if (!sentinelle.prevenir) return;
   // Annoncer « les 88 plans sont préparés » quand dix ne l'ont pas été, c'est
   // exactement le genre de petit mensonge qui fait douter du reste.
-  const { faits, refuses } = bilanApercu(projet);
+  const { faits, refuses, preparables } = bilanApercu(projet);
   navigator.serviceWorker?.ready?.then((enregistrement) => {
     enregistrement.showNotification(refuses ? "Aperçu préparé, en partie" : "L'aperçu est prêt", {
       body: refuses
-        ? `${faits}/${total} plans préparés · ${refuses} sans segment — ${raisonDominante()}.`
+        ? `${faits}/${preparables} plans préparés · ${refuses} sans segment — ${raisonDominante()}.`
         : `Les ${total} plans sont préparés. La lecture ne saute plus, et la vidéo peut être rendue.`,
       icon: "icons/icon-192.png",
       badge: "icons/icon-192.png",
