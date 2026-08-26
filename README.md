@@ -2801,6 +2801,43 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## « Cet appareil ne sait pas lire le MP4 »
+
+Une phrase impossible, et c'est elle qui a livré la vraie cause. Un iPhone lit
+le MP4. Le format n'était donc pas en cause : **le fichier l'était**.
+
+Un téléchargement interrompu qu'on a compté comme fini, une écriture refusée
+faute de place — et il reste sur l'appareil un fichier tronqué que plus rien ne
+lit. Ni le démultiplexeur, qui n'y trouve pas de « moov » et refuse le bloc, ni
+le lecteur, qui n'arrive pas à le charger. L'application avait alors tout ce
+qu'il faut pour conclure « format illisible » et renoncer pour toujours.
+
+Le bon geste n'est pas de renoncer, c'est de **jeter le fichier et de le
+reprendre**. Une seule fois : si le fichier neuf ne se lit pas davantage, alors
+c'est vraiment le format, et on le dit.
+
+```
+quatre plans dont deux arrivent tronqués —
+  le démultiplexeur refuse · le lecteur refuse · le fichier est jeté et repris
+  → 4/4 préparés · 0 sans segment
+```
+
+Le même indice se lisait ailleurs sans qu'on le voie : la bannière annonçait
+« 0/87 · 456 Mo restants » pendant que l'application affichait « 88 plans ·
+456 Mo · tous importés ». Les deux étaient vraies au moment où elles ont été
+écrites — au démarrage, les fichiers de l'appareil ne sont pas encore retrouvés,
+et « prêts » vaut zéro pendant quelques secondes. La bannière partait donc avec
+un chiffre faux, n'était plus jamais mise à jour puisque la phase suivante prend
+le relais, et restait affichée à côté d'elle : **le doublon**. On ne parle
+désormais que s'il y a vraiment quelque chose en vol ou en file.
+
+Et l'étiquette : on avait essayé de s'en remettre au remplacement par étiquette
+pour éviter une alerte à chaque envoi. Vérifié sur l'appareil, **iPhone ne
+remplace pas, il empile** — les deux bannières de la capture le prouvent. On
+ferme donc tout ce qui vient de l'application avant de poster. Une seule
+bannière, toujours, au prix d'une alerte par mise à jour : d'où les vingt
+secondes entre deux.
+
 ## Deux chiffres qui se contredisent, et une alerte toutes les huit secondes
 
 « Il montre 51 % mais le nombre d'images ne bouge pas. »

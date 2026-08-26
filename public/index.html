@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 09:21";
+const VERSION_PAGE = "2026-08-26 09:56";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3658,6 +3658,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
   segments: { prets: bilanApercu(projetActif()).faits,
     total: bilanApercu(projetActif()).concernes,
     refuses: bilanApercu(projetActif()).refuses,
+    parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     faits: fabrique.faits, rates: fabrique.rates,
     octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
   imports: { file: fileImport.length, enVol: arretsImport.size, places: importsEnCours,
@@ -4246,6 +4247,8 @@ function surveillerFabrique() {
    mais c'est la différence entre un bloc préparé et un bloc refusé. */
 const parLecteur = new Set();
 const raisonsSegment = new Map();
+// Les fichiers déjà repris une fois : on ne tourne pas en rond.
+const refaits = new Set();
 
 async function fabriquerParLecteur(suite, cadre) {
   const { plan, cle } = suite;
@@ -4277,12 +4280,39 @@ async function fabriquerParLecteur(suite, cadre) {
       setTimeout(() => dire(video.readyState >= 2), 10000);
     });
     if (!pret) {
-      // Le seul cas sans recours : l'appareil ne sait pas lire ce format.
-      const bout = (mediaDe(plan) || "").split("?")[0].split(".").pop().toLowerCase();
-      raisonsSegment.set(cle, bout && bout.length <= 5
-        ? `cet appareil ne sait pas lire le ${bout.toUpperCase()}`
-        : "cet appareil ne sait pas lire ce fichier");
       ranger();
+      /* Un MP4 que l'appareil ne sait pas lire, cela n'existe pas.
+
+         C'est ce que disait l'écran — « 3 sans segment : cet appareil ne sait
+         pas lire le MP4 » — et c'était le bon indice : le format n'était pas en
+         cause, le fichier l'était. Un téléchargement interrompu qu'on a compté
+         comme fini, une écriture refusée faute de place, et il reste sur
+         l'appareil un fichier tronqué que plus rien ne lit — ni le
+         démultiplexeur, qui n'y trouve pas de « moov », ni le lecteur.
+
+         Le bon geste n'est pas de renoncer, c'est de le jeter et de le
+         reprendre. Une seule fois : si le fichier neuf ne se lit pas davantage,
+         alors c'est vraiment le format, et on le dit. */
+      const adresse = mediaDe(plan);
+      if (adresse && !refaits.has(adresse)) {
+        refaits.add(adresse);
+        raisonsSegment.set(cle, "fichier abîmé sur l'appareil — il est repris");
+        await effacerBase(adresse).catch(() => {});
+        await effacerBase(cleParticelle(adresse)).catch(() => {});
+        try { URL.revokeObjectURL(locales.get(adresse)); } catch { /* déjà libéré */ }
+        locales.delete(adresse);
+        volatiles.delete(adresse);
+        importsRates.delete(adresse);
+        essaisImport.delete(adresse);
+        raisonsImport.delete(adresse);
+        planifierImport(plan);
+        majImports();
+        return "reprise";
+      }
+      const bout = (adresse || "").split("?")[0].split(".").pop().toLowerCase();
+      raisonsSegment.set(cle, bout && bout.length <= 5
+        ? `fichier illisible, même après reprise (${bout.toUpperCase()})`
+        : "fichier illisible, même après reprise");
       return false;
     }
 
@@ -4397,7 +4427,9 @@ async function fabriquerSuivant() {
     fabrique.lecteurEnCours = true;
     try {
       const fait = await fabriquerParLecteur(suite, cadreVise);
-      if (!fait) { segmentsRates.add(suite.cle); fabrique.rates += 1; }
+      // « reprise » : le fichier est reparti en téléchargement, le bloc n'est
+      // pas perdu — il repassera ici quand le fichier neuf sera arrivé.
+      if (fait !== "reprise" && !fait) { segmentsRates.add(suite.cle); fabrique.rates += 1; }
     } finally {
       fabrique.lecteurEnCours = false;
     }
@@ -8897,6 +8929,17 @@ async function majNotificationTransfert() {
   const projet = projetActif();
   if (!projet) return;
   const { total, prets, perdus, octets } = resteAImporter(projet);
+  /* Un chargement qui n'a pas lieu ne s'annonce pas.
+
+     Au démarrage, les fichiers de l'appareil ne sont pas encore retrouvés :
+     pendant ces quelques secondes « prêts » vaut zéro alors que tout est là. La
+     bannière partait donc avec « 0/87 · 456 Mo restants », puis n'était plus
+     jamais mise à jour — la phase suivante prend le relais — et restait affichée
+     à côté d'elle, fausse et indélogeable. C'est le doublon.
+
+     On ne parle donc que s'il y a vraiment quelque chose en vol ou en file. */
+  const enTravail = fileImport.length || arretsImport.size || attentesImport.size;
+  if (!enTravail) return majNotificationApercu(projet);
   if (total && prets + perdus < total) marquerPastille(1);
   /* Deux phases, pas une.
 
@@ -8927,9 +8970,7 @@ async function majNotificationTransfert() {
         : { action: "suspendre", title: "Suspendre" });
       actions.push({ action: "arreter", title: "Arrêter" });
     }
-    for (const ouverte of await enregistrement.getNotifications()) {
-      if (ouverte.tag !== "amvauto-transfert") ouverte.close();
-    }
+    for (const ouverte of await enregistrement.getNotifications()) ouverte.close();
     await enregistrement.showNotification(
       transfert.suspendu ? "Chargement suspendu" : "Chargement des plans",
       {
@@ -8977,7 +9018,7 @@ async function majNotificationTransfert() {
    fois le même texte. Le seul compteur qui se met vraiment à jour sans alerter
    personne reste la pastille de l'icône. */
 const avis = { texte: "", quand: 0 };
-const RYTHME_AVIS = 60000;
+const RYTHME_AVIS = 20000;
 
 function barreTexte(part) {
   const cases = 10;
@@ -9007,15 +9048,13 @@ async function majNotificationApercu(projet) {
 
   try {
     const enregistrement = await navigator.serviceWorker.ready;
-    /* On ne ferme que le surplus.
-
-       Fermer puis reposter garantissait une nouvelle alerte à chaque fois. On
-       laisse donc l'étiquette faire son travail de remplacement, et on ne
-       ferme que ce qui est en trop — une bannière d'une autre phase, ou celle
-       d'une page pas encore mise à jour. */
-    for (const ouverte of await enregistrement.getNotifications()) {
-      if (ouverte.tag !== "amvauto-transfert") ouverte.close();
-    }
+    /* Vérifié sur l'appareil : iPhone ne remplace pas une notification par
+       étiquette, il l'empile. Deux phases côte à côte, l'une périmée — on a
+       essayé de s'en remettre à l'étiquette, cela ne marche pas. On ferme donc
+       tout ce qui vient de l'application avant de poster. Une seule bannière,
+       toujours, au prix d'une alerte par mise à jour : c'est pour cela qu'elles
+       sont espacées. */
+    for (const ouverte of await enregistrement.getNotifications()) ouverte.close();
     await enregistrement.showNotification("Préparation de l'aperçu", {
       body: texte,
       icon: "icons/icon-192.png",
