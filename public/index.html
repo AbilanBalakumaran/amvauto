@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 08:04";
+const VERSION_PAGE = "2026-08-26 08:23";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3742,7 +3742,21 @@ const LARGE_SEGMENT = (() => {
    On prend la définition la plus fréquente du projet : la majorité des plans
    passe alors sans être touchée, et les rares plus grands sont réduits, ce qui
    ne s'aperçoit pas. */
+let cadreGarde = { marque: "", valeur: null };
+
 function cadreApercu(projet) {
+  /* Mémoïsé : « surSegment » l'appelle pour chaque plan, dans une boucle sur
+     tous les plans. Sur quatre-vingt-huit blocs cela faisait sept mille sept
+     cents parcours par rafraîchissement, pour un résultat qui ne change qu'au
+     changement de montage. */
+  const marque = `${projet?.id || ""}:${projet?.plans?.length || 0}:${versionMontage}`;
+  if (cadreGarde.marque === marque && cadreGarde.valeur) return cadreGarde.valeur;
+  const valeur = calculerCadre(projet);
+  cadreGarde = { marque, valeur };
+  return valeur;
+}
+
+function calculerCadre(projet) {
   const plans = projet?.plans || [];
   const combien = new Map();
   for (const plan of plans) {
@@ -4109,7 +4123,14 @@ function filFabrique() {
       // Le suivant, mais jamais dans la foulée : on rend la main d'abord.
       setTimeout(() => fabriquerSuivant(), 0);
     };
-    fabrique.fil.onerror = () => { fabrique.possible = false; fabrique.fil = null; fabrique.encours = null; };
+    /* Un fil qui tombe n'est pas un appareil incapable.
+
+       On le déclarait définitivement impossible : une seule erreur, et la
+       fabrique était éteinte pour toute la séance. Or un encodeur peut échouer
+       sur un fichier particulier, ou le système peut reprendre la mémoire d'un
+       fil sous pression — cela ne dit rien du suivant. On le remplace, cinq fois
+       au plus, et c'est seulement au sixième qu'on renonce. */
+    fabrique.fil.onerror = () => { fabrique.encours = null; redemarrerFabrique("le fil a échoué"); };
   } catch {
     fabrique.possible = false;
     fabrique.fil = null;
@@ -4154,6 +4175,50 @@ function prochainAFabriquer() {
     return { plan, cle };
   }
   return null;
+}
+
+/* Le chien de garde de la fabrique — le défaut qui figeait « 39/88 ».
+
+   Un bloc est confié au fil, et la suite du travail est déclenchée par sa
+   réponse. S'il ne répond jamais — encodeur qui reste bloqué, fil repris par le
+   système sous pression mémoire, ce qui arrive sur un téléphone après quelques
+   dizaines de segments — la place reste prise, « fabriquerSuivant » ressort
+   aussitôt à chaque battement, et la préparation s'arrête net. Définitivement,
+   et sans un mot : le compteur reste sur le même chiffre, jour après jour.
+
+   Rien ne surveillait cela. Vingt-cinq secondes sans réponse pour un bloc qui en
+   prend deux à cinq, et l'on considère le fil perdu : on le remplace et on
+   repart. Le bloc lui-même a droit à une seconde chance avant d'être écarté. */
+let tourPreparation = 0;
+const ATTENTE_FABRIQUE = 25000;
+const REDEMARRAGES_MAX = 5;
+const essaisSegment = new Map();
+
+function redemarrerFabrique(pourquoi) {
+  try { fabrique.fil?.terminate(); } catch { /* déjà mort */ }
+  fabrique.fil = null;
+  fabrique.encours = null;
+  if (fabrique.redemarrages >= REDEMARRAGES_MAX) {
+    fabrique.possible = false;
+    fabrique.pourquoi = `${pourquoi} — ${REDEMARRAGES_MAX} fois, on renonce`;
+    return;
+  }
+  fabrique.redemarrages = (fabrique.redemarrages || 0) + 1;
+  fabrique.pourquoi = pourquoi;
+  // « undefined » et non « false » : c'est ce qui autorise filFabrique à le recréer.
+  fabrique.possible = undefined;
+}
+
+function surveillerFabrique() {
+  const attente = fabrique.encours;
+  if (!attente) return;
+  if (performance.now() - attente.depart < ATTENTE_FABRIQUE) return;
+  fabrique.perdus = (fabrique.perdus || 0) + 1;
+  const faits = (essaisSegment.get(attente.cle) || 0) + 1;
+  essaisSegment.set(attente.cle, faits);
+  // Deux fois sans réponse sur le même bloc : c'est lui le problème, on passe.
+  if (faits >= 2) { segmentsRates.add(attente.cle); fabrique.rates += 1; }
+  redemarrerFabrique("le fil n'a pas répondu");
 }
 
 async function fabriquerSuivant() {
@@ -4412,7 +4477,18 @@ function battreMoniteur() {
      Elle se garde elle-même : rien pendant qu'on regarde, rien pendant un
      rendu, rien tant qu'un segment est en cours. Le battement n'est qu'une
      occasion régulière de reprendre le travail là où il en était. */
+  surveillerFabrique();
   fabriquerSuivant().catch(() => {});
+  /* Et le compteur se relit, une fois par seconde.
+
+     Il n'était repeint qu'à l'arrivée d'un segment. Un seul rafraîchissement
+     manqué — parce que le fil s'est tu, ou parce qu'une étape a échoué avant —
+     et le bandeau restait sur son dernier chiffre pour toujours. On croit la
+     préparation arrêtée alors qu'on regarde une photographie. */
+  if ((tourPreparation = (tourPreparation + 1) % 4) === 0) {
+    const projetVu = projetActif();
+    if (projetVu && !$("vue-projet")?.hidden) majPreparation(projetVu);
+  }
   // Les mesures de mise en page se périment ici : quatre fois par seconde, au
   // lieu d'être refaites à chaque image depuis la boucle de lecture.
   oublierMesuresPage();
@@ -8210,10 +8286,13 @@ function majPreparation(projet) {
     if (totalBlocs && fait < totalBlocs) {
       bandeau.hidden = false;
       dit.textContent = `Aperçu : ${fait}/${totalBlocs} plans préparés`
-        + (fabrique.encours ? " · en cours" : "")
+        + resteApercu(fait, totalBlocs)
+        + (fabrique.rates ? ` · ${fabrique.rates} refusé${fabrique.rates > 1 ? "s" : ""}` : "")
         + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
+      majNotificationTransfert();
       return;
     }
+    annoncerApercuPret(projet, totalBlocs);
     bandeau.hidden = !perdus;
     if (perdus) {
       dit.textContent = `${prets}/${total} plans sur l'appareil · ${perdus} introuvable${perdus > 1 ? "s" : ""}`
@@ -8467,6 +8546,16 @@ function pourquoiCoince() {
       + " Le bouton « Réessayer », sous la piste, les remet tous en file.");
   }
 
+  if (fabrique.possible === false) {
+    bouts.push(` La préparation de l'aperçu est arrêtée\u00a0: ${fabrique.pourquoi || "ce navigateur ne sait pas la faire"}.`);
+  } else if (fabrique.redemarrages) {
+    bouts.push(` Le fil de préparation a dû être relancé ${fabrique.redemarrages} fois`
+      + (fabrique.perdus ? ` (${fabrique.perdus} bloc${fabrique.perdus > 1 ? "s restés" : " resté"} sans réponse)` : "") + ".");
+  }
+  if (fabrique.rates) {
+    bouts.push(` ${fabrique.rates} bloc${fabrique.rates > 1 ? "s ont" : " a"} été refusé${fabrique.rates > 1 ? "s" : ""} à la préparation\u00a0: ces plans-là se liront directement, sans segment.`);
+  }
+
   if (place.refusee) {
     bouts.push(` L'appareil a refusé ${place.refusee} écriture${place.refusee > 1 ? "s" : ""}\u00a0: ${place.derniere}.`
       + " Ces plans-là se rejoueront cette fois-ci, mais auront disparu à la réouverture.");
@@ -8618,7 +8707,14 @@ async function majNotificationTransfert() {
   const projet = projetActif();
   if (!projet) return;
   const { total, prets, perdus, octets } = resteAImporter(projet);
-  if (!total || prets + perdus >= total) return fermerNotificationTransfert();
+  /* Deux phases, pas une.
+
+     La notification ne parlait que du rapatriement des fichiers. Or une fois
+     les quatre-vingt-huit rushs sur l'appareil, il reste le plus long : les
+     préparer un par un. C'est cette phase-là qu'on regarde avancer, et c'était
+     la seule dont rien ne parlait — « ça ne me permet pas de savoir combien de
+     plans sont chargés sur combien ». */
+  if (!total || prets + perdus >= total) return majNotificationApercu(projet);
   try {
     const enregistrement = await navigator.serviceWorker.ready;
     const actions = [];
@@ -8644,6 +8740,71 @@ async function majNotificationTransfert() {
       },
     );
   } catch { /* notifications refusées : le bandeau suffit */ }
+}
+
+/* La préparation de l'aperçu, avec son avancement et son attente.
+
+   Même étiquette que le chargement : les deux phases se suivent, et deux
+   bannières côte à côte pour un seul travail seraient deux fois moins lisibles
+   qu'une seule qui se met à jour. */
+async function majNotificationApercu(projet) {
+  const plans = projet?.plans || [];
+  const total = plans.length;
+  const faits = plans.filter(surSegment).length;
+  if (!total || faits >= total || fabrique.possible === false) {
+    return fermerNotificationTransfert();
+  }
+  try {
+    const enregistrement = await navigator.serviceWorker.ready;
+    const actions = [];
+    if ("actions" in Notification.prototype) {
+      actions.push({ action: "arreter", title: "Arrêter" });
+    }
+    await enregistrement.showNotification("Préparation de l'aperçu", {
+      body: `${faits}/${total} plans préparés${resteApercu(faits, total)}`,
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      tag: "amvauto-transfert",
+      silent: true,
+      renotify: false,
+      requireInteraction: false,
+      actions,
+    });
+  } catch { /* notifications refusées : le bandeau suffit */ }
+}
+
+/* Et quand la préparation est enfin finie, on le dit — une fois.
+
+   C'est la seule bonne nouvelle de toute l'attente, et elle arrive souvent
+   quand on ne regarde plus. */
+let apercuAnnonce = "";
+
+function annoncerApercuPret(projet, total) {
+  const marque = `${projet?.id}:${total}`;
+  if (!total || apercuAnnonce === marque) return;
+  apercuAnnonce = marque;
+  fermerNotificationTransfert();
+  if (!sentinelle.prevenir) return;
+  navigator.serviceWorker?.ready?.then((enregistrement) => {
+    enregistrement.showNotification("L'aperçu est prêt", {
+      body: `Les ${total} plans sont préparés. La lecture ne saute plus, et la vidéo peut être rendue.`,
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      tag: "amvauto-pret",
+    });
+  }).catch(() => {});
+}
+
+/* Le temps qu'il reste, mesuré sur les blocs déjà faits — pas estimé.
+   Sans lui, « 39/88 » ressemble à une panne ; avec lui, à une attente. */
+function resteApercu(faits, total) {
+  if (!fabrique.faits) return "";
+  const parBloc = fabrique.duree / fabrique.faits;
+  const reste = Math.max(0, total - faits) * parBloc;
+  if (reste < 20000) return "";
+  return reste > 90000
+    ? ` · encore ~${Math.round(reste / 60000)} min`
+    : ` · encore ~${Math.round(reste / 1000)} s`;
 }
 
 async function fermerNotificationTransfert() {
@@ -8811,8 +8972,18 @@ function finirVeille(prets, total) {
   majBoutonVeille();
   if (!sentinelle.prevenir || !total) return;
   navigator.serviceWorker?.ready?.then((enregistrement) => {
-    enregistrement.showNotification("Ton AMV est prêt", {
-      body: `${prets} plans sur l'appareil. L'aperçu ne saute plus, et la vidéo peut être rendue.`,
+    const projet = projetActif();
+    const plans = projet?.plans || [];
+    const faits = plans.filter(surSegment).length;
+    const reste = Math.max(0, plans.length - faits);
+    enregistrement.showNotification(reste ? "Les plans sont là" : "Ton AMV est prêt", {
+      /* Il annonçait « prêt » dès le dernier fichier reçu, alors que la
+         préparation de l'aperçu — la phase la plus longue — n'avait pas
+         commencé. Annoncer fini ce qui ne l'est pas, c'est ce qui fait douter
+         de tout le reste. */
+      body: reste
+        ? `${prets} plans sur l'appareil. Reste à préparer l'aperçu : ${faits}/${plans.length} plans${resteApercu(faits, plans.length)}.`
+        : `${prets} plans sur l'appareil. L'aperçu ne saute plus, et la vidéo peut être rendue.`,
       icon: "icons/icon-192.png",
       badge: "icons/icon-192.png",
       tag: "amvauto-pret",

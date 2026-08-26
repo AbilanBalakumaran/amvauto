@@ -2801,6 +2801,69 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Le vrai « 39 sur 88 » : la fabrique, pas le chargement
+
+Une capture d'écran a corrigé le diagnostic. Le bandeau ne disait pas
+« 39/88 plans chargés » mais **« Aperçu : 39/88 plans préparés »**, et juste
+au-dessous : « 88 plans · 456 Mo · tous importés ». Les fichiers étaient tous
+là depuis longtemps. C'est la **préparation des segments** qui était arrêtée —
+une phase entièrement différente, avec ses propres défauts.
+
+### Un fil qui se tait arrête tout, pour toujours
+
+Un bloc est confié au fil de fabrication, et c'est **sa réponse** qui déclenche
+le suivant. S'il ne répond jamais — encodeur bloqué, fil repris par le système
+sous pression mémoire, ce qui arrive sur un téléphone après quelques dizaines de
+segments — la place reste prise, `fabriquerSuivant` ressort aussitôt à chaque
+battement, et la préparation s'arrête net. Définitivement, et sans un mot.
+
+Rien ne surveillait cela. Vingt-cinq secondes sans réponse pour un bloc qui en
+prend deux à cinq, et le fil est considéré perdu : on le remplace et on repart.
+Le bloc lui-même a droit à une seconde chance avant d'être écarté.
+
+Reproduit avec une fabrique trafiquée qui avale silencieusement le troisième
+bloc :
+
+```
+t≈8s   2/6 préparés · un bloc en cours     ← figé, comme sur le téléphone
+t≈20s  2/6 préparés · un bloc en cours
+t≈35s  4/6 préparés                        ← le fil a été remplacé, ça repart
+t≈70s  6/6 préparés                        ← terminé
+```
+
+Avant la correction, la deuxième ligne était aussi la dernière.
+
+### Une erreur ne condamne pas l'appareil
+
+`onerror` déclarait la fabrique définitivement impossible : une seule erreur, et
+elle était éteinte pour toute la séance. Un encodeur peut échouer sur un fichier
+particulier sans que cela dise quoi que ce soit du suivant. Cinq remplacements
+sont autorisés avant de renoncer.
+
+### Un compteur qui ne se repeint pas ressemble à un compteur bloqué
+
+Le bandeau n'était mis à jour qu'à l'arrivée d'un segment. Un seul
+rafraîchissement manqué et il restait sur son dernier chiffre : on croit la
+préparation arrêtée alors qu'on regarde une photographie. Il se relit maintenant
+une fois par seconde, sur le battement.
+
+Ce rafraîchissement a coûté une mémoïsation : `cadreApercu` est appelé une fois
+par plan, dans une boucle sur tous les plans — sur quatre-vingt-huit blocs, sept
+mille sept cents parcours par rafraîchissement, pour un résultat qui ne change
+qu'au changement de montage.
+
+### La notification ne parlait que de la moitié du travail
+
+« Ton AMV est prêt · 87 plans sur l'appareil » — annoncé alors que la
+préparation en était à 39 sur 88. Annoncer fini ce qui ne l'est pas, c'est ce
+qui fait douter de tout le reste.
+
+Les deux phases sont désormais dites, sous la même étiquette : « Chargement des
+plans · n/N », puis « Préparation de l'aperçu · n/N · encore ~X min », puis
+« L'aperçu est prêt » — et le temps restant est **mesuré sur les blocs déjà
+faits**, pas estimé. Sans lui, « 39/88 » ressemble à une panne ; avec lui, à une
+attente.
+
 ## « Bloqué à 39 sur 88 depuis plusieurs jours »
 
 Un compteur figé pendant des jours, que ni la réouverture ni aucun bouton ne
