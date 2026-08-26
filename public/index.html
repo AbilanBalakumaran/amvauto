@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 10:11";
+const VERSION_PAGE = "2026-08-26 10:33";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -8451,99 +8451,104 @@ function resteAImporter(projet) {
   return { total: sources.size, prets, perdus, octets };
 }
 
+/* Une seule ligne, toujours construite pareil.
+
+   Le bandeau changeait de message selon la phase : « 86/87 plans sur l'appareil
+   · 9 Mo à venir » pendant les téléchargements, « Aperçu : 39/87 préparés »
+   ensuite. Deux phrases sans rapport, qui se remplaçaient l'une l'autre — et
+   comme la reprise d'un fichier abîmé relance un téléchargement au milieu de la
+   préparation, elles alternaient toutes les quelques secondes. « J'ai deux
+   choses différentes qui s'affichent » : c'était exactement cela.
+
+   Une seule ligne désormais, dans un ordre fixe — les fichiers, l'aperçu, ce
+   qui ne viendra pas. Chaque morceau apparaît quand il a quelque chose à dire
+   et disparaît quand il n'en a plus, mais aucun ne prend la place d'un autre.
+   La bannière du système reçoit la même ligne. */
+function phraseAvancement(projet) {
+  const { total, prets, perdus, octets } = resteAImporter(projet);
+  const bilan = bilanApercu(projet);
+  const restentFichiers = Boolean(total) && prets + perdus < total;
+  const bouts = [];
+
+  if (restentFichiers) {
+    if (transfert.suspendu) {
+      const arrete = !fileImport.length && !arretsImport.size && !attentesImport.size;
+      bouts.push(`Fichiers ${prets}/${total} — ${arrete ? "arrêté" : "suspendu"}`);
+    } else {
+      /* Une attente chiffrée vaut mieux qu'une barre qui avance : on sait s'il
+         faut rester devant ou poser le téléphone. Le débit vient de ce qui a
+         réellement été rapatrié, pas d'une estimation théorique. */
+      const parSeconde = octetsParSeconde();
+      const attente = parSeconde > 0 ? octets / parSeconde : 0;
+      const duree = attente > 90 ? `~${Math.round(attente / 60)} min`
+        : attente > 5 ? `~${Math.round(attente)} s` : "";
+      // Un transfert qui attend sa nouvelle tentative n'est ni en cours ni
+      // perdu : sans le dire, l'application paraît arrêtée alors qu'elle compte.
+      const quand = [...attentesImport.values()].reduce((t, x) => Math.min(t, x.quand), Infinity);
+      const reprise = !arretsImport.size && attentesImport.size
+        ? ` · reprise dans ${Math.max(0, Math.round((quand - Date.now()) / 1000))} s`
+        : "";
+      bouts.push(`Fichiers ${prets}/${total} · ${(octets / 1e6).toFixed(0)} Mo`
+        + (duree ? ` · ${duree}` : "") + reprise);
+    }
+  }
+
+  /* L'accélération de l'aperçu repose sur des interfaces que tous les
+     navigateurs n'ont pas. Quand elles manquent, tout continue de marcher —
+     mais moins bien, et il vaut mieux le dire que laisser croire à une panne. */
+  if (fabrique.possible === false) {
+    bouts.push("Aperçu accéléré indisponible sur ce navigateur");
+  } else if (bilan.concernes && (!bilan.fini || bilan.refuses)) {
+    // Une fois fini, le compte reste dit s'il y a des refus : « 8/8 préparés ·
+    // 2 sans segment » se comprend, « 2 sans segment » tout seul beaucoup moins.
+    bouts.push(`Aperçu ${bilan.faits}/${bilan.preparables} préparés`
+      + (bilan.fini ? "" : ` · ${Math.round(bilan.part * 100)} %`
+        + resteApercu(bilan.faits, bilan.preparables)));
+  }
+
+  if (bilan.refuses) bouts.push(`${bilan.refuses} sans segment — ${raisonDominante()}`);
+  if (perdus) bouts.push(`${perdus} introuvable${perdus > 1 ? "s" : ""}`);
+
+  /* Une seule barre pour tout le travail — les fichiers puis la préparation.
+     Deux barres pour deux phases se liraient comme deux travaux, et celle qui
+     revient à zéro au milieu donne l'impression d'avoir tout perdu. */
+  const dus = total + bilan.preparables;
+  const faits = prets + bilan.faits;
+  const part = dus ? Math.min(1, faits / dus) : 1;
+
+  return { texte: bouts.join(" · "), part, restentFichiers, bilan, prets, total, perdus };
+}
+
+/* Une notification web n'a pas de cercle de progression : ni iOS ni Android
+   n'en proposent. Dix caractères pleins font le même travail. */
+function barreTexte(part) {
+  const cases = 10;
+  const pleines = Math.max(0, Math.min(cases, Math.round(part * cases)));
+  return "▰".repeat(pleines) + "▱".repeat(cases - pleines);
+}
+
 function majPreparation(projet) {
   const bandeau = $("preparation");
   const dit = $("preparation-dit");
   if (!bandeau || !dit) return;
-  const { total, prets, perdus, octets } = resteAImporter(projet);
+  const etat = phraseAvancement(projet);
+
+  // Les gestes du chargement : tant qu'il y a du travail, ou des abandons à
+  // reprendre — c'est le seul autre moment où ils servent.
   const bouton = bandeau.querySelector("button");
-  if (!total || prets + perdus >= total) {
-    // Plus rien en route : reste éventuellement à dire ce qui ne viendra pas.
-    finirVeille(prets, total);
-    if (bouton) bouton.hidden = true;
-
-    /* Une fois les fichiers là, ce bandeau dit où en est l'aperçu.
-
-       L'accélération de l'aperçu repose sur des interfaces que tous les
-       navigateurs n'ont pas. Quand elles manquent, tout continue de marcher —
-       mais moins bien, et rien ne le disait : l'utilisateur voyait une lecture
-       qui accroche sans pouvoir savoir si c'est son appareil, son montage, ou
-       une panne. La réponse tient en une ligne, à l'endroit où il regarde. */
-    /* Les trois gestes disparaissent quand il n'y a plus rien à charger — sauf
-       s'il reste des abandons : c'est précisément là qu'on veut réessayer, et
-       le bouton était masqué dans le seul état où il servait. */
-    const transferts = $("transferts");
-    if (transferts) transferts.hidden = !importsRates.size;
-    majBoutonsTransfert();
-    const bilan = bilanApercu(projet);
-    const fait = bilan.faits;
-    const totalBlocs = bilan.concernes;
-    if (fabrique.possible === false) {
-      bandeau.hidden = false;
-      dit.textContent = "Aperçu accéléré indisponible sur ce navigateur — la lecture reste directe";
-      return;
-    }
-    const refusesEnCours = bilan.refuses;
-    /* Refusés sortis du but : sans cela, dix blocs sans segment gardaient
-       l'affichage dans la phase « préparation » pour toujours. */
-    if (totalBlocs && !bilan.fini) {
-      bandeau.hidden = false;
-      dit.textContent = `Aperçu : ${phraseApercu(projet, false)}`
-        + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
-      majNotificationTransfert();
-      return;
-    }
-    annoncerApercuPret(projet, totalBlocs);
-    const refusesFinaux = refusesEnCours;
-    bandeau.hidden = !perdus && !refusesFinaux;
-    if (perdus || refusesFinaux) {
-      // Même vocabulaire qu'en cours de route : « préparés », toujours, pour
-      // qu'on ne croie pas lire une autre grandeur.
-      dit.textContent = [
-        `${bilan.faits}/${bilan.preparables} plans préparés`,
-        refusesFinaux ? `${refusesFinaux} sans segment — ${raisonDominante()}` : "",
-        perdus ? `${perdus} introuvable${perdus > 1 ? "s" : ""}` : "",
-      ].filter(Boolean).join(" · ");
-    }
-    return;
-  }
-  if (bouton) { bouton.hidden = false; }
+  if (bouton) bouton.hidden = !etat.restentFichiers;
   const transferts = $("transferts");
-  if (transferts) transferts.hidden = false;
+  if (transferts) transferts.hidden = !etat.restentFichiers && !importsRates.size;
   majBoutonsTransfert();
 
-  /* Une attente chiffrée vaut mieux qu'une barre qui avance : on sait s'il faut
-     rester devant ou poser le téléphone. Le débit vient de ce qui a réellement
-     été rapatrié, pas d'une estimation théorique. */
-  const parSeconde = octetsParSeconde();
-  const attente = parSeconde > 0 ? octets / parSeconde : 0;
-  const duree = attente > 90 ? `~${Math.round(attente / 60)} min` : attente > 5 ? `~${Math.round(attente)} s` : "";
-
-  bandeau.hidden = false;
-  if (transfert.suspendu) {
-    /* Suspendu et arrêté ne se disent pas pareil : dans un cas le travail
-       attend, dans l'autre il a été jeté. La file vide fait la différence. */
-    const arrete = !fileImport.length && !arretsImport.size;
-    dit.textContent = (arrete ? "Chargement arrêté" : "Chargement suspendu")
-      + ` · ${prets}/${total} plans gardés sur l'appareil`
-      + (arrete ? "" : ` · ${(octets / 1e6).toFixed(0)} Mo restants`)
-      + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
-    return;
+  if (!etat.restentFichiers) {
+    finirVeille(etat.prets, etat.total);
+    if (etat.bilan.fini) annoncerApercuPret(projet, etat.bilan.concernes);
   }
-  /* Un transfert qui attend sa nouvelle tentative n'est ni en cours ni perdu.
-     Sans le dire, l'application paraît arrêtée alors qu'elle compte. */
-  const attente2 = [...attentesImport.values()].reduce((tot, x) => Math.min(tot, x.quand), Infinity);
-  const dans = Number.isFinite(attente2) ? Math.max(0, Math.round((attente2 - Date.now()) / 1000)) : 0;
-  const repos = !arretsImport.size && attentesImport.size
-    ? ` · nouvelle tentative dans ${dans} s`
-    : "";
 
-  dit.textContent =
-    `${prets}/${total} plans sur l'appareil · ${(octets / 1e6).toFixed(0)} Mo à venir` +
-    (duree ? ` · ${duree}` : "") +
-    repos +
-    (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "") +
-    "\nL'aperçu saute tant que les fichiers arrivent.";
+  dit.textContent = etat.texte;
+  bandeau.hidden = !etat.texte;
+  majNotificationTransfert();
 }
 
 /* --- attendre sans regarder --------------------------------------------
@@ -8923,141 +8928,70 @@ async function arreterTransferts() {
    soixante-quinze fois est un téléphone qu'on éteint. Les boutons ne sont
    affichés que là où le système les accepte ; sur iPhone ils n'existent pas, et
    les mêmes gestes restent sous le bandeau de l'application. */
-async function majNotificationTransfert() {
+/* Chaque envoi est une alerte, pas une mise à jour.
+
+   Une notification web ne se modifie pas : on en repose une, et l'iPhone la
+   fait glisser sur l'écran verrouillé à chaque fois. Toutes les huit secondes,
+   cela faisait une alerte toutes les huit secondes. Vingt secondes entre deux,
+   donc, et jamais deux fois le même texte. Le seul compteur qui se met vraiment
+   à jour sans alerter personne reste la pastille de l'icône. */
+const avis = { texte: "", quand: 0 };
+const RYTHME_AVIS = 20000;
+
+/* Une seule bannière, un seul titre, la même ligne que l'écran.
+
+   Deux titres différents — « Chargement des plans » puis « Préparation de
+   l'aperçu » — se lisaient comme deux notifications distinctes, d'autant que
+   iPhone les empile au lieu de les remplacer. Un seul titre, donc, et le corps
+   dit dans quelle phase on est.
+
+   Vérifié sur l'appareil : le remplacement par étiquette n'a pas lieu sur
+   iPhone. On ferme tout ce qui vient de l'application avant de poster. Une
+   seule bannière, toujours, au prix d'une alerte par mise à jour : d'où les
+   vingt secondes entre deux, et le texte qui doit avoir changé. */
+function majNotificationTransfert() {
   if (!sentinelle.prevenir || !("serviceWorker" in navigator)) return;
   const projet = projetActif();
   if (!projet) return;
-  const { total, prets, perdus, octets } = resteAImporter(projet);
-  /* Un chargement qui n'a pas lieu ne s'annonce pas.
+  const etat = phraseAvancement(projet);
 
-     Au démarrage, les fichiers de l'appareil ne sont pas encore retrouvés :
-     pendant ces quelques secondes « prêts » vaut zéro alors que tout est là. La
-     bannière partait donc avec « 0/87 · 456 Mo restants », puis n'était plus
-     jamais mise à jour — la phase suivante prend le relais — et restait affichée
-     à côté d'elle, fausse et indélogeable. C'est le doublon.
+  // Rien à dire : on retire la bannière et la pastille plutôt que d'annoncer
+  // un travail qui n'a pas lieu.
+  const enTravail = etat.restentFichiers || (!etat.bilan.fini && etat.bilan.concernes);
+  if (!enTravail || fabrique.possible === false) {
+    marquerPastille(0);
+    return fermerNotificationTransfert();
+  }
+  marquerPastille(1);
 
-     On ne parle donc que s'il y a vraiment quelque chose en vol ou en file. */
-  const enTravail = fileImport.length || arretsImport.size || attentesImport.size;
-  if (!enTravail) return majNotificationApercu(projet);
-  if (total && prets + perdus < total) marquerPastille(1);
-  /* Deux phases, pas une.
-
-     La notification ne parlait que du rapatriement des fichiers. Or une fois
-     les quatre-vingt-huit rushs sur l'appareil, il reste le plus long : les
-     préparer un par un. C'est cette phase-là qu'on regarde avancer, et c'était
-     la seule dont rien ne parlait — « ça ne me permet pas de savoir combien de
-     plans sont chargés sur combien ». */
-  if (!total || prets + perdus >= total) return majNotificationApercu(projet);
-  /* Même retenue que pour la préparation : le texte doit avoir bougé, et pas
-     plus d'un envoi toutes les huit secondes. Cent soixante-quinze fichiers
-     faisaient cent soixante-quinze envois. */
-  const texte = `${barreTexte(prets / total)}  ${prets}/${total}`
-    + (octets ? ` · ${(octets / 1e6).toFixed(0)} Mo restants` : "")
-    + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
   const maintenant = Date.now();
-  const pareil = texte === avis.texte;
-  if (pareil || (maintenant - avis.quand < RYTHME_AVIS && prets + perdus < total)) return;
-  avis.texte = texte;
+  if (etat.texte === avis.texte || maintenant - avis.quand < RYTHME_AVIS) return;
+  avis.texte = etat.texte;
   avis.quand = maintenant;
 
-  try {
-    const enregistrement = await navigator.serviceWorker.ready;
+  navigator.serviceWorker.ready.then(async (enregistrement) => {
     const actions = [];
-    if ("actions" in Notification.prototype) {
+    if (etat.restentFichiers && "actions" in Notification.prototype) {
       actions.push(transfert.suspendu
         ? { action: "reprendre", title: "Reprendre" }
         : { action: "suspendre", title: "Suspendre" });
       actions.push({ action: "arreter", title: "Arrêter" });
     }
     for (const ouverte of await enregistrement.getNotifications()) ouverte.close();
-    await enregistrement.showNotification(
-      transfert.suspendu ? "Chargement suspendu" : "Chargement des plans",
-      {
-        body: texte,
-        icon: "icons/icon-192.png",
-        badge: "icons/icon-192.png",
-        tag: "amvauto-transfert",
-        silent: true,
-        renotify: false,
-        requireInteraction: false,
-        actions,
-      },
-    );
-  } catch { /* notifications refusées : le bandeau suffit */ }
-}
-
-/* La préparation de l'aperçu, avec son avancement et son attente.
-
-   Même étiquette que le chargement : les deux phases se suivent, et deux
-   bannières côte à côte pour un seul travail seraient deux fois moins lisibles
-   qu'une seule qui se met à jour. */
-/* Une seule bannière, et un chiffre sur l'icône.
-
-   Deux défauts d'un coup, tous deux visibles sur une capture : une pile de
-   bannières identiques, et aucun moyen de suivre l'avancement.
-
-   L'empilement d'abord. L'étiquette fixe est censée faire qu'une notification
-   remplace la précédente ; sur iPhone ce remplacement n'a pas lieu, et chaque
-   envoi ajoute une ligne. Comme le bandeau se relit une fois par seconde et
-   que l'envoi suivait, cela faisait une bannière par seconde. On ferme donc
-   nous-mêmes ce qui porte l'étiquette avant de reposter, et on ne reposte que
-   si le chiffre a bougé — au plus une fois toutes les huit secondes.
-
-   Le chiffre ensuite. Une notification web n'a pas de cercle de progression :
-   ni iOS ni Android n'en proposent. Deux choses existent en revanche, et
-   ensemble elles font le même travail — une barre en caractères pleins dans le
-   texte, et surtout la pastille de l'icône, qui est le seul endroit où un
-   nombre se met vraiment à jour tout seul sur un écran d'accueil. */
-/* Chaque envoi est une alerte, pas une mise à jour.
-
-   Une notification web ne se modifie pas : on en repose une, et l'iPhone la
-   fait glisser sur l'écran verrouillé à chaque fois. Toutes les huit secondes,
-   cela fait une alerte toutes les huit secondes — « je ne veux pas qu'il y ait
-   un push à chaque fois ». Une minute entre deux envois, donc, et jamais deux
-   fois le même texte. Le seul compteur qui se met vraiment à jour sans alerter
-   personne reste la pastille de l'icône. */
-const avis = { texte: "", quand: 0 };
-const RYTHME_AVIS = 20000;
-
-function barreTexte(part) {
-  const cases = 10;
-  const pleines = Math.max(0, Math.min(cases, Math.round(part * cases)));
-  return "▰".repeat(pleines) + "▱".repeat(cases - pleines);
-}
-
-async function majNotificationApercu(projet) {
-  const { concernes, fini } = bilanApercu(projet);
-  if (!concernes || fini || fabrique.possible === false) {
-    marquerPastille(0);
-    return fermerNotificationTransfert();
-  }
-  marquerPastille(1);
-  const texte = phraseApercu(projet, true);
-  const maintenant = Date.now();
-  if (texte === avis.texte || maintenant - avis.quand < RYTHME_AVIS) return;
-  avis.texte = texte;
-  avis.quand = maintenant;
-
-  try {
-    const enregistrement = await navigator.serviceWorker.ready;
-    /* Vérifié sur l'appareil : iPhone ne remplace pas une notification par
-       étiquette, il l'empile. Deux phases côte à côte, l'une périmée — on a
-       essayé de s'en remettre à l'étiquette, cela ne marche pas. On ferme donc
-       tout ce qui vient de l'application avant de poster. Une seule bannière,
-       toujours, au prix d'une alerte par mise à jour : c'est pour cela qu'elles
-       sont espacées. */
-    for (const ouverte of await enregistrement.getNotifications()) ouverte.close();
-    await enregistrement.showNotification("Préparation de l'aperçu", {
-      body: texte,
+    await enregistrement.showNotification("Ton AMV se prépare", {
+      body: `${barreTexte(etat.part)}  ${etat.texte}`,
       icon: "icons/icon-192.png",
       badge: "icons/icon-192.png",
       tag: "amvauto-transfert",
       silent: true,
       renotify: false,
       requireInteraction: false,
+      actions,
     });
-  } catch { /* notifications refusées : le bandeau suffit */ }
+  }).catch(() => { /* notifications refusées : le bandeau suffit */ });
 }
+
+
 
 /* La pastille de l'icône dit qu'il se passe quelque chose, pas combien.
 
@@ -9114,18 +9048,6 @@ function bilanApercu(projet) {
   };
 }
 
-/* La phrase de l'avancement, écrite une fois pour tout le monde.
-
-   La bannière de l'écran et celle du système n'ont pas le droit de se
-   contredire : elles sortent du même calcul et de la même mise en forme. */
-function phraseApercu(projet, avecBarre) {
-  const bilan = bilanApercu(projet);
-  const { faits, preparables, refuses, part } = bilan;
-  return (avecBarre ? `${barreTexte(part)}  ` : "")
-    + `${faits}/${preparables} préparés · ${Math.round(part * 100)} %`
-    + (refuses ? ` · ${refuses} sans segment (${raisonDominante()})` : "")
-    + resteApercu(faits, preparables);
-}
 
 /* La raison la plus fréquente des refus, dite en clair.
 
@@ -9201,8 +9123,9 @@ async function fermerNotificationTransfert() {
   if (!("serviceWorker" in navigator)) return;
   try {
     const enregistrement = await navigator.serviceWorker.ready;
-    const ouvertes = await enregistrement.getNotifications({ tag: "amvauto-transfert" });
-    for (const notification of ouvertes) notification.close();
+    // Tout ce qui vient de l'application, pas seulement une étiquette : iPhone
+    // empile, et une bannière d'une phase précédente traînerait sous la neuve.
+    for (const notification of await enregistrement.getNotifications()) notification.close();
   } catch { /* rien à fermer */ }
 }
 

@@ -2801,6 +2801,32 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Une seule ligne, quelle que soit la phase
+
+Le bandeau changeait de message selon l'état : « 86/87 plans sur l'appareil ·
+9 Mo à venir » pendant les téléchargements, « Aperçu : 39/87 préparés » ensuite.
+Deux phrases sans rapport, qui se remplaçaient l'une l'autre — et comme la
+reprise d'un fichier abîmé relance un téléchargement au milieu de la
+préparation, elles se mettaient à alterner toutes les quelques secondes.
+« J'ai deux choses différentes qui s'affichent » : c'était exactement cela.
+
+Une seule ligne désormais, dans un ordre fixe :
+
+```
+Fichiers 86/87 · 9 Mo · ~11 s · Aperçu 39/87 préparés · 45 % · 1 sans segment — …
+```
+
+Chaque morceau apparaît quand il a quelque chose à dire et disparaît quand il
+n'en a plus, mais aucun ne prend la place d'un autre. La bannière du système
+reçoit **la même ligne**, produite par la même fonction, et porte un titre
+unique — « Ton AMV se prépare ». Deux titres différents se lisaient comme deux
+notifications distinctes, ce que l'empilement d'iPhone rendait littéralement
+vrai.
+
+Et une seule barre pour tout le travail — les fichiers puis la préparation.
+Deux barres pour deux phases se liraient comme deux travaux, et celle qui
+revient à zéro au milieu donne l'impression d'avoir tout perdu.
+
 ## Deux affichages, une seule vérité
 
 La bannière du système disait « 42/88 · 48 % · 3 sans segment », l'écran disait
