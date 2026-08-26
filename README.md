@@ -2801,6 +2801,58 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Trente-neuf, et pas un de plus
+
+Le chiffre n'a jamais bougé. Ni en une heure, ni entre deux versions, ni après
+un rechargement : **39**, toujours. Ce n'était pas une progression lente, c'était
+un plafond — et un plafond a une cause précise.
+
+Elle en avait deux, qui se cachaient l'une l'autre.
+
+### Un fichier reçu que l'appareil n'a pas pu ranger n'existe pas pour la fabrique
+
+Quand l'espace manque, l'écriture en base échoue. Le fichier reste utilisable
+pour la séance — le lecteur en a l'adresse en mémoire, le plan se joue — mais il
+n'est **pas rangé**. Or la fabrique travaille sur les octets rangés : `lireBase`
+ne rendait rien, le bloc était écarté sans un mot, et le compteur restait sur les
+trente-neuf blocs fabriqués du temps où il restait de la place.
+
+Quatre cent cinquante-six mégaoctets de rushs, plus les segments d'une
+fabrication précédente jamais balayés : la place manquait depuis longtemps, et
+rien ne le disait.
+
+Le bloc part maintenant vers le chemin du lecteur, qui n'a pas besoin des octets
+rangés. Reproduit en refusant toute écriture à partir du troisième fichier :
+
+```
+avant : 2/6 préparés, puis plus rien, sans un mot
+après : 6/6 préparés · 0 refusé · 4 préparés par le lecteur
+        « 4 non rangés — mémoire de l'appareil pleine »
+```
+
+### iPhone ne charge pas une vidéo qu'on ne lui demande pas de jouer
+
+Le chemin de secours créait un lecteur caché et attendait `loadeddata`. Sur
+iPhone, `preload` est ignoré : rien ne se charge tant qu'on ne demande pas à
+jouer. L'événement n'arrivait donc jamais, l'attente expirait au bout de dix
+secondes, et l'on en concluait que le fichier était illisible — alors qu'il
+n'avait simplement **jamais été ouvert**.
+
+Le lecteur est muet et `playsinline` : la lecture automatique est permise. On la
+demande, ce qui force le chargement, et on met en pause dès la première image.
+
+### Et surtout : un diagnostic faux ne doit pas détruire ce qu'il examine
+
+La règle d'avant disait « le lecteur n'a pas su l'ouvrir, donc le fichier est
+abîmé ; on l'efface et on le reprend ». Combinée au défaut ci-dessus, elle a
+effacé puis retéléchargé des fichiers parfaitement sains, en 4G, pour finir par
+les déclarer perdus.
+
+Effacer demande désormais une **preuve** et non un soupçon : la taille du fichier
+rangé, comparée à celle que la source annonçait. Un fichier tronqué est plus
+petit, et cela se vérifie sans rien ouvrir. Faute de preuve, le bloc est
+seulement mis de côté pour la séance — la prochaine ouverture le retentera.
+
 ## Une seule ligne, quelle que soit la phase
 
 Le bandeau changeait de message selon l'état : « 86/87 plans sur l'appareil ·

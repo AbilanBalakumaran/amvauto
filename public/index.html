@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 10:33";
+const VERSION_PAGE = "2026-08-26 11:15";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4265,20 +4265,37 @@ async function fabriquerParLecteur(suite, cadre) {
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
+  video.setAttribute("muted", "");
+  video.setAttribute("playsinline", "");
   video.preload = "auto";
   video.style.cssText = "position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
   document.body.append(video);
-  const ranger = () => { try { video.removeAttribute("src"); video.load(); } catch { /* déjà parti */ } video.remove(); };
+  const ranger = () => { try { video.pause(); video.removeAttribute("src"); video.load(); } catch { /* déjà parti */ } video.remove(); };
 
   try {
     video.src = url;
+    /* iPhone ignore « preload » et ne charge rien tant qu'on ne demande pas à
+       jouer. C'est LA raison pour laquelle ce chemin de secours ne marchait pas
+       sur le téléphone : « loadeddata » n'arrivait jamais, l'attente expirait,
+       et on en concluait que le fichier était illisible — alors qu'il n'avait
+       simplement jamais été ouvert. Un fichier parfaitement sain était alors
+       effacé et retéléchargé pour rien, puis refusé pour de bon. Trente-neuf
+       préparés, et pas un de plus, quoi qu'il arrive.
+
+       Muet et « playsinline », la lecture automatique est permise : on la
+       demande, ce qui force le chargement, et on met en pause dès la première
+       image. */
+    video.load();
+    video.play().then(() => video.pause()).catch(() => { /* le chargement suffira */ });
     const pret = await new Promise((ok) => {
       let fini = false;
       const dire = (v) => { if (!fini) { fini = true; ok(v); } };
       video.addEventListener("loadeddata", () => dire(true), { once: true });
+      video.addEventListener("canplay", () => dire(true), { once: true });
       video.addEventListener("error", () => dire(false), { once: true });
-      setTimeout(() => dire(video.readyState >= 2), 10000);
+      setTimeout(() => dire(video.readyState >= 2), 12000);
     });
+    try { video.pause(); } catch { /* déjà en pause */ }
     if (!pret) {
       ranger();
       /* Un MP4 que l'appareil ne sait pas lire, cela n'existe pas.
@@ -4293,10 +4310,24 @@ async function fabriquerParLecteur(suite, cadre) {
          Le bon geste n'est pas de renoncer, c'est de le jeter et de le
          reprendre. Une seule fois : si le fichier neuf ne se lit pas davantage,
          alors c'est vraiment le format, et on le dit. */
+      /* Effacer un fichier demande une preuve, pas un soupçon.
+
+         La règle d'avant : « le lecteur n'a pas su l'ouvrir, donc il est
+         abîmé ». Sur iPhone, le lecteur n'ouvrait rien du tout — voir
+         au-dessus — et cette règle a effacé puis retéléchargé des fichiers
+         parfaitement sains, en 4G, pour finir par les déclarer perdus. Un
+         diagnostic faux qui détruit ce qu'il examine est pire que pas de
+         diagnostic.
+
+         La preuve, désormais : la taille. Un fichier tronqué est plus petit que
+         ce que la source annonçait, et cela se vérifie sans rien ouvrir. */
       const adresse = mediaDe(plan);
-      if (adresse && !refaits.has(adresse)) {
+      const garde = await lireBase(adresse).catch(() => null);
+      const attendu = (plan?.mb || 0) * 1e6;
+      const tronque = garde instanceof Blob && attendu > 0 && garde.size < attendu * 0.9;
+      if (adresse && tronque && !refaits.has(adresse)) {
         refaits.add(adresse);
-        raisonsSegment.set(cle, "fichier abîmé sur l'appareil — il est repris");
+        raisonsSegment.set(cle, `fichier incomplet sur l'appareil (${(garde.size / 1e6).toFixed(1)} Mo sur ${(attendu / 1e6).toFixed(1)}) — il est repris`);
         await effacerBase(adresse).catch(() => {});
         await effacerBase(cleParticelle(adresse)).catch(() => {});
         try { URL.revokeObjectURL(locales.get(adresse)); } catch { /* déjà libéré */ }
@@ -4309,10 +4340,13 @@ async function fabriquerParLecteur(suite, cadre) {
         majImports();
         return "reprise";
       }
+      /* Pas tronqué, et pourtant illisible par les deux chemins. On ne le jette
+         pas : on le met de côté pour cette séance, et la prochaine ouverture le
+         retentera — un refus n'est définitif que le temps qu'on l'observe. */
       const bout = (adresse || "").split("?")[0].split(".").pop().toLowerCase();
       raisonsSegment.set(cle, bout && bout.length <= 5
-        ? `fichier illisible, même après reprise (${bout.toUpperCase()})`
-        : "fichier illisible, même après reprise");
+        ? `le lecteur n'a pas su l'ouvrir (${bout.toUpperCase()})`
+        : "le lecteur n'a pas su l'ouvrir");
       return false;
     }
 
@@ -4441,7 +4475,14 @@ async function fabriquerSuivant() {
 
   const garde = await lireBase(mediaDe(suite.plan)).catch(() => null);
   if (!(garde instanceof Blob) || !garde.size) {
-    // Pas de fichier rangé : le lecteur, lui, a peut-être encore son adresse.
+    /* Pas de fichier rangé, et pourtant le plan se lit à l'écran : c'est un
+       fichier reçu que l'appareil n'a pas pu écrire, faute de place. Le fil de
+       fabrication ne peut rien en faire — il travaille sur les octets rangés —
+       mais le lecteur, lui, a encore son adresse en mémoire.
+
+       C'était le plafond invisible : « lireBase » ne rendait rien, le bloc était
+       écarté sans un mot, et le compteur restait sur les trente-neuf blocs
+       fabriqués du temps où il restait de la place. */
     if (locales.has(mediaDe(suite.plan))) { parLecteur.add(suite.cle); return; }
     raisonsSegment.set(suite.cle, "le fichier n'est pas sur l'appareil");
     segmentsRates.add(suite.cle);
@@ -8508,6 +8549,12 @@ function phraseAvancement(projet) {
 
   if (bilan.refuses) bouts.push(`${bilan.refuses} sans segment — ${raisonDominante()}`);
   if (perdus) bouts.push(`${perdus} introuvable${perdus > 1 ? "s" : ""}`);
+  /* Des fichiers reçus que l'appareil a refusé de ranger : ils marchent pour
+     cette séance et disparaîtront à la fermeture. C'est la seule panne que
+     l'utilisateur peut réparer lui-même, et elle était muette. */
+  if (volatiles.size) {
+    bouts.push(`${volatiles.size} non rangé${volatiles.size > 1 ? "s" : ""} — mémoire de l'appareil pleine`);
+  }
 
   /* Une seule barre pour tout le travail — les fichiers puis la préparation.
      Deux barres pour deux phases se liraient comme deux travaux, et celle qui
