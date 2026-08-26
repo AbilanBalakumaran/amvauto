@@ -1480,6 +1480,9 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 }
 .interrupteur.on { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); color: #fff; }
 .interrupteur[disabled] { opacity: .45; cursor: not-allowed; }
+.reglage-boutons { flex: none; display: inline-flex; gap: 6px; align-items: center; }
+.interrupteur.discret { background: transparent; color: var(--doux); font-weight: 600; }
+.interrupteur.discret:hover { border-color: var(--vert); color: var(--texte); }
 .apropos .note-reglage { font-size: 0.78rem; color: #8a8a8a; margin-top: var(--e2); }
 </style>
 </head>
@@ -1606,7 +1609,10 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
           <strong>Notifications</strong>
           <span id="etat-notifs">état inconnu</span>
         </div>
-        <button type="button" id="btn-notifs" class="interrupteur" role="switch" aria-checked="false">Notifications</button>
+        <span class="reglage-boutons">
+          <button type="button" id="btn-test-notif" class="interrupteur discret" hidden>Tester</button>
+          <button type="button" id="btn-notifs" class="interrupteur" role="switch" aria-checked="false">Notifications</button>
+        </span>
       </div>
       <p class="note-reglage" id="note-notifs"></p>
 
@@ -1631,7 +1637,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 02:53";
+const VERSION_PAGE = "2026-08-26 03:00";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -8060,6 +8066,9 @@ function majReglages() {
   bouton.setAttribute("aria-checked", String(actives));
   bouton.textContent = actives ? "Activées" : "Désactivées";
 
+  const essai = $("btn-test-notif");
+  if (essai) essai.hidden = !actives;
+
   const etat = $("etat-notifs");
   if (etat) {
     if (permission === "absente") etat.textContent = "Ce navigateur ne sait pas afficher de notification.";
@@ -8070,7 +8079,7 @@ function majReglages() {
   }
 
   const note = $("note-notifs");
-  if (note) {
+  if (note && Date.now() - messageEssai > 25000) {
     note.textContent = "Deux notifications existent\u00a0: l'avancement du chargement — silencieuse, remplacée à chaque plan arrivé plutôt qu'empilée — et «\u00a0ton AMV est prêt\u00a0». "
       + "Ce réglage ne retire pas l'autorisation donnée à l'appareil, il fait taire l'application\u00a0: pour la retirer vraiment, c'est Réglages puis Notifications sur iPhone, "
       + "les réglages du site sur Android.";
@@ -8111,7 +8120,69 @@ async function fermerToutesNotifications() {
   } catch { /* rien à fermer */ }
 }
 
+/* Le bouton d'essai, parce qu'un réglage qu'on ne peut pas vérifier n'en est
+   pas un.
+
+   Deux questions se confondent et n'ont pas la même réponse : « l'application
+   a-t-elle le droit ? » et « est-ce que je vois quelque chose ? ». La première
+   se lit ici. La seconde dépend du système, et sur iPhone la réponse est
+   souvent non pour une raison qui n'est pas un défaut : iOS n'affiche pas de
+   bannière pour l'application qui est déjà au premier plan. On envoie donc la
+   notification d'essai avec un délai, le temps de sortir de l'application —
+   sinon on cherche un défaut là où il n'y en a pas.
+
+   Et on ne se contente pas de dire « envoyée » : on redemande la liste des
+   notifications posées, ce qui est la seule preuve que le système l'a acceptée
+   plutôt qu'ignorée en silence. */
+const ESSAI_NOTIF = 4000;
+let essaiEnCours = 0;
+// Tant que ce message est frais, le rafraîchissement ne le recouvre pas.
+let messageEssai = 0;
+
+async function testerNotif() {
+  const bouton = $("btn-test-notif");
+  const note = $("note-notifs");
+  if (!bouton || !("serviceWorker" in navigator)) return;
+  clearTimeout(essaiEnCours);
+
+  let reste = Math.round(ESSAI_NOTIF / 1000);
+  const compter = () => {
+    bouton.textContent = reste > 0 ? `${reste}…` : "Tester";
+    if (reste-- > 0) essaiEnCours = setTimeout(compter, 1000);
+  };
+  bouton.disabled = true;
+  compter();
+  messageEssai = Date.now();
+  if (note) note.textContent = "Quitte l'application maintenant : iPhone n'affiche pas de bannière pour l'application ouverte. La notification part dans quatre secondes.";
+
+  await new Promise((fini) => setTimeout(fini, ESSAI_NOTIF));
+  bouton.disabled = false;
+  messageEssai = Date.now();
+
+  try {
+    const enregistrement = await navigator.serviceWorker.ready;
+    await enregistrement.showNotification("AMVAUTO — essai", {
+      body: "Si tu lis ceci, les notifications fonctionnent sur cet appareil.",
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      tag: "amvauto-essai",
+    });
+    // La preuve : le système la rend, donc il l'a acceptée.
+    const posees = await enregistrement.getNotifications({ tag: "amvauto-essai" });
+    if (note) {
+      note.textContent = posees.length
+        ? "Notification d'essai acceptée par l'appareil. Si tu ne l'as pas vue passer, regarde le centre de notifications — elle y est."
+        : "L'appareil a pris la demande sans rien afficher. Sur iPhone, cela arrive quand l'application n'a pas été ajoutée à l'écran d'accueil.";
+    }
+  } catch (erreur) {
+    if (note) note.textContent = `L'appareil a refusé la notification d'essai (${erreur?.message || "raison inconnue"}).`;
+  }
+  messageEssai = Date.now();
+  setTimeout(majReglages, 26000);
+}
+
 $("btn-notifs")?.addEventListener("click", () => { basculerNotifs().catch(() => {}); });
+$("btn-test-notif")?.addEventListener("click", () => { testerNotif().catch(() => {}); });
 majReglages();
 
 /* --- suspendre, reprendre, arrêter les transferts ---------------------

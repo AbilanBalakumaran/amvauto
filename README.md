@@ -2801,6 +2801,32 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+### Le bouton d'essai, parce que « ça marche ou pas ? » se vérifie
+
+Question posée en regardant l'écran : « ça marche ou pas, et pourquoi iPhone ne
+me demande rien ? ». Les deux moitiés ont la même réponse : **la permission
+avait déjà été accordée**. iOS ne pose la question qu'une fois, jamais deux, et
+la ligne d'état disait donc vrai — « L'appareil autorise, et l'application s'en
+sert ». Mais rien ne le prouvait à l'œil.
+
+Deux questions se confondent et n'ont pas la même réponse : *l'application a-t-
+elle le droit ?* — ça se lit dans l'état — et *est-ce que je vois quelque
+chose ?* — ça dépend du système. Sur iPhone la seconde réponse est souvent non
+pour une raison qui n'est pas un défaut : **iOS n'affiche aucune bannière pour
+l'application déjà au premier plan**. On chercherait un bug là où il n'y en a
+pas.
+
+D'où un bouton « Tester » avec un compte à rebours de quatre secondes : le temps
+de sortir de l'application. Et il ne se contente pas d'annoncer « envoyée » —
+il redemande `getNotifications({ tag })`, ce qui est la seule preuve que le
+système a accepté plutôt qu'ignoré en silence. Trois réponses possibles :
+acceptée, prise sans rien afficher (application pas ajoutée à l'écran
+d'accueil), refusée avec la raison.
+
+Un détail qui a failli tout gâcher : le message de résultat était effacé par le
+rafraîchissement déclenché au retour au premier plan — c'est-à-dire exactement
+au moment où on vient le lire. Il est donc protégé vingt-cinq secondes.
+
 #### Mesuré
 
 ```
