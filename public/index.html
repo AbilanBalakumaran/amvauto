@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 08:23";
+const VERSION_PAGE = "2026-08-26 08:42";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4103,8 +4103,18 @@ function filFabrique() {
       if (!attente || attente.id !== id) return;
       fabrique.encours = null;
       if (echec || !mp4) {
-        fabrique.rates += 1;
-        segmentsRates.add(attente.cle);
+        /* Un refus n'est pas une fin.
+
+           Le fil ne sait lire que du MP4 : il refuse tout WebM — c'est-à-dire
+           chaque opening et chaque ending d'AnimeThemes, qui sont servis dans
+           ce format. Quarante-neuf blocs refusés sur quatre-vingt-huit, et le
+           montage recollé impossible puisqu'il les veut tous.
+
+           Ce que le fil ne sait pas démultiplexer, le lecteur vidéo du
+           navigateur sait le lire — c'est lui qui le joue déjà à l'écran. On
+           refait donc le bloc par ce chemin-là. */
+        raisonsSegment.set(attente.cle, echec || "le fil n'a rien rendu");
+        parLecteur.add(attente.cle);
       } else {
         fabrique.faits += 1;
         fabrique.octets += octets || mp4.size;
@@ -4221,8 +4231,137 @@ function surveillerFabrique() {
   redemarrerFabrique("le fil n'a pas répondu");
 }
 
+/* Préparer un bloc avec le lecteur vidéo, quand le fil n'a pas su.
+
+   Le fil démultiplexe lui-même le fichier : c'est rapide, et cela ne marche que
+   pour ce qu'il sait lire. Le lecteur du navigateur, lui, lit tout ce que
+   l'appareil sait lire — par définition, puisque c'est ce qui s'affiche. On s'y
+   déplace image par image, on pose chaque image dans le même cadre que les
+   autres, et on encode : le segment obtenu est identique à ceux du fil, donc il
+   se recolle avec eux.
+
+   C'est plus lent — un déplacement coûte quelques dizaines de millisecondes —
+   mais c'est la différence entre un bloc préparé et un bloc refusé. */
+const parLecteur = new Set();
+const raisonsSegment = new Map();
+
+async function fabriquerParLecteur(suite, cadre) {
+  const { plan, cle } = suite;
+  const url = locales.get(mediaDe(plan));
+  if (!url || !rendreDisponible()) return false;
+
+  const l = cadre.large;
+  const h = cadre.haut;
+  const cadence = IMAGES_PAR_SECONDE;
+  const entree = entreeDe(plan);
+  const sortie = sortieDe(plan);
+  const combien = Math.max(1, Math.round((sortie - entree) * cadence));
+
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.style.cssText = "position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
+  document.body.append(video);
+  const ranger = () => { try { video.removeAttribute("src"); video.load(); } catch { /* déjà parti */ } video.remove(); };
+
+  try {
+    video.src = url;
+    const pret = await new Promise((ok) => {
+      let fini = false;
+      const dire = (v) => { if (!fini) { fini = true; ok(v); } };
+      video.addEventListener("loadeddata", () => dire(true), { once: true });
+      video.addEventListener("error", () => dire(false), { once: true });
+      setTimeout(() => dire(video.readyState >= 2), 10000);
+    });
+    if (!pret) {
+      // Le seul cas sans recours : l'appareil ne sait pas lire ce format.
+      raisonsSegment.set(cle, "cet appareil ne sait pas lire ce fichier");
+      ranger();
+      return false;
+    }
+
+    const toile = document.createElement("canvas");
+    toile.width = l;
+    toile.height = h;
+    const ctx = toile.getContext("2d", { alpha: false });
+
+    const codec = await choisirCodec(CODECS_VIDEO, { width: l, height: h, framerate: cadence });
+    if (!codec) { raisonsSegment.set(cle, "aucun codec d'encodage"); ranger(); return false; }
+
+    const echelle = 90000;
+    const piste = { id: 1, type: "video", codec, echelle, largeur: l, hauteur: h,
+      description: null, echantillons: [] };
+    let cassé = "";
+    const encodeur = new VideoEncoder({
+      output: (bloc, meta) => {
+        if (meta?.decoderConfig?.description && !piste.description) {
+          piste.description = new Uint8Array(meta.decoderConfig.description);
+        }
+        const octets = new Uint8Array(bloc.byteLength);
+        bloc.copyTo(octets);
+        piste.echantillons.push({ octets, taille: octets.length,
+          duree: Math.round(echelle / cadence), cle: bloc.type === "key" });
+      },
+      error: (erreur) => { cassé = String(erreur?.message || erreur); },
+    });
+    encodeur.configure({ codec, width: l, height: h, framerate: cadence,
+      bitrate: debitSegment(plan, cadre),
+      ...(codec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
+
+    const fin = Math.max(0, (video.duration || sortie) - 0.03);
+    for (let i = 0; i < combien && !cassé; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await attendreImage(video, Math.min(entree + i / cadence, fin));
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, l, h);
+      const li = video.videoWidth || l;
+      const hi = video.videoHeight || h;
+      const f = Math.min(l / li, h / hi);
+      const dl = Math.max(1, Math.round(li * f));
+      const dh = Math.max(1, Math.round(hi * f));
+      try { ctx.drawImage(video, Math.round((l - dl) / 2), Math.round((h - dh) / 2), dl, dh); }
+      catch { cassé = "image illisible"; break; }
+      const image = new VideoFrame(toile, {
+        timestamp: Math.round((i / cadence) * 1e6),
+        duration: Math.round(1e6 / cadence),
+      });
+      encodeur.encode(image, { keyFrame: i === 0 });
+      image.close();
+      // On rend la main régulièrement : cet encodage se fait sur le fil de
+      // l'écran, et une image figée serait pire qu'une préparation lente.
+      // eslint-disable-next-line no-await-in-loop
+      if (i % 6 === 5) await new Promise((ok) => setTimeout(ok, 0));
+    }
+    await encodeur.flush();
+    encodeur.close();
+    ranger();
+
+    if (cassé || !piste.echantillons.length) {
+      raisonsSegment.set(cle, cassé || "aucune image n'a pu être prise");
+      return false;
+    }
+    const mp4 = ecrireMp4([piste]);
+    fabrique.faits += 1;
+    fabrique.parLecteur = (fabrique.parLecteur || 0) + 1;
+    fabrique.octets += mp4.size;
+    raisonsSegment.delete(cle);
+    segments.set(cle, { url: URL.createObjectURL(mp4), taille: mp4.size,
+      duree: piste.echantillons.length / cadence, verdict: null });
+    changerMontage();
+    ecrireBase(cle, mp4).catch(() => {});
+    rangerSegments();
+    majBarreCache();
+    return true;
+  } catch (erreur) {
+    raisonsSegment.set(cle, `préparation par le lecteur : ${erreur?.name || erreur}`);
+    ranger();
+    return false;
+  }
+}
+
 async function fabriquerSuivant() {
-  if (fabrique.encours || rendu.encours || rendu.parImage) return;
+  if (fabrique.encours || fabrique.lecteurEnCours || rendu.encours || rendu.parImage) return;
   /* Elle travaille aussi pendant qu'on regarde, et c'est ce qui la rend utile.
 
      Elle se taisait pendant la lecture, par prudence. Conséquence : un montage
@@ -4247,11 +4386,34 @@ async function fabriquerSuivant() {
     recollerMontage().catch(() => { colle.encours = false; });
     return;
   }
+  const cadreVise = cadreApercu(projetActif());
+  if (parLecteur.has(suite.cle)) {
+    parLecteur.delete(suite.cle);
+    fabrique.lecteurEnCours = true;
+    try {
+      const fait = await fabriquerParLecteur(suite, cadreVise);
+      if (!fait) { segmentsRates.add(suite.cle); fabrique.rates += 1; }
+    } finally {
+      fabrique.lecteurEnCours = false;
+    }
+    const projetVu = projetActif();
+    if (projetVu) majPreparation(projetVu);
+    setTimeout(() => fabriquerSuivant().catch(() => {}), 0);
+    return;
+  }
+
   const garde = await lireBase(mediaDe(suite.plan)).catch(() => null);
-  if (!(garde instanceof Blob) || !garde.size) { segmentsRates.add(suite.cle); return; }
+  if (!(garde instanceof Blob) || !garde.size) {
+    // Pas de fichier rangé : le lecteur, lui, a peut-être encore son adresse.
+    if (locales.has(mediaDe(suite.plan))) { parLecteur.add(suite.cle); return; }
+    raisonsSegment.set(suite.cle, "le fichier n'est pas sur l'appareil");
+    segmentsRates.add(suite.cle);
+    fabrique.rates += 1;
+    return;
+  }
   if (fabrique.encours) return;
   const id = (fabrique.numero = (fabrique.numero || 0) + 1);
-  const cadre = cadreApercu(projetActif());
+  const cadre = cadreVise;
   fabrique.encours = { id, cle: suite.cle, depart: performance.now() };
   fil.postMessage({
     id, blob: garde, cle: mediaDe(suite.plan),
@@ -8553,7 +8715,21 @@ function pourquoiCoince() {
       + (fabrique.perdus ? ` (${fabrique.perdus} bloc${fabrique.perdus > 1 ? "s restés" : " resté"} sans réponse)` : "") + ".");
   }
   if (fabrique.rates) {
-    bouts.push(` ${fabrique.rates} bloc${fabrique.rates > 1 ? "s ont" : " a"} été refusé${fabrique.rates > 1 ? "s" : ""} à la préparation\u00a0: ces plans-là se liront directement, sans segment.`);
+    // La raison compte plus que le nombre : elle dit s'il y a quelque chose à faire.
+    const parRaison = new Map();
+    for (const cle of segmentsRates) {
+      const texte = raisonsSegment.get(cle) || "raison inconnue";
+      parRaison.set(texte, (parRaison.get(texte) || 0) + 1);
+    }
+    const dits = [...parRaison].sort((a, b) => b[1] - a[1]).slice(0, 2)
+      .map(([texte, combien]) => `${combien} — ${texte}`);
+    bouts.push(` ${fabrique.rates} bloc${fabrique.rates > 1 ? "s" : ""} refusé${fabrique.rates > 1 ? "s" : ""} à la préparation`
+      + (dits.length ? `\u00a0: ${dits.join(", ")}` : "")
+      + ". Ces plans-là se liront directement, sans segment.");
+  }
+  if (fabrique.parLecteur) {
+    bouts.push(` ${fabrique.parLecteur} bloc${fabrique.parLecteur > 1 ? "s ont été préparés" : " a été préparé"} par le lecteur vidéo`
+      + " — c'est le chemin de secours pour les fichiers que le démultiplexeur ne sait pas lire, comme les openings en WebM.");
   }
 
   if (place.refusee) {
@@ -8707,6 +8883,7 @@ async function majNotificationTransfert() {
   const projet = projetActif();
   if (!projet) return;
   const { total, prets, perdus, octets } = resteAImporter(projet);
+  if (total && prets + perdus < total) marquerPastille(total - prets - perdus);
   /* Deux phases, pas une.
 
      La notification ne parlait que du rapatriement des fichiers. Or une fois
@@ -8715,6 +8892,18 @@ async function majNotificationTransfert() {
      la seule dont rien ne parlait — « ça ne me permet pas de savoir combien de
      plans sont chargés sur combien ». */
   if (!total || prets + perdus >= total) return majNotificationApercu(projet);
+  /* Même retenue que pour la préparation : le texte doit avoir bougé, et pas
+     plus d'un envoi toutes les huit secondes. Cent soixante-quinze fichiers
+     faisaient cent soixante-quinze envois. */
+  const texte = `${barreTexte(prets / total)}  ${prets}/${total}`
+    + (octets ? ` · ${(octets / 1e6).toFixed(0)} Mo restants` : "")
+    + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
+  const maintenant = Date.now();
+  const pareil = texte === avis.texte;
+  if (pareil || (maintenant - avis.quand < RYTHME_AVIS && prets + perdus < total)) return;
+  avis.texte = texte;
+  avis.quand = maintenant;
+
   try {
     const enregistrement = await navigator.serviceWorker.ready;
     const actions = [];
@@ -8724,12 +8913,13 @@ async function majNotificationTransfert() {
         : { action: "suspendre", title: "Suspendre" });
       actions.push({ action: "arreter", title: "Arrêter" });
     }
+    for (const ouverte of await enregistrement.getNotifications({ tag: "amvauto-transfert" })) {
+      ouverte.close();
+    }
     await enregistrement.showNotification(
       transfert.suspendu ? "Chargement suspendu" : "Chargement des plans",
       {
-        body: `${prets}/${total} plans sur l'appareil`
-          + (octets ? ` · ${(octets / 1e6).toFixed(0)} Mo restants` : "")
-          + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : ""),
+        body: texte,
         icon: "icons/icon-192.png",
         badge: "icons/icon-192.png",
         tag: "amvauto-transfert",
@@ -8747,30 +8937,76 @@ async function majNotificationTransfert() {
    Même étiquette que le chargement : les deux phases se suivent, et deux
    bannières côte à côte pour un seul travail seraient deux fois moins lisibles
    qu'une seule qui se met à jour. */
+/* Une seule bannière, et un chiffre sur l'icône.
+
+   Deux défauts d'un coup, tous deux visibles sur une capture : une pile de
+   bannières identiques, et aucun moyen de suivre l'avancement.
+
+   L'empilement d'abord. L'étiquette fixe est censée faire qu'une notification
+   remplace la précédente ; sur iPhone ce remplacement n'a pas lieu, et chaque
+   envoi ajoute une ligne. Comme le bandeau se relit une fois par seconde et
+   que l'envoi suivait, cela faisait une bannière par seconde. On ferme donc
+   nous-mêmes ce qui porte l'étiquette avant de reposter, et on ne reposte que
+   si le chiffre a bougé — au plus une fois toutes les huit secondes.
+
+   Le chiffre ensuite. Une notification web n'a pas de cercle de progression :
+   ni iOS ni Android n'en proposent. Deux choses existent en revanche, et
+   ensemble elles font le même travail — une barre en caractères pleins dans le
+   texte, et surtout la pastille de l'icône, qui est le seul endroit où un
+   nombre se met vraiment à jour tout seul sur un écran d'accueil. */
+const avis = { texte: "", quand: 0 };
+const RYTHME_AVIS = 8000;
+
+function barreTexte(part) {
+  const cases = 10;
+  const pleines = Math.max(0, Math.min(cases, Math.round(part * cases)));
+  return "▰".repeat(pleines) + "▱".repeat(cases - pleines);
+}
+
 async function majNotificationApercu(projet) {
   const plans = projet?.plans || [];
   const total = plans.length;
   const faits = plans.filter(surSegment).length;
-  if (!total || faits >= total || fabrique.possible === false) {
+  const restants = Math.max(0, total - faits);
+  if (!total || !restants || fabrique.possible === false) {
+    marquerPastille(0);
     return fermerNotificationTransfert();
   }
+  marquerPastille(restants);
+
+  const part = faits / total;
+  const texte = `${barreTexte(part)}  ${faits}/${total}  ${Math.round(part * 100)} %${resteApercu(faits, total)}`;
+  const maintenant = Date.now();
+  if (texte === avis.texte || maintenant - avis.quand < RYTHME_AVIS) return;
+  avis.texte = texte;
+  avis.quand = maintenant;
+
   try {
     const enregistrement = await navigator.serviceWorker.ready;
-    const actions = [];
-    if ("actions" in Notification.prototype) {
-      actions.push({ action: "arreter", title: "Arrêter" });
+    // Le remplacement par étiquette n'a pas lieu sur iPhone : on ferme d'abord.
+    for (const ouverte of await enregistrement.getNotifications({ tag: "amvauto-transfert" })) {
+      ouverte.close();
     }
     await enregistrement.showNotification("Préparation de l'aperçu", {
-      body: `${faits}/${total} plans préparés${resteApercu(faits, total)}`,
+      body: texte,
       icon: "icons/icon-192.png",
       badge: "icons/icon-192.png",
       tag: "amvauto-transfert",
       silent: true,
       renotify: false,
       requireInteraction: false,
-      actions,
     });
   } catch { /* notifications refusées : le bandeau suffit */ }
+}
+
+/* La pastille de l'icône : le seul compteur qui se met à jour sans rien
+   ouvrir. Elle ne demande pas la permission des notifications sur iPhone, mais
+   elle ne s'affiche que pour une application ajoutée à l'écran d'accueil. */
+function marquerPastille(combien) {
+  try {
+    if (combien > 0) navigator.setAppBadge?.(combien);
+    else navigator.clearAppBadge?.();
+  } catch { /* pas de pastille ici */ }
 }
 
 /* Et quand la préparation est enfin finie, on le dit — une fois.

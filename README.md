@@ -2801,6 +2801,81 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Les quarante-neuf refusés : le fil ne lit que du MP4
+
+Une seconde capture a donné le chiffre qui manquait : « Aperçu : 39/88 plans
+préparés · **49 refusés** ». Tout était compté, rien n'était en attente : la
+fabrique avait bel et bien essayé les quatre-vingt-huit, et en avait refusé
+quarante-neuf.
+
+La cause tient en une ligne, vérifiée hors du navigateur :
+
+```
+lireMp4(un fichier .webm) → { echec: "pas de moov" }
+```
+
+Le fil de fabrication démultiplexe lui-même le fichier, et il ne sait lire que
+le MP4. Or **AnimeThemes sert ses openings et ses endings en WebM** — sur One
+Piece, 114 fichiers sur 1932. Un projet qui mélange des cuts et des génériques
+voit donc tous ses génériques refusés, sans un mot, et le montage recollé
+devient impossible puisqu'il les veut tous.
+
+### Ce que le fil ne sait pas lire, le lecteur le lit
+
+Le lecteur vidéo du navigateur lit tout ce que l'appareil sait lire — par
+définition, puisque c'est ce qui s'affiche déjà à l'écran. Le chemin de secours
+s'y déplace image par image, pose chaque image dans le même cadre que les
+autres, et encode : le segment obtenu est identique à ceux du fil, donc il se
+recolle avec eux.
+
+C'est plus lent — un déplacement coûte quelques dizaines de millisecondes — mais
+c'est la différence entre un bloc préparé et un bloc refusé. Et l'outillage
+existait déjà : `attendreImage`, `choisirCodec` et `ecrireMp4` servent au rendu
+image par image depuis toujours.
+
+```
+projet mêlant deux MP4 et deux WebM —
+  segments 4/4 · refusés 0 · dont 2 préparés par le lecteur · montage recollé
+```
+
+Avant : deux refusés, et aucun montage recollé possible.
+
+Le seul cas sans recours reste l'appareil qui ne sait pas lire le format du
+tout : il est alors nommé comme tel — « cet appareil ne sait pas lire ce
+fichier » — au lieu d'un « refusé » muet. Chaque refus garde sa raison, et
+Options les résume.
+
+## Une seule bannière, et un chiffre sur l'icône
+
+La capture montrait une dizaine de bannières identiques empilées, toutes
+« 39/88 plans préparés ».
+
+**L'empilement.** L'étiquette fixe est censée faire qu'une notification remplace
+la précédente. Sur iPhone ce remplacement n'a pas lieu : chaque envoi ajoute une
+ligne. Et comme le bandeau se relit une fois par seconde et que l'envoi suivait,
+cela faisait une bannière par seconde. On ferme donc soi-même ce qui porte
+l'étiquette avant de reposter, et on ne reposte que si le texte a bougé — au
+plus une fois toutes les huit secondes.
+
+```
+avant : 15 bannières postées pour un chargement de 14 fichiers
+après :  2 bannières · 1 refermée · 1 seule à l'écran à tout instant
+```
+
+**Le chiffre.** Demandé : « une notif avec un cercle qui se charge et un chiffre
+qui se met à jour ». Une notification web n'a pas de cercle de progression — ni
+iOS ni Android n'en proposent. Deux choses existent en revanche, et ensemble
+elles font le même travail :
+
+```
+Préparation de l'aperçu
+▰▰▰▰▱▱▱▱▱▱  39/88  44 %  · encore ~2 min
+```
+
+et surtout la **pastille de l'icône** (`navigator.setAppBadge`), qui est le seul
+endroit où un nombre se met vraiment à jour tout seul sur un écran d'accueil,
+sans rien ouvrir. Elle compte ce qui reste à faire, et s'efface à la fin.
+
 ## Le vrai « 39 sur 88 » : la fabrique, pas le chargement
 
 Une capture d'écran a corrigé le diagnostic. Le bandeau ne disait pas
