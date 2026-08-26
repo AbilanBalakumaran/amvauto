@@ -1461,6 +1461,26 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 .apropos h2 { font-family: "Obelix Pro", "Arial Black", system-ui, sans-serif; font-size: 1rem; letter-spacing: .05em; margin: var(--e5) 0 var(--e2); }
 .apropos p, .apropos li { font-size: 0.88rem; color: #bbb; line-height: 1.6; }
 .apropos a { color: var(--vert); }
+
+/* Un réglage se lit en une ligne : ce qu'il fait à gauche, son état à droite,
+   et un trait entre deux voisins pour qu'aucun n'aille avec le mauvais bouton. */
+.reglage {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--e4); padding: var(--e3) 0;
+  border-top: 1px solid var(--trait); border-bottom: 1px solid var(--trait);
+}
+.reglage + .reglage { border-top: 0; }
+.reglage-texte { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.reglage-texte strong { font-size: 0.9rem; color: var(--texte); }
+.reglage-texte span { font-size: 0.78rem; color: var(--doux); line-height: 1.4; }
+.interrupteur {
+  flex: none; border: 1px solid var(--trait); border-radius: 999px;
+  padding: 0 14px; min-height: 34px; background: #1b1b1b; color: var(--texte);
+  font: 700 0.76rem/1 system-ui, sans-serif; cursor: pointer;
+}
+.interrupteur.on { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); color: #fff; }
+.interrupteur[disabled] { opacity: .45; cursor: not-allowed; }
+.apropos .note-reglage { font-size: 0.78rem; color: #8a8a8a; margin-top: var(--e2); }
 </style>
 </head>
 <body>
@@ -1580,6 +1600,16 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
       alors en plein écran, sans barre d'adresse, et vérifie sa version à chaque ouverture — la mise
       à jour se fait toute seule.</p>
 
+      <h2>Options</h2>
+      <div class="reglage">
+        <div class="reglage-texte">
+          <strong>Notifications</strong>
+          <span id="etat-notifs">état inconnu</span>
+        </div>
+        <button type="button" id="btn-notifs" class="interrupteur" role="switch" aria-checked="false">Notifications</button>
+      </div>
+      <p class="note-reglage" id="note-notifs"></p>
+
       <h2>Version</h2>
       <p id="version-page">version inconnue</p>
 
@@ -1601,7 +1631,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-25 16:21";
+const VERSION_PAGE = "2026-08-26 02:53";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1813,6 +1843,9 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     if (onglet === "projet") rendreProjet();
     else arreter();
     if (onglet === "histoire") rendreHistoire();
+    // La permission a pu changer dans les réglages du système pendant que
+    // l'application était derrière : on relit l'état plutôt que de l'affirmer.
+    if (onglet === "apropos") majReglages();
   });
 });
 
@@ -7967,7 +8000,119 @@ function majPreparation(projet) {
    Le tout est un bouton, pas un réglage silencieux : garder un écran allumé
    sans le dire vide une batterie, et une permission qu'on n'a pas demandée est
    une permission qu'on n'obtient pas. */
-const sentinelle = { verrou: null, voulue: false, prevenir: false };
+/* --- réglages ---------------------------------------------------------
+
+   Les notifications n'avaient qu'un sens : on pouvait les allumer, jamais les
+   éteindre. Le bouton « Me prévenir quand c'est prêt » demande la permission au
+   navigateur, et une permission accordée l'est pour de bon — une page ne peut
+   pas la reprendre, seul le système le peut. Sans interrupteur ici, la seule
+   sortie était d'aller fouiller les réglages de l'appareil, ce que personne ne
+   fait, et l'application restait libre de parler pour toujours.
+
+   Cet interrupteur ne touche donc pas à la permission : il décide si
+   l'application s'en sert. C'est la différence entre « le téléphone m'autorise
+   à parler » et « je parle ». Éteint, plus rien n'est posté et ce qui est déjà
+   à l'écran est refermé ; la permission, elle, reste où elle est, prête à
+   resservir sans redemander quoi que ce soit.
+
+   Et il se souvient : un réglage qui se remet tout seul à chaque ouverture
+   n'est pas un réglage, c'est une suggestion. */
+const CLE_REGLAGES = "amvauto-reglages";
+const reglages = lireReglages();
+
+function lireReglages() {
+  const base = { notifications: true };
+  try {
+    return { ...base, ...JSON.parse(localStorage.getItem(CLE_REGLAGES) || "{}") };
+  } catch { return { ...base }; }
+}
+
+function ecrireReglages() {
+  try { localStorage.setItem(CLE_REGLAGES, JSON.stringify(reglages)); } catch { /* navigation privée */ }
+}
+
+/* « absente » et « denied » ne sont pas la même chose : l'un veut dire que le
+   navigateur ignore les notifications, l'autre qu'il les connaît et qu'on a
+   dit non. Les deux empêchent d'afficher, mais un seul se répare. */
+const permissionNotifs = () => ("Notification" in window ? Notification.permission : "absente");
+
+/* Deux verrous en série. « autorisee » vient du système, « notifications » de
+   l'utilisateur : il faut les deux pour poster quoi que ce soit. Le reste du
+   code lit « prevenir » comme avant et n'a pas à connaître cette distinction. */
+const sentinelle = {
+  verrou: null,
+  voulue: false,
+  autorisee: false,
+  get prevenir() { return this.autorisee && reglages.notifications; },
+  set prevenir(valeur) { this.autorisee = !!valeur; },
+};
+sentinelle.autorisee = permissionNotifs() === "granted";
+
+function majReglages() {
+  const bouton = $("btn-notifs");
+  if (!bouton) return;
+  const permission = permissionNotifs();
+  const possible = permission !== "absente" && permission !== "denied";
+  const actives = possible && reglages.notifications;
+
+  bouton.disabled = !possible;
+  bouton.classList.toggle("on", actives);
+  bouton.setAttribute("aria-checked", String(actives));
+  bouton.textContent = actives ? "Activées" : "Désactivées";
+
+  const etat = $("etat-notifs");
+  if (etat) {
+    if (permission === "absente") etat.textContent = "Ce navigateur ne sait pas afficher de notification.";
+    else if (permission === "denied") etat.textContent = "Refusées par l'appareil\u00a0: rien ne peut s'afficher tant que ce n'est pas rouvert dans ses réglages.";
+    else if (!reglages.notifications) etat.textContent = "Coupées\u00a0: l'application n'affiche plus rien, même pendant un chargement.";
+    else if (permission === "default") etat.textContent = "L'autorisation n'a pas encore été demandée — elle le sera au premier chargement.";
+    else etat.textContent = "L'appareil autorise, et l'application s'en sert.";
+  }
+
+  const note = $("note-notifs");
+  if (note) {
+    note.textContent = "Deux notifications existent\u00a0: l'avancement du chargement — silencieuse, remplacée à chaque plan arrivé plutôt qu'empilée — et «\u00a0ton AMV est prêt\u00a0». "
+      + "Ce réglage ne retire pas l'autorisation donnée à l'appareil, il fait taire l'application\u00a0: pour la retirer vraiment, c'est Réglages puis Notifications sur iPhone, "
+      + "les réglages du site sur Android.";
+  }
+}
+
+async function basculerNotifs() {
+  if (reglages.notifications) {
+    reglages.notifications = false;
+    ecrireReglages();
+    // Couper doit couper tout de suite : une bannière déjà posée survivrait
+    // sinon au réglage qui vient de l'interdire.
+    await fermerToutesNotifications();
+    majReglages();
+    majBoutonVeille();
+    return;
+  }
+
+  /* Rallumer est le bon moment pour demander la permission : c'est un appui,
+     et un appui qui dit exactement ce qu'il veut. */
+  try {
+    if ("Notification" in window && Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  } catch { /* refusée : l'état l'affichera */ }
+  reglages.notifications = true;
+  sentinelle.autorisee = permissionNotifs() === "granted";
+  ecrireReglages();
+  majReglages();
+  majNotificationTransfert();
+}
+
+async function fermerToutesNotifications() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const enregistrement = await navigator.serviceWorker.ready;
+    for (const notification of await enregistrement.getNotifications()) notification.close();
+  } catch { /* rien à fermer */ }
+}
+
+$("btn-notifs")?.addEventListener("click", () => { basculerNotifs().catch(() => {}); });
+majReglages();
 
 /* --- suspendre, reprendre, arrêter les transferts ---------------------
 
@@ -8159,7 +8304,9 @@ async function basculerVeille() {
   sentinelle.prevenir = "Notification" in window && Notification.permission === "granted";
   await prendreVeille();
   majBoutonVeille();
-  if (!sentinelle.verrou && !sentinelle.prevenir) {
+  if (!sentinelle.verrou && !sentinelle.prevenir && sentinelle.autorisee) {
+    alert("Les notifications sont coupées dans Infos, partie Options.\n\nRallume-les là-bas pour être prévenu, ou laisse simplement la page ouverte.");
+  } else if (!sentinelle.verrou && !sentinelle.prevenir) {
     alert("Ni l'écran allumé ni les notifications ne sont disponibles ici.\n\nSur iPhone, il faut ajouter l'application à l'écran d'accueil — Partager, « Sur l'écran d'accueil » — pour que les notifications soient permises. En attendant, laisse simplement la page ouverte : si tu la fermes, chaque fichier reprend où il s'était arrêté.");
   }
 }
@@ -8181,8 +8328,10 @@ function relacherVeille() {
 /* Le verrou d'écran est perdu dès que la page passe derrière : c'est la règle,
    pas un défaut. On le reprend au retour, tant que l'attente dure. */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) sentinelle.verrou = null;
-  else prendreVeille();
+  if (document.hidden) return void (sentinelle.verrou = null);
+  prendreVeille();
+  sentinelle.autorisee = permissionNotifs() === "granted";
+  majReglages();
 });
 
 function finirVeille(prets, total) {

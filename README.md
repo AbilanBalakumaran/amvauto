@@ -2758,6 +2758,63 @@ page ouverte, il l'ouvre.
 6. morceaux partiels restants : 0
 ```
 
+### Un interrupteur, parce qu'une permission ne se reprend pas
+
+Les notifications n'avaient qu'un sens. Le bouton « Me prévenir quand c'est
+prêt » demandait la permission au navigateur, et une permission accordée l'est
+pour de bon : **une page ne peut pas la retirer, seul le système le peut**. Une
+fois dite oui, l'application était libre de parler pour toujours, et la seule
+sortie était d'aller fouiller les réglages de l'appareil — ce que personne ne
+fait.
+
+D'où un interrupteur dans Infos, partie **Options**. Il ne touche pas à la
+permission : il décide si l'application s'en sert. C'est la différence entre
+« le téléphone m'autorise à parler » et « je parle ».
+
+Deux verrous en série, donc, et le reste du code n'a pas à connaître la
+distinction — il lit `sentinelle.prevenir` comme avant, qui est devenu un
+accesseur :
+
+```js
+get prevenir() { return this.autorisee && reglages.notifications; }
+```
+
+Trois détails qui comptent :
+
+- **Couper coupe tout de suite.** Une bannière déjà posée survivrait sinon au
+  réglage qui vient de l'interdire : l'extinction referme ce qui est à l'écran.
+- **Le réglage survit à la fermeture.** Un réglage qui se remet tout seul à
+  chaque ouverture n'est pas un réglage, c'est une suggestion. Il tient dans
+  `localStorage`, clé `amvauto-reglages`.
+- **L'état se relit, il ne s'affirme pas.** La permission peut changer dans les
+  réglages du système pendant que l'application est derrière : elle est donc
+  relue à chaque retour au premier plan et à chaque ouverture de l'onglet Infos.
+  Refusée par l'appareil, l'interrupteur s'éteint et devient inerte — mentir sur
+  un bouton qui ne peut rien faire est pire que de ne pas l'afficher.
+
+La ligne d'état dit lequel des deux verrous manque, ce qui n'est pas la même
+information : « Refusées par l'appareil », « Coupées », « L'autorisation n'a pas
+encore été demandée », « L'appareil autorise, et l'application s'en sert ».
+
+Le titre de la section est « Options » et non « Réglages » pour une raison bête
+et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
+accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
+ce qui se lit comme une faute.
+
+#### Mesuré
+
+```
+1. permission accordée, à l'ouverture   : « Activées »
+2. après 5 s de chargement              : 5 notifications posées
+3. coupées depuis Infos                 : « Désactivées », 1 bannière refermée
+4. 5 s de chargement de plus            : 0 nouvelle notification
+5. application rouverte                 : toujours « Désactivées »
+6. chargement, réglage coupé            : 0 notification
+7. rallumées                            : « Activées », réglage écrit
+8. chargement                           : 4 notifications — ça reparle
+9. permission refusée par l'appareil    : bouton éteint et inerte
+```
+
 ## Un seul fichier, un seul lecteur, aucune coupe
 
 Question posée : « on ne peut pas faire comme CapCut ? »
