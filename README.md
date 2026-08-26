@@ -2801,6 +2801,48 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Le montage recollé n'attend plus d'être complet
+
+C'est le plus grand levier de fluidité de l'application, et il était condamné à
+ne presque jamais servir : le recollage exigeait **les quatre-vingt-huit blocs**.
+Un seul manquant — un fichier illisible, un plan pas encore préparé — et la
+lecture restait sur le chemin d'avant : un lecteur par plan, une bascule par
+coupe, et tout ce qu'elles coûtent.
+
+Or sur un téléphone la préparation prend des minutes, et c'est justement pendant
+ces minutes qu'on regarde. Pire : un projet qui contient un seul plan
+irréparable n'obtenait **jamais** de fichier recollé, quelle que soit la durée
+d'attente.
+
+On recolle donc le plus long **début** possible. Les plans du préfixe se lisent
+d'un seul fichier, sans une seule coupe à encaisser ; les autres continuent
+comme avant et rejoignent le fichier à mesure qu'ils sont prêts.
+
+```
+quarante plans, celui du milieu (n°20) illisible —
+  avant : aucun fichier recollé, quarante bascules
+  après : fichier recollé de 8 Mo couvrant les vingt premiers plans
+          six secondes de lecture : trois bascules, toutes au démarrage
+```
+
+Le recollage coûte — relire tous les segments du préfixe, réécrire un fichier —
+donc on ne repart que si le préfixe a gagné huit blocs, ou s'il est enfin
+complet. Et les gardes qui désactivaient le vivier de lecteurs sont devenues
+« par plan » : un plan hors du préfixe a toujours besoin d'un lecteur préparé.
+
+## La pixellisation, deuxième round
+
+Le cadre commun suivait la définition **la plus répandue** du projet. L'idée
+était d'éviter d'agrandir les petits plans ; l'effet a été qu'un projet où
+dix-huit cuts font 640 de large et six en font 1152 se retrouvait entièrement
+fabriqué en 640 — sur un écran qui en affiche huit cents, cela se voit.
+
+On perdait pour de bon la définition des grands pour économiser des bits sur les
+petits. Le cadre suit de nouveau la **plus grande** source, plafonnée par ce que
+l'écran peut montrer : aucun plan n'est réduit en dessous de ce que l'appareil
+affiche, et les plus petits sont agrandis — ce que l'écran aurait fait de toute
+façon.
+
 ## Trente-neuf, et pas un de plus
 
 Le chiffre n'a jamais bougé. Ni en une heure, ni entre deux versions, ni après
