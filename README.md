@@ -2801,6 +2801,71 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Le son qui se coupe désigne le coupable
+
+« Ça bug, ça se pixelise, des images noires, des freezes, et **des pauses dans
+l'audio** ». La dernière moitié de la phrase est celle qui compte : le son et
+l'image n'ont presque rien en commun — sauf le fil principal. Un son qui
+s'interrompt ne dit pas que le décodage vidéo manque d'air, il dit que **le fil
+de l'écran est pris**.
+
+Et il l'était par le chemin de secours, ajouté le matin même : il décode,
+dessine et encode image par image, sur le fil de l'écran, pendant plusieurs
+secondes. Pendant une lecture, c'est exactement ce qu'il ne faut pas faire. Il
+attend donc l'arrêt ; le fil de fabrication, lui, continue — il a son propre
+processeur et ne touche pas à l'écran.
+
+Le jugement d'allure a suivi le même raisonnement. Il se prononçait toutes les
+deux secondes : il fallait donc deux secondes d'accrocs avant que la fabrique se
+taise, et ces deux secondes sont précisément celles qu'on regarde. **Un seul
+trou pendant la lecture suffit maintenant à la faire reculer, tout de suite, pour
+trois secondes.** Réagir vite et revenir lentement.
+
+Et le son se remet en marche tout seul : un iPhone met en pause l'audio d'une
+page quand la mémoire manque ou quand le système reprend la main, et il ne le
+redémarre jamais. Le battement le rattrape à l'endroit où il devrait être.
+
+## La pixellisation, troisième round : le plafond de débit
+
+Le débit était plafonné par celui de la source — juste, et faux dès qu'on
+agrandit. Un cut de 640×480 à 2,8 Mb/s posé dans un cadre de 1280×720, c'est
+trois fois plus de pixels à décrire ; plafonner à 2,8 Mb/s revenait à **0,14 bit
+par pixel**. Le débit s'effondrait au moment même où l'image grandissait.
+
+```
+640x480  → 1280x720   avant 3,1 Mb/s (0,139 bpp)   après 7,7 Mb/s (0,350 bpp)
+854x480  → 1280x720   avant 3,1 Mb/s (0,139 bpp)   après 7,7 Mb/s (0,350 bpp)
+1920x1080 → 1280x720  avant 3,1 Mb/s               après 4,0 Mb/s (plancher)
+```
+
+Le plafond suit désormais le rapport des surfaces, et disparaît quand le cadre
+est plus grand que la source — elle ne dit rien de ce qu'il faut pour décrire une
+image agrandie. Un plancher de 0,18 bit par pixel s'ajoute : en dessous,
+l'encodeur rend des blocs quelle que soit la source.
+
+Le cadre, lui, s'adapte à l'appareil : mille deux cent quatre-vingts points en
+plein écran sur un ordinateur, neuf cent soixante sur une machine de six cœurs ou
+moins. Neuf cent soixante reste au-dessus des huit cent vingt-huit points réels
+d'un iPhone XR — rien ne s'adoucit là où l'on regarde — et c'est deux fois moins
+de pixels à décoder, encoder et garder en mémoire.
+
+## Ce que la préparation change, mesuré
+
+Même appareil, même bridage à six, vingt secondes de lecture, trente plans :
+
+```
+                        pendant la préparation    une fois préparé
+images par seconde              19,8                   23,6
+trous de plus de 100 ms          21                      1
+arrêts de lecture                 7                      2
+tenues d'image (freeze)          17                      1
+```
+
+La lecture n'est pas « à peu près » fluide une fois les blocs prêts : elle l'est.
+Tout le problème était que, sur ce téléphone, la préparation ne finissait
+jamais — mémoire pleine, plafond invisible, blocs refusés à tort. C'est cela qui
+a été réparé, et c'est cela qui rend la mesure de droite atteignable.
+
 ## Le montage recollé n'attend plus d'être complet
 
 C'est le plus grand levier de fluidité de l'application, et il était condamné à

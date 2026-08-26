@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 16:35";
+const VERSION_PAGE = "2026-08-26 17:00";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3673,6 +3673,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
   moniteur: `${$("moniteur")?.width || 0}x${$("moniteur")?.height || 0}`,
   enCours: [...moteur.enCours.values()].map((x) => x.plan),
   images: [...moteur.pretes.values()].map((x) => `${x.entree.toFixed(2)}→${x.fin.toFixed(2)} (${x.images.length})`),
+  sons: { ...sons },
   son: lecture.audio
     ? { pause: lecture.audio.paused, boucle: lecture.audio.loop,
         ou: Math.round(lecture.audio.currentTime * 10) / 10,
@@ -3725,7 +3726,22 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
 const LARGE_SEGMENT = (() => {
   const densite = Math.min(2, (typeof devicePixelRatio === "number" ? devicePixelRatio : 1) || 1);
   const cote = Math.max(screen?.width || 0, screen?.height || 0) || 1280;
-  return Math.min(1280, Math.max(640, Math.round((cote * densite) / 2) * 2));
+  /* Le plafond suit la force de l'appareil.
+
+     Mille deux cent quatre-vingts points, c'est la bonne définition en plein
+     écran — et c'est aussi deux fois plus de pixels à décoder, à encoder et à
+     garder en mémoire que neuf cent soixante. Sur un téléphone déjà court en
+     mémoire, cela se paie deux fois : la préparation traîne, et le fil de
+     fabrication se fait reprendre par le système en cours de route.
+
+     Neuf cent soixante reste au-dessus de ce que montre l'écran d'un iPhone XR
+     dans l'application — huit cent vingt-huit points réels — donc rien ne
+     s'adoucit là où l'on regarde vraiment. Six cœurs ou moins : neuf cent
+     soixante. Au-delà, mille deux cent quatre-vingts. */
+  const modeste = (Number(navigator.hardwareConcurrency) || 4) <= 6
+    || (Number(navigator.deviceMemory) || 8) <= 4;
+  const plafond = modeste ? 960 : 1280;
+  return Math.min(plafond, Math.max(640, Math.round((cote * densite) / 2) * 2));
 })();
 /* Le cadre commun de l'aperçu : 16/9 comme le moniteur, et jamais plus grand
    que la plus grande source du montage.
@@ -4261,6 +4277,8 @@ function prochainAFabriquer() {
    Rien ne surveillait cela. Vingt-cinq secondes sans réponse pour un bloc qui en
    prend deux à cinq, et l'on considère le fil perdu : on le remplace et on
    repart. Le bloc lui-même a droit à une seconde chance avant d'être écarté. */
+// Pour le diagnostic : combien de fois le son a dû être relancé.
+const sons = { repris: 0 };
 let tourPreparation = 0;
 const ATTENTE_FABRIQUE = 25000;
 const REDEMARRAGES_MAX = 5;
@@ -4516,6 +4534,16 @@ async function fabriquerSuivant() {
   }
   const cadreVise = cadreApercu(projetActif());
   if (parLecteur.has(suite.cle)) {
+    /* Ce chemin-là encode sur le fil de l'écran : décoder, dessiner, encoder,
+       image par image. Pendant une lecture, c'est exactement ce qu'il ne faut
+       pas faire — l'image se fige et le son se coupe, parce que l'un comme
+       l'autre attendent le même fil. Le son qui s'interrompt en dit plus long
+       que n'importe quel compteur : ce n'est pas le décodage vidéo qui manque
+       d'air, c'est le fil principal qui est pris.
+
+       Il attend donc l'arrêt. Le fil de fabrication, lui, continue : il a son
+       propre processeur et ne touche pas à l'écran. */
+    if (lecture.demande) return;
     parLecteur.delete(suite.cle);
     fabrique.lecteurEnCours = true;
     try {
@@ -4579,15 +4607,35 @@ async function fabriquerSuivant() {
 
    Plafonné par la source : dépenser plus de bits que le fichier d'origine n'en
    contient ne fabrique rien, cela remplit le disque. */
-const VERSION_SEGMENT = 2;
-const BITS_PAR_PIXEL = 0.5;
+const VERSION_SEGMENT = 3;
+const BITS_PAR_PIXEL = 0.35;
+// Et un plancher : en dessous, l'encodeur rend des blocs, quelle que soit la
+// source. Une source déjà pauvre ne justifie pas de la rendre pire.
+const BITS_PLANCHER = 0.18;
 
 function debitSegment(plan, cadre) {
   const vise = BITS_PAR_PIXEL * cadre.large * cadre.haut * IMAGES_PAR_SECONDE;
   const duree = Number(plan?.duree) || 0;
   const source = duree > 0.2 && plan?.mb ? (plan.mb * 8e6) / duree : 0;
-  const plafond = source ? Math.min(vise, source * 1.1) : vise;
-  return Math.round(Math.max(1_500_000, Math.min(plafond, 12_000_000)));
+
+  /* Le plafond « pas plus que la source » était juste — et faux dès qu'on
+     agrandit.
+
+     Un cut de 640×480 à 2,8 Mb/s posé dans un cadre de 1280×720, c'est trois
+     fois plus de pixels à décrire. Plafonner à 2,8 Mb/s revenait alors à
+     0,14 bit par pixel : le débit s'effondre au moment même où l'image grandit,
+     et l'encodeur rend des blocs bien visibles. C'est exactement la
+     pixellisation signalée, et elle venait de ce plafond.
+
+     Le plafond suit donc le rapport des surfaces. Quand le cadre est plus grand
+     que la source, il n'y a plus de plafond du tout : la source ne dit rien de
+     ce qu'il faut pour décrire une image agrandie. */
+  const pixelsSource = (Number(plan?.width) || 0) * (Number(plan?.height) || 0);
+  const pixelsCadre = cadre.large * cadre.haut;
+  const rapport = pixelsSource > 0 ? pixelsCadre / pixelsSource : 1;
+  const plafond = source && rapport <= 1 ? Math.min(vise, source * rapport * 1.1) : vise;
+  const plancher = BITS_PLANCHER * pixelsCadre * IMAGES_PAR_SECONDE;
+  return Math.round(Math.max(plancher, Math.min(plafond, 12_000_000)));
 }
 
 /* Ce qui a été fabriqué lors d'une visite précédente est retrouvé au lieu d'être
@@ -4776,6 +4824,22 @@ function battreMoniteur() {
      Elle se garde elle-même : rien pendant qu'on regarde, rien pendant un
      rendu, rien tant qu'un segment est en cours. Le battement n'est qu'une
      occasion régulière de reprendre le travail là où il en était. */
+  /* Le son qui se remet en marche tout seul.
+
+     Un iPhone met en pause l'audio d'une page quand la mémoire manque, quand un
+     appel arrive, quand le système reprend la main un instant — et il ne le
+     redémarre jamais. On se retrouvait à regarder un montage muet sans avoir
+     rien demandé, ou avec un silence au milieu. Le battement le rattrape :
+     si l'on a demandé la lecture et que le son est en pause, il repart où il
+     devrait être. */
+  if (lecture.demande && lecture.audio && lecture.audio.paused && !lecture.scrub) {
+    const longueur = lecture.audio.duration || 0;
+    const ou = positionCourante();
+    if (longueur > 0) lecture.audio.currentTime = ou % longueur;
+    lecture.audio.play().catch(() => {});
+    sons.repris = (sons.repris || 0) + 1;
+  }
+
   surveillerFabrique();
   fabriquerSuivant().catch(() => {});
   /* Et le compteur se relit, une fois par seconde.
@@ -6178,7 +6242,21 @@ const allure = {
   bilan: 0,            // date du dernier bilan
   derniere: 0,         // date de la dernière image présentée
   bascules: 0,         // nombre de fois où l'on a changé d'allure
+  recul: 0,            // date jusqu'à laquelle la fabrique se tait
 };
+
+/* Le retrait immédiat.
+
+   Le jugement d'allure se prononce toutes les deux secondes : il faut donc
+   deux secondes d'accrocs avant que la fabrique se taise, et ces deux secondes
+   sont précisément celles qu'on regarde. Sur un téléphone, cela suffit à gâcher
+   la lecture — et le son se coupe avec l'image, parce que les deux attendent le
+   même fil.
+
+   Un seul trou pendant la lecture suffit donc maintenant à faire reculer la
+   fabrique, tout de suite, pour trois secondes. Réagir vite et revenir
+   lentement : c'est la lecture qui a la priorité, pas le cache. */
+const RECUL_FABRIQUE = 3000;
 
 const TROU_ALLURE = 120;      // ms entre deux images : au-delà, ça se voit
 const FENETRE_ALLURE = 2000;  // on juge sur deux secondes, pas sur un accident
@@ -6187,7 +6265,10 @@ const FENETRE_ALLURE = 2000;  // on juge sur deux secondes, pas sur un accident
    reçoit, pas ce que le code croit produire. */
 function noterImage() {
   const maintenant = performance.now();
-  if (allure.derniere && maintenant - allure.derniere > TROU_ALLURE) allure.trous += 1;
+  if (allure.derniere && maintenant - allure.derniere > TROU_ALLURE) {
+    allure.trous += 1;
+    if (lecture.demande) allure.recul = maintenant + RECUL_FABRIQUE;
+  }
   allure.derniere = maintenant;
   allure.vues += 1;
   if (!allure.bilan) { allure.bilan = maintenant; return; }
@@ -6207,7 +6288,12 @@ function noterImage() {
 }
 
 // L'interrupteur du banc d'essai, pour mesurer les deux allures à volonté.
-const alAise = () => (window.__economie ? false : window.__aise ? true : allure.aise);
+const alAise = () => {
+  if (window.__economie) return false;
+  if (window.__aise) return true;
+  if (performance.now() < allure.recul) return false;
+  return allure.aise;
+};
 
 /* Lancer le plan suivant juste avant qu'on en ait besoin, en sourdine : c'est
    la piste son du montage qu'on entend, jamais celle des rushs. */
