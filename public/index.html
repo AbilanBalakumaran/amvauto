@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 03:05";
+const VERSION_PAGE = "2026-08-26 08:04";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3658,6 +3658,13 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
   segments: { prets: (projetActif()?.plans || []).filter(surSegment).length,
     total: projetActif()?.plans.length || 0, faits: fabrique.faits, rates: fabrique.rates,
     octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
+  imports: { file: fileImport.length, enVol: arretsImport.size, places: importsEnCours,
+    attentes: [...attentesImport.values()].map((x) => Math.round((x.quand - Date.now()) / 1000)),
+    essais: [...essaisImport.values()],
+    perdus: [...importsRates].map((a) => raisonsImport.get(a)?.texte || "?"),
+    volatiles: volatiles.size, relances: { ...relances },
+    place: { refusee: place.refusee, derniere: place.derniere,
+      utilise: place.octets, quota: place.total } },
   copie: `${derniereImage.toile.width}x${derniereImage.toile.height}`,
   moniteur: `${$("moniteur")?.width || 0}x${$("moniteur")?.height || 0}`,
   enCours: [...moteur.enCours.values()].map((x) => x.plan),
@@ -3724,12 +3731,30 @@ const LARGE_SEGMENT = (() => {
    image qui n'a pas un pixel de plus à montrer. On plafonne donc à ce que les
    rushs offrent — les sources d'un même animé font presque toujours la même
    taille, et l'aperçu n'a rien à inventer. */
+/* La définition du cadre commun.
+
+   Elle suivait la plus grande source du projet. C'était une erreur mesurable :
+   sur vingt-quatre plans de Chainsaw Man, dix-huit sont en 854 de large et six
+   en 1152. Le cadre partait donc à 1152, et les dix-huit autres étaient
+   agrandis avant d'être réencodés — on dépense des bits à inventer du détail
+   qui n'existe pas, puis l'écran redescend le tout. Deux pertes pour rien.
+
+   On prend la définition la plus fréquente du projet : la majorité des plans
+   passe alors sans être touchée, et les rares plus grands sont réduits, ce qui
+   ne s'aperçoit pas. */
 function cadreApercu(projet) {
   const plans = projet?.plans || [];
-  let source = 0;
+  const combien = new Map();
   for (const plan of plans) {
     const l = Number(plan?.width) || 0;
-    if (l > source) source = l;
+    if (!l) continue;
+    combien.set(l, (combien.get(l) || 0) + 1);
+  }
+  let source = 0;
+  let meilleur = 0;
+  for (const [l, n] of combien) {
+    // À égalité de fréquence, la plus grande : on ne réduit pas sans raison.
+    if (n > meilleur || (n === meilleur && l > source)) { meilleur = n; source = l; }
   }
   const large = Math.max(320, Math.min(LARGE_SEGMENT, source || LARGE_SEGMENT));
   const l = Math.max(2, Math.round(large / 2) * 2);
@@ -3763,8 +3788,13 @@ function cleSegment(plan) {
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return "";
   const cadre = cadreApercu(projetActif());
+  /* La version de fabrication fait partie de la clé.
+
+     Le cadre y était déjà, mais pas le débit : un segment fabriqué avant la
+     correction serait ressorti du cache tel quel, avec ses blocs, et l'on aurait
+     conclu que rien n'avait changé. Changer ce numéro refait tout. */
   return `seg:${empreinte(adresse)}:${entreeDe(plan).toFixed(3)}-${sortieDe(plan).toFixed(3)}`
-    + `:${cadre.large}x${cadre.haut}@${IMAGES_PAR_SECONDE}`;
+    + `:${cadre.large}x${cadre.haut}@${IMAGES_PAR_SECONDE}v${VERSION_SEGMENT}`;
 }
 
 const segmentDe = (plan) => {
@@ -4164,8 +4194,36 @@ async function fabriquerSuivant() {
     // Le même cadre et la même cadence pour tous : c'est ce qui permettra de
     // les recoller en un seul fichier sans rien réencoder.
     large: cadre.large, haut: cadre.haut, cadence: IMAGES_PAR_SECONDE,
-    debit: Math.round(900_000 * ((cadre.large * cadre.haut) / (640 * 360))),
+    debit: debitSegment(suite.plan, cadre),
   });
+}
+
+/* Le débit d'encodage — c'est lui, la pixellisation.
+
+   Il valait 900 kb/s ramenés à 640×360, soit 0,16 bit par pixel et par image.
+   Mesuré sur un vrai projet : un rush Sakugabooru de 10,4 Mo pour quelques
+   secondes tourne autour de 20 Mb/s. On réencodait donc du sakuga — débris,
+   smears, impact frames, l'image entière qui bouge à chaque photogramme — à un
+   treizième de son débit. Et chaque segment étant court, il commence par une
+   image-clé que le régulateur doit faire tenir dans une toute petite enveloppe :
+   d'où des blocs bien visibles juste après chaque coupe, exactement là où l'œil
+   regarde.
+
+   Trois fois plus, donc : 0,5 bit par pixel et par image. Sur un montage d'une
+   minute cela fait une trentaine de mégaoctets de segments — moins que les
+   rushs eux-mêmes, et sans commune mesure avec le gain à l'écran.
+
+   Plafonné par la source : dépenser plus de bits que le fichier d'origine n'en
+   contient ne fabrique rien, cela remplit le disque. */
+const VERSION_SEGMENT = 2;
+const BITS_PAR_PIXEL = 0.5;
+
+function debitSegment(plan, cadre) {
+  const vise = BITS_PAR_PIXEL * cadre.large * cadre.haut * IMAGES_PAR_SECONDE;
+  const duree = Number(plan?.duree) || 0;
+  const source = duree > 0.2 && plan?.mb ? (plan.mb * 8e6) / duree : 0;
+  const plafond = source ? Math.min(vise, source * 1.1) : vise;
+  return Math.round(Math.max(1_500_000, Math.min(plafond, 12_000_000)));
 }
 
 /* Ce qui a été fabriqué lors d'une visite précédente est retrouvé au lieu d'être
@@ -7531,6 +7589,109 @@ const importsRates = new Set();
    stade ce n'est plus le réseau, c'est le fichier. */
 const essaisImport = new Map();
 const ESSAIS_MAX = 4;
+// Pourquoi tel fichier a été abandonné : adresse -> { code, texte, definitif }.
+const raisonsImport = new Map();
+// Rapatriés mais pas rangés : ils disparaîtront à la fermeture.
+const volatiles = new Set();
+// En attente d'une nouvelle tentative : adresse -> { plan, quand }.
+const attentesImport = new Map();
+
+/* Remettre en file tout ce dont l'heure est venue. Rendue en nombre, pour que
+   l'appelant sache s'il doit relancer. */
+function reprendreAttentes() {
+  const maintenant = Date.now();
+  let repris = 0;
+  for (const [adresse, attente] of attentesImport) {
+    if (attente.quand > maintenant) continue;
+    attentesImport.delete(adresse);
+    if (locales.has(adresse)) continue;
+    fileImport.push(attente.plan);
+    repris += 1;
+  }
+  return repris;
+}
+
+function nommerEchec(erreur) {
+  const code = Number(erreur?.message);
+  if (code === 404 || code === 410) return "le fichier n'existe plus à la source";
+  if (code === 451) return "le fichier est bloqué à la source";
+  if (code === 403) return "la source a refusé l'accès";
+  if (code >= 500) return `la source a répondu ${code}`;
+  if (code >= 400) return `la source a répondu ${code}`;
+  if (erreur?.name === "AbortError") return "la connexion s'est arrêtée sans finir";
+  return erreur?.message ? `échec réseau (${erreur.message})` : "échec réseau";
+}
+
+/* Remettre en file ce qui avait été abandonné.
+
+   Sans « tout », les seuls cas sans espoir — un fichier supprimé à la source —
+   restent de côté : les retenter en boucle ne ferait que consommer la 4G. */
+const RONDES_AUTO = 2;
+const rondesImport = new Map();
+
+function relancerPerdus(tout = false) {
+  const projet = projetActif();
+  if (!projet) return 0;
+  let repris = 0;
+  for (const plan of projet.plans) {
+    const adresse = mediaDe(plan);
+    if (!adresse || plan.youtube || locales.has(adresse)) continue;
+    if (!importsRates.has(adresse)) continue;
+    if (!tout) {
+      // Un fichier disparu de la source ne reviendra pas parce qu'on insiste.
+      if (raisonsImport.get(adresse)?.definitif) continue;
+      /* Et même pour le reste, on ne réessaie pas indéfiniment : quatre
+         tentatives, puis deux rondes de rattrapage, puis on s'arrête et on le
+         dit. Sans ce plafond, un lien mort consommait la 4G en boucle et le
+         bouton « Réessayer » n'apparaissait jamais, puisque rien n'était
+         jamais déclaré perdu. */
+      if ((rondesImport.get(adresse) || 0) >= RONDES_AUTO) continue;
+      rondesImport.set(adresse, (rondesImport.get(adresse) || 0) + 1);
+    } else {
+      rondesImport.delete(adresse);
+    }
+    importsRates.delete(adresse);
+    essaisImport.delete(adresse);
+    raisonsImport.delete(adresse);
+    planifierImport(plan);
+    repris += 1;
+  }
+  if (repris) { majImports(); majPreparation(projet); }
+  return repris;
+}
+
+/* Le réseau qui revient est le meilleur moment pour reprendre : c'est
+   exactement l'événement qui a fait échouer les autres. */
+window.addEventListener("online", () => { relancerPerdus(); lancerImport(); });
+
+/* Et une relance de sécurité.
+
+   Deux pannes possibles, toutes deux invisibles : une file qui a des plans en
+   attente sans qu'aucun transfert ne soit en vol — la place a été perdue — et
+   des abandons temporaires qui ne repartiraient jamais d'eux-mêmes. Toutes les
+   dix secondes, on répare les trois — les reprises dues, une place perdue, des
+   abandons temporaires. Cela ne coûte rien quand tout va bien : les conditions
+   sont fausses. */
+// Pour le diagnostic : combien de fois il a fallu réparer.
+const relances = { bloquees: 0, reprises: 0, tours: 0, actifs: 0 };
+let derniereRelance = Date.now();
+setInterval(() => {
+  relances.tours += 1;
+  if (document.hidden || transfert.suspendu) return;
+  relances.actifs += 1;
+  if (reprendreAttentes()) lancerImport();
+  if (fileImport.length && !arretsImport.size && !enImport.size) {
+    importsEnCours = 0;
+    relances.bloquees += 1;
+    lancerImport();
+  }
+  const maintenant = Date.now();
+  if (importsRates.size && maintenant - derniereRelance > 120000) {
+    derniereRelance = maintenant;
+    const repris = relancerPerdus();
+    if (repris) { relances.reprises += repris; lancerImport(); }
+  }
+}, 10000);
 const ATTENTE_ESSAI = [4000, 12000, 40000];
 
 /* Le débit observé, pour annoncer une attente plutôt qu'un point d'interrogation.
@@ -7573,6 +7734,10 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   const maintenant = performance.now();
   for (const adresse of progres.keys()) progres.set(adresse, maintenant);
+  /* Le temps passé en veille compte pour les reprises : c'est même là qu'il
+     s'en accumule le plus. */
+  reprendreAttentes();
+  if (fileImport.length && !arretsImport.size && !enImport.size) importsEnCours = 0;
   lancerImport();
 });
 
@@ -7628,23 +7793,81 @@ async function lireBase(adresse) {
   });
 }
 
+/* Faire le ménage des segments d'une fabrication précédente.
+
+   Changer la version de fabrication refait tous les segments — et laisse les
+   anciens sur le disque, où ils ne servent plus à rien tout en occupant la
+   place qui manque justement pour les rushs. On les efface une fois, au
+   démarrage, sans bloquer quoi que ce soit. */
+async function balayerSegmentsPerimes() {
+  const base = await ouvrirBase();
+  if (!base) return 0;
+  const cles = await new Promise((ok) => {
+    try {
+      const requete = base.transaction(MAGASIN, "readonly").objectStore(MAGASIN).getAllKeys();
+      requete.onsuccess = () => ok(requete.result || []);
+      requete.onerror = () => ok([]);
+    } catch { ok([]); }
+  });
+  const marque = `v${VERSION_SEGMENT}`;
+  const perimes = cles.filter((cle) => typeof cle === "string"
+    && cle.startsWith("seg:") && !cle.endsWith(marque));
+  for (const cle of perimes) await effacerBase(cle).catch(() => {});
+  if (perimes.length) mesurerPlace();
+  return perimes.length;
+}
+// Après le démarrage, jamais pendant : la première seconde appartient à l'écran.
+setTimeout(() => { balayerSegmentsPerimes().catch(() => {}); }, 8000);
+
 // Un téléchargement interrompu laisse ce qu'il a reçu, rangé à part. La
 // reprise repart de cet endroit avec une requête par plage : ouvrir un rush,
 // fermer, y revenir plus tard finit par le rapporter en entier sans jamais
 // retélécharger deux fois les mêmes octets.
 const cleParticelle = (adresse) => `partiel:${adresse}`;
 
+/* Écrire, et dire si ça a marché.
+
+   L'échec était avalé — « quota plein : on continue en distant » — et l'appelant
+   enchaînait comme si de rien n'était : le fichier était compté comme rapatrié,
+   alors que rien n'avait été écrit. À la réouverture il manquait, sans que rien
+   n'ait jamais signalé que la place manquait. Un stockage plein doit se dire. */
 async function ecrireBase(adresse, blob) {
   const base = await ouvrirBase();
-  if (!base) return;
-  await new Promise((ok) => {
-    const transaction = base.transaction(MAGASIN, "readwrite");
-    transaction.objectStore(MAGASIN).put(blob, adresse);
-    transaction.oncomplete = ok;
-    transaction.onerror = ok;   // quota plein : on continue en distant
-    transaction.onabort = ok;
+  if (!base) return false;
+  return new Promise((ok) => {
+    let transaction;
+    try {
+      transaction = base.transaction(MAGASIN, "readwrite");
+      transaction.objectStore(MAGASIN).put(blob, adresse);
+    } catch (erreur) {
+      noterPlaceRefusee(erreur);
+      return ok(false);
+    }
+    transaction.oncomplete = () => ok(true);
+    transaction.onerror = () => { noterPlaceRefusee(transaction.error); ok(false); };
+    transaction.onabort = () => { noterPlaceRefusee(transaction.error); ok(false); };
   });
 }
+
+/* La place manquante n'est pas une erreur parmi d'autres : c'est la seule que
+   l'utilisateur peut corriger lui-même, et il faut donc la nommer. */
+const place = { refusee: 0, derniere: "", octets: 0, total: 0 };
+
+function noterPlaceRefusee(erreur) {
+  place.refusee += 1;
+  place.derniere = erreur?.name === "QuotaExceededError"
+    ? "l'espace de l'appareil est plein"
+    : (erreur?.message || "écriture refusée");
+  mesurerPlace();
+}
+
+async function mesurerPlace() {
+  try {
+    const bilan = await navigator.storage?.estimate?.();
+    if (bilan) { place.octets = bilan.usage || 0; place.total = bilan.quota || 0; }
+  } catch { /* l'appareil ne le dit pas */ }
+}
+mesurerPlace();
 
 async function effacerBase(adresse) {
   const base = await ouvrirBase();
@@ -7777,6 +8000,23 @@ async function lancerImport() {
   const plan = fileImport.shift();
   if (!plan) return;
   importsEnCours += 1;
+  try {
+    await rapatrier(plan);
+  } finally {
+    /* La place se rend ici, et nulle part ailleurs.
+
+       Elle se rendait dans le « finally » du corps, ce qui ne couvrait pas ce
+       qui se passe avant lui : une exception levée entre la prise de place et
+       l'entrée dans le try — un redessin qui échoue, par exemple — gardait la
+       place pour toujours. Un seul téléchargement à la fois, place jamais
+       rendue : la file s'arrête net et ne repart plus de la séance. C'est le
+       « bloqué à 39 sur 88 » qu'aucun bouton ne débloquait. */
+    importsEnCours -= 1;
+    setTimeout(lancerImport, 60);
+  }
+}
+
+async function rapatrier(plan) {
   // La sonde à imagettes lâche sa source distante : une fois chargée, elle
   // continue de remplir son tampon toute seule, connexion ouverte, et vole la
   // bande passante au téléchargement — mesuré, plus de vingt secondes de réseau
@@ -7839,9 +8079,13 @@ async function lancerImport() {
     }
 
     const blob = new Blob(morceaux, { type: reponse.headers.get("content-type") || "video/mp4" });
-    await ecrireBase(adresse, blob);
+    const range = await ecrireBase(adresse, blob);
     await effacerBase(cleParticelle(adresse));
+    /* Rangé ou non, le fichier est là pour cette séance : le refuser à l'écran
+       parce que le disque est plein serait doublement puni. Mais on ne prétend
+       pas qu'il survivra à la fermeture. */
     locales.set(adresse, URL.createObjectURL(blob));
+    if (!range) volatiles.add(adresse);
     essaisImport.delete(adresse);
   } catch (erreur) {
     // Interrompu ou en échec : on garde ce qui est arrivé pour la prochaine fois.
@@ -7858,13 +8102,35 @@ async function lancerImport() {
       essaisImport.set(adresse, faits);
       if (faits >= ESSAIS_MAX) {
         importsRates.add(adresse);
+        /* Pourquoi il a renoncé, et si cela vaut la peine d'y revenir.
+
+           « Introuvable » recouvrait deux choses très différentes : un fichier
+           qui n'existe plus — 404, rien n'y changera — et un lien mobile qui a
+           lâché quatre fois de suite, ce qui n'a rien de définitif. Confondus,
+           les seconds étaient abandonnés pour la séance entière et le compteur
+           restait planté. On garde donc la raison, et seuls les cas sans espoir
+           sont laissés de côté. */
+        const code = Number(erreur?.message);
+        raisonsImport.set(adresse, {
+          code: Number.isFinite(code) ? code : 0,
+          texte: nommerEchec(erreur),
+          definitif: code === 404 || code === 410 || code === 451,
+        });
       } else {
-        // Espacé, et remis en file : le lien mobile a le temps de revenir.
-        setTimeout(() => {
-          if (locales.has(adresse)) return;
-          fileImport.push(plan);
-          lancerImport();
-        }, ATTENTE_ESSAI[faits - 1] || 40000);
+        /* Espacé, et remis en file : le lien mobile a le temps de revenir.
+
+           C'était un simple minuteur, et c'était LE défaut. iOS arrête les
+           minuteurs d'une page mise derrière : on quitte l'application pendant
+           l'attente de quarante secondes, le rappel ne part jamais, et le
+           fichier reste dans un troisième état que rien ne nomme — ni en file,
+           ni en cours, ni abandonné. Le compteur se fige à « 39 sur 88 » et
+           plus rien ne le débloque, pas même une réouverture, puisque au
+           lancement suivant le même minuteur repart pour mourir pareil.
+
+           On note donc une heure, pas un rappel. Le chien de garde la relit,
+           au retour au premier plan comme toutes les dix secondes : une heure
+           passée en veille est une heure passée, et la reprise a lieu. */
+        attentesImport.set(adresse, { plan, quand: Date.now() + (ATTENTE_ESSAI[faits - 1] || 40000) });
       }
     }
   } finally {
@@ -7872,11 +8138,9 @@ async function lancerImport() {
     progres.delete(adresse);
     bloques.delete(adresse);
     enImport.delete(adresse);
-    importsEnCours -= 1;
     majImports();
     majNotificationTransfert();
     apresImport(plan);
-    setTimeout(lancerImport, 60);
   }
 }
 
@@ -7930,8 +8194,12 @@ function majPreparation(projet) {
        mais moins bien, et rien ne le disait : l'utilisateur voyait une lecture
        qui accroche sans pouvoir savoir si c'est son appareil, son montage, ou
        une panne. La réponse tient en une ligne, à l'endroit où il regarde. */
+    /* Les trois gestes disparaissent quand il n'y a plus rien à charger — sauf
+       s'il reste des abandons : c'est précisément là qu'on veut réessayer, et
+       le bouton était masqué dans le seul état où il servait. */
     const transferts = $("transferts");
-    if (transferts) transferts.hidden = true;
+    if (transferts) transferts.hidden = !importsRates.size;
+    majBoutonsTransfert();
     const fait = (projet.plans || []).filter(surSegment).length;
     const totalBlocs = (projet.plans || []).length;
     if (fabrique.possible === false) {
@@ -7976,9 +8244,18 @@ function majPreparation(projet) {
       + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
     return;
   }
+  /* Un transfert qui attend sa nouvelle tentative n'est ni en cours ni perdu.
+     Sans le dire, l'application paraît arrêtée alors qu'elle compte. */
+  const attente2 = [...attentesImport.values()].reduce((tot, x) => Math.min(tot, x.quand), Infinity);
+  const dans = Number.isFinite(attente2) ? Math.max(0, Math.round((attente2 - Date.now()) / 1000)) : 0;
+  const repos = !arretsImport.size && attentesImport.size
+    ? ` · nouvelle tentative dans ${dans} s`
+    : "";
+
   dit.textContent =
     `${prets}/${total} plans sur l'appareil · ${(octets / 1e6).toFixed(0)} Mo à venir` +
     (duree ? ` · ${duree}` : "") +
+    repos +
     (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "") +
     "\nL'aperçu saute tant que les fichiers arrivent.";
 }
@@ -8160,6 +8437,46 @@ function majEtatChargement() {
     ligne.textContent = `En ce moment\u00a0: ${prets} plan${prets > 1 ? "s" : ""} sur ${total}, le reste arrive.`
       + " La notification se met à jour à chaque plan reçu, et se repose quand tu quittes l'application.";
   }
+  ligne.textContent += pourquoiCoince();
+}
+
+/* Ce qui coince, dit en français.
+
+   « 39 sur 88 » ne dit rien de ce qu'il faut faire. La même situation peut être
+   une source disparue — rien à faire —, un lien mobile qui a lâché — un bouton
+   suffit —, ou un appareil plein — il faut faire de la place. Trois gestes
+   différents derrière un seul chiffre. */
+function pourquoiCoince() {
+  const bouts = [];
+
+  if (attentesImport.size && !arretsImport.size) {
+    const quand = Math.min(...[...attentesImport.values()].map((x) => x.quand));
+    const dans = Math.max(0, Math.round((quand - Date.now()) / 1000));
+    bouts.push(` ${attentesImport.size} plan${attentesImport.size > 1 ? "s attendent" : " attend"} une nouvelle tentative, la prochaine dans ${dans} s.`);
+  }
+
+  if (importsRates.size) {
+    const parRaison = new Map();
+    for (const adresse of importsRates) {
+      const texte = raisonsImport.get(adresse)?.texte || "raison inconnue";
+      parRaison.set(texte, (parRaison.get(texte) || 0) + 1);
+    }
+    const dits = [...parRaison].sort((a, b) => b[1] - a[1]).slice(0, 2)
+      .map(([texte, combien]) => `${combien} — ${texte}`);
+    bouts.push(` ${importsRates.size} plan${importsRates.size > 1 ? "s ont" : " a"} été abandonné${importsRates.size > 1 ? "s" : ""}\u00a0: ${dits.join(", ")}.`
+      + " Le bouton « Réessayer », sous la piste, les remet tous en file.");
+  }
+
+  if (place.refusee) {
+    bouts.push(` L'appareil a refusé ${place.refusee} écriture${place.refusee > 1 ? "s" : ""}\u00a0: ${place.derniere}.`
+      + " Ces plans-là se rejoueront cette fois-ci, mais auront disparu à la réouverture.");
+  }
+  if (place.total) {
+    const reste = Math.max(0, place.total - place.octets);
+    bouts.push(` Espace\u00a0: ${(place.octets / 1e9).toFixed(1)} Go utilisés sur ${(place.total / 1e9).toFixed(1)} Go, ${(reste / 1e9).toFixed(1)} Go libres.`);
+  }
+
+  return bouts.join("");
 }
 
 /* Le bouton d'essai, parce qu'un réglage qu'on ne peut pas vérifier n'en est
@@ -8274,6 +8591,8 @@ async function arreterTransferts() {
   transfert.suspendu = true;
   for (const arret of arretsImport.values()) arret.abort();
   const restants = fileImport.splice(0, fileImport.length);
+  for (const attente of attentesImport.values()) restants.push(attente.plan);
+  attentesImport.clear();
   // Les morceaux partiels n'ont plus de raison d'être : on rend la place.
   const adresses = new Set(restants.map((plan) => mediaDe(plan)).filter(Boolean));
   for (const arret of arretsImport.keys()) adresses.add(arret);
@@ -8359,6 +8678,23 @@ function boutonsTransfert() {
     majBoutonsTransfert();
   });
 
+  /* Reprendre ce qui a été abandonné, à la main.
+
+     La relance automatique existe, mais elle attend deux minutes et laisse de
+     côté ce qui est sans espoir. Quand on a le téléphone en main et qu'on veut
+     savoir tout de suite, ce bouton retente tout, y compris les fichiers
+     déclarés introuvables — une source peut être revenue. */
+  const reprise = document.createElement("button");
+  reprise.type = "button";
+  reprise.id = "btn-transfert-reprise";
+  reprise.addEventListener("click", () => {
+    const repris = relancerPerdus(true);
+    transfert.suspendu = false;
+    lancerImport();
+    majBoutonsTransfert();
+    if (!repris) alert("Aucun plan abandonné à reprendre : tout ce qui manque est déjà en file.");
+  });
+
   const stop = document.createElement("button");
   stop.type = "button";
   stop.id = "btn-transfert-stop";
@@ -8372,7 +8708,7 @@ function boutonsTransfert() {
     majBoutonsTransfert();
   });
 
-  boite.append(pause, stop);
+  boite.append(pause, reprise, stop);
   return boite;
 }
 
@@ -8382,6 +8718,19 @@ function majBoutonsTransfert() {
     pause.textContent = transfert.suspendu ? "Reprendre" : "Suspendre";
     pause.classList.toggle("on", transfert.suspendu);
   }
+  const reprise = $("btn-transfert-reprise");
+  if (reprise) {
+    // Il n'apparaît que s'il a quelque chose à faire.
+    const perdus = importsRates.size;
+    reprise.hidden = !perdus;
+    reprise.textContent = `Réessayer (${perdus})`;
+  }
+  /* Suspendre et arrêter n'ont de sens que s'il reste du travail. Quand il ne
+     reste que des abandons, seul « Réessayer » a quelque chose à dire. */
+  const travail = fileImport.length || arretsImport.size || attentesImport.size;
+  if (pause) pause.hidden = !travail && !transfert.suspendu;
+  const stop = $("btn-transfert-stop");
+  if (stop) stop.hidden = !travail;
   majBoutonVeille();
 }
 

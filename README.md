@@ -2801,6 +2801,101 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## « Bloqué à 39 sur 88 depuis plusieurs jours »
+
+Un compteur figé pendant des jours, que ni la réouverture ni aucun bouton ne
+débloque. Quatre défauts distincts, trouvés en reproduisant l'état plutôt qu'en
+le devinant.
+
+### Le défaut principal : une reprise confiée à un minuteur
+
+Un téléchargement qui échoue est retenté quatre fois, espacées de 4, 12 puis
+40 secondes. Ces attentes étaient de simples `setTimeout`.
+
+**iOS arrête les minuteurs d'une page mise derrière.** On quitte l'application
+pendant l'attente de quarante secondes — ce qui est exactement ce qu'on fait
+quand on attend —, le rappel ne part jamais, et le fichier se retrouve dans un
+troisième état que rien ne nomme : ni en file, ni en cours, ni abandonné. Le
+compteur se fige, et la réouverture n'y change rien puisque le même minuteur
+repart pour mourir de la même façon.
+
+On note donc **une heure, pas un rappel**. Un chien de garde la relit toutes les
+dix secondes et à chaque retour au premier plan : une heure passée en veille est
+une heure passée.
+
+### Le second : le bouton de reprise était caché là où il servait
+
+Une fois tous les fichiers comptés — rapatriés ou abandonnés —, l'interface
+passe au bandeau « Aperçu : n/N plans préparés » et **masquait les trois gestes
+du chargement**. C'est-à-dire précisément dans l'état où l'on veut réessayer. Le
+groupe reste maintenant visible tant qu'il reste des abandons, avec le seul
+bouton qui ait alors un sens : « Réessayer (n) ».
+
+### Le troisième : une place perdue dans la file
+
+Un seul téléchargement à la fois. La place se rendait dans le `finally` du corps
+de la fonction, ce qui ne couvrait pas ce qui se passe **avant** le `try` — une
+exception levée là gardait la place pour toujours, et la file s'arrêtait net. La
+place se rend désormais dans un `finally` extérieur, et le chien de garde répare
+le cas où elle aurait quand même été perdue.
+
+### Le quatrième : un échec d'écriture avalé
+
+`transaction.onerror = ok` — « quota plein : on continue en distant ». L'appelant
+enchaînait comme si de rien n'était et comptait le fichier comme rapatrié, alors
+que rien n'avait été écrit : à la réouverture il manquait, sans que rien n'ait
+jamais dit que la place manquait. L'écriture rend maintenant un verdict, et
+l'espace restant est affiché dans Options.
+
+### Et on ne réessaie plus indéfiniment
+
+Quatre tentatives, puis deux rondes de rattrapage espacées de deux minutes, puis
+on s'arrête **et on le dit**. Sans ce plafond, un lien mort consommait la 4G en
+boucle et rien n'était jamais déclaré perdu — donc le bouton « Réessayer »
+n'apparaissait jamais. Un 404 n'est jamais retenté automatiquement : un fichier
+supprimé à la source ne revient pas parce qu'on insiste.
+
+La raison de chaque abandon est gardée et dite en français — « la source a
+répondu 503 », « le fichier n'existe plus à la source » — parce que les trois
+situations demandent trois gestes différents.
+
+```
+1. cinq fichiers en échec  : abandonnés après 4 essais, « Réessayer (5) » apparaît
+   raisons                 : 5 × « la source a répondu 503 »
+2. la source revient       : un appui, 5 abandonnés → 0, 12/12 sur l'appareil
+3. ligne d'Infos           : dit l'état réel et l'espace restant
+```
+
+## La pixellisation : le cadre et le débit
+
+Deux erreurs qui se cumulaient, mesurées sur un vrai projet Chainsaw Man.
+
+**Le cadre suivait la plus grande source.** Sur vingt-quatre plans, dix-huit
+sont en 854 de large et six en 1152. Le cadre commun partait donc à 1152, et les
+dix-huit autres étaient **agrandis avant d'être réencodés** : on dépense des bits
+à inventer du détail qui n'existe pas, puis l'écran redescend le tout. Le cadre
+suit désormais la définition **la plus fréquente** du projet.
+
+**Le débit était calculé dans le vide.** 900 kb/s ramenés à 640×360, sans jamais
+regarder ce que valait la source. Mesuré sur un rush réel — 29,4 s, 10,4 Mo :
+
+```
+source            854x480  2,8 Mb/s  = 0,285 bit par pixel et par image
+ancien segment   1152x648  2,9 Mb/s  = 0,163  (et agrandi)
+nouveau segment   854x480  3,1 Mb/s  = 0,313  (natif, plafonné par la source)
+```
+
+Soit **1,9 fois plus de bits par pixel de source**, à la définition d'origine.
+Le débit vise 0,5 bit par pixel et par image, plafonné à 1,1 fois celui de la
+source : dépenser plus de bits que le fichier d'origine n'en contient ne
+fabrique rien, cela remplit le disque.
+
+Un numéro de version est entré dans la clé des segments. Sans lui, les segments
+fabriqués avant la correction seraient ressortis du cache tels quels, avec leurs
+blocs, et l'on aurait conclu que rien n'avait changé. Les anciens sont balayés
+du disque au démarrage — ils ne servent plus et occupaient la place qui manque
+justement pour les rushs.
+
 ### « Je n'ai jamais vu la notification des chargements »
 
 Trois raisons possibles, et **une seule est un défaut** :
