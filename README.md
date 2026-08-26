@@ -2801,6 +2801,45 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Un compteur qui ne peut pas arriver au bout
+
+Trois défauts d'affichage, tous les trois signalés depuis l'écran d'accueil.
+
+**Un bloc refusé est un bloc traité.** L'avancement ne comptait que les
+réussites : avec dix refus, il restait sur 39/88 et n'atteignait jamais la fin,
+alors qu'il n'y avait plus rien à faire. Une barre de progression qui ne peut
+pas arriver au bout est pire que pas de barre du tout. Le même défaut gardait
+le bandeau dans la phase « préparation » pour toujours, et empêchait l'annonce
+de fin.
+
+**La pastille disait « 49 ».** Elle portait le nombre de plans restants — ce
+qu'un iPhone affiche exactement comme quarante-neuf messages non lus. Il n'y a
+qu'une chose en cours, et le chiffre qui compte est dans la bannière : la
+pastille vaut un, et rien quand c'est fini.
+
+**Deux bannières restaient côte à côte** — celle d'une page pas encore mise à
+jour, et la nouvelle. On ferme désormais tout ce qui vient de l'application
+avant de reposter, pas seulement ce qui porte la même étiquette.
+
+Et le nombre de refus est passé dans la bannière, avec sa raison :
+
+```
+▰▰▰▰▱▱▱▱▱▱  39/88  56 % · 10 refusés · encore ~2 min
+Aperçu préparé, en partie — 78/88 plans préparés · 10 sans segment
+  — cet appareil ne sait pas lire le WEBM.
+```
+
+Le format est nommé, parce que c'est ce qui rend le refus actionnable :
+« 10 refusés » ne dit pas s'il y a quelque chose à faire, « 10 refusés — cet
+appareil ne sait pas lire le WEBM » le dit. Et l'annonce de fin ne prétend plus
+que tout est préparé quand dix blocs ne le sont pas.
+
+```
+six blocs dont deux illisibles —
+  4/6 préparés · 2 refusés · la préparation atteint sa fin
+  2 bannières en tout · une seule à l'écran · pastille 1 puis 0
+```
+
 ## Les quarante-neuf refusés : le fil ne lit que du MP4
 
 Une seconde capture a donné le chiffre qui manquait : « Aperçu : 39/88 plans

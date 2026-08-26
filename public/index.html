@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 08:42";
+const VERSION_PAGE = "2026-08-26 09:02";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4276,7 +4276,10 @@ async function fabriquerParLecteur(suite, cadre) {
     });
     if (!pret) {
       // Le seul cas sans recours : l'appareil ne sait pas lire ce format.
-      raisonsSegment.set(cle, "cet appareil ne sait pas lire ce fichier");
+      const bout = (mediaDe(plan) || "").split("?")[0].split(".").pop().toLowerCase();
+      raisonsSegment.set(cle, bout && bout.length <= 5
+        ? `cet appareil ne sait pas lire le ${bout.toUpperCase()}`
+        : "cet appareil ne sait pas lire ce fichier");
       ranger();
       return false;
     }
@@ -8445,20 +8448,28 @@ function majPreparation(projet) {
       dit.textContent = "Aperçu accéléré indisponible sur ce navigateur — la lecture reste directe";
       return;
     }
-    if (totalBlocs && fait < totalBlocs) {
+    const refusesEnCours = (projet.plans || []).filter((plan) => segmentsRates.has(cleSegment(plan))).length;
+    /* Refusés compris : sans cela, dix blocs sans segment gardaient l'affichage
+       dans la phase « préparation » pour toujours, et la fin n'arrivait jamais. */
+    if (totalBlocs && fait + refusesEnCours < totalBlocs) {
       bandeau.hidden = false;
+      const refuses = refusesEnCours;
       dit.textContent = `Aperçu : ${fait}/${totalBlocs} plans préparés`
-        + resteApercu(fait, totalBlocs)
-        + (fabrique.rates ? ` · ${fabrique.rates} refusé${fabrique.rates > 1 ? "s" : ""}` : "")
+        + resteApercu(fait + refuses, totalBlocs)
+        + (refuses ? ` · ${refuses} refusé${refuses > 1 ? "s" : ""} — ${raisonDominante()}` : "")
         + (perdus ? ` · ${perdus} introuvable${perdus > 1 ? "s" : ""}` : "");
       majNotificationTransfert();
       return;
     }
     annoncerApercuPret(projet, totalBlocs);
-    bandeau.hidden = !perdus;
-    if (perdus) {
-      dit.textContent = `${prets}/${total} plans sur l'appareil · ${perdus} introuvable${perdus > 1 ? "s" : ""}`
-        + " — ces plans-là resteront noirs";
+    const refusesFinaux = refusesEnCours;
+    bandeau.hidden = !perdus && !refusesFinaux;
+    if (perdus || refusesFinaux) {
+      dit.textContent = [
+        `${prets}/${total} plans sur l'appareil`,
+        perdus ? `${perdus} introuvable${perdus > 1 ? "s" : ""}` : "",
+        refusesFinaux ? `${refusesFinaux} sans segment — ${raisonDominante()}` : "",
+      ].filter(Boolean).join(" · ");
     }
     return;
   }
@@ -8883,7 +8894,7 @@ async function majNotificationTransfert() {
   const projet = projetActif();
   if (!projet) return;
   const { total, prets, perdus, octets } = resteAImporter(projet);
-  if (total && prets + perdus < total) marquerPastille(total - prets - perdus);
+  if (total && prets + perdus < total) marquerPastille(1);
   /* Deux phases, pas une.
 
      La notification ne parlait que du rapatriement des fichiers. Or une fois
@@ -8913,9 +8924,7 @@ async function majNotificationTransfert() {
         : { action: "suspendre", title: "Suspendre" });
       actions.push({ action: "arreter", title: "Arrêter" });
     }
-    for (const ouverte of await enregistrement.getNotifications({ tag: "amvauto-transfert" })) {
-      ouverte.close();
-    }
+    for (const ouverte of await enregistrement.getNotifications()) ouverte.close();
     await enregistrement.showNotification(
       transfert.suspendu ? "Chargement suspendu" : "Chargement des plans",
       {
@@ -8967,15 +8976,25 @@ async function majNotificationApercu(projet) {
   const plans = projet?.plans || [];
   const total = plans.length;
   const faits = plans.filter(surSegment).length;
-  const restants = Math.max(0, total - faits);
+  /* Un bloc refusé est un bloc traité.
+
+     L'avancement ne comptait que les réussites : avec dix refus, il restait
+     bloqué à 39/88 et n'atteignait jamais la fin, alors qu'il n'y avait plus
+     rien à faire. Une barre de progression qui ne peut pas arriver au bout est
+     pire que pas de barre du tout. */
+  const refuses = plans.filter((plan) => segmentsRates.has(cleSegment(plan))).length;
+  const traites = Math.min(total, faits + refuses);
+  const restants = Math.max(0, total - traites);
   if (!total || !restants || fabrique.possible === false) {
     marquerPastille(0);
     return fermerNotificationTransfert();
   }
-  marquerPastille(restants);
+  marquerPastille(1);
 
-  const part = faits / total;
-  const texte = `${barreTexte(part)}  ${faits}/${total}  ${Math.round(part * 100)} %${resteApercu(faits, total)}`;
+  const part = traites / total;
+  const texte = `${barreTexte(part)}  ${faits}/${total}  ${Math.round(part * 100)} %`
+    + (refuses ? ` · ${refuses} refusé${refuses > 1 ? "s" : ""}` : "")
+    + resteApercu(traites, total);
   const maintenant = Date.now();
   if (texte === avis.texte || maintenant - avis.quand < RYTHME_AVIS) return;
   avis.texte = texte;
@@ -8983,10 +9002,11 @@ async function majNotificationApercu(projet) {
 
   try {
     const enregistrement = await navigator.serviceWorker.ready;
-    // Le remplacement par étiquette n'a pas lieu sur iPhone : on ferme d'abord.
-    for (const ouverte of await enregistrement.getNotifications({ tag: "amvauto-transfert" })) {
-      ouverte.close();
-    }
+    /* On ferme tout ce qui vient de l'application, pas seulement la même
+       étiquette : une bannière de fin restée de la séance d'avant, ou une
+       bannière postée par une page pas encore mise à jour, s'ajoutait à la
+       nouvelle. Une seule à l'écran, toujours. */
+    for (const ouverte of await enregistrement.getNotifications()) ouverte.close();
     await enregistrement.showNotification("Préparation de l'aperçu", {
       body: texte,
       icon: "icons/icon-192.png",
@@ -8999,14 +9019,33 @@ async function majNotificationApercu(projet) {
   } catch { /* notifications refusées : le bandeau suffit */ }
 }
 
-/* La pastille de l'icône : le seul compteur qui se met à jour sans rien
-   ouvrir. Elle ne demande pas la permission des notifications sur iPhone, mais
-   elle ne s'affiche que pour une application ajoutée à l'écran d'accueil. */
+/* La pastille de l'icône dit qu'il se passe quelque chose, pas combien.
+
+   Elle portait le nombre de plans restants : « 49 » sur l'icône, ce qu'un
+   iPhone affiche exactement comme quarante-neuf messages non lus. Or il n'y a
+   qu'une seule chose en cours, et le chiffre qui compte est dans la bannière.
+   Un seul point sur l'icône, donc, et rien quand c'est fini. */
 function marquerPastille(combien) {
   try {
-    if (combien > 0) navigator.setAppBadge?.(combien);
+    if (combien > 0) navigator.setAppBadge?.(1);
     else navigator.clearAppBadge?.();
   } catch { /* pas de pastille ici */ }
+}
+
+/* La raison la plus fréquente des refus, dite en clair.
+
+   « 10 refusés » ne dit pas s'il y a quelque chose à faire. « 10 refusés — cet
+   appareil ne sait pas lire ce fichier » le dit. */
+function raisonDominante() {
+  const parRaison = new Map();
+  for (const cle of segmentsRates) {
+    const texte = raisonsSegment.get(cle) || "raison inconnue";
+    parRaison.set(texte, (parRaison.get(texte) || 0) + 1);
+  }
+  let meilleur = "";
+  let combien = 0;
+  for (const [texte, n] of parRaison) if (n > combien) { combien = n; meilleur = texte; }
+  return meilleur || "raison inconnue";
 }
 
 /* Et quand la préparation est enfin finie, on le dit — une fois.
@@ -9021,9 +9060,15 @@ function annoncerApercuPret(projet, total) {
   apercuAnnonce = marque;
   fermerNotificationTransfert();
   if (!sentinelle.prevenir) return;
+  // Annoncer « les 88 plans sont préparés » quand dix ne l'ont pas été, c'est
+  // exactement le genre de petit mensonge qui fait douter du reste.
+  const refuses = (projet?.plans || []).filter((plan) => segmentsRates.has(cleSegment(plan))).length;
+  const faits = total - refuses;
   navigator.serviceWorker?.ready?.then((enregistrement) => {
-    enregistrement.showNotification("L'aperçu est prêt", {
-      body: `Les ${total} plans sont préparés. La lecture ne saute plus, et la vidéo peut être rendue.`,
+    enregistrement.showNotification(refuses ? "Aperçu préparé, en partie" : "L'aperçu est prêt", {
+      body: refuses
+        ? `${faits}/${total} plans préparés · ${refuses} sans segment — ${raisonDominante()}.`
+        : `Les ${total} plans sont préparés. La lecture ne saute plus, et la vidéo peut être rendue.`,
       icon: "icons/icon-192.png",
       badge: "icons/icon-192.png",
       tag: "amvauto-pret",
