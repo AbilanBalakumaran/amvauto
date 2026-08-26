@@ -2801,6 +2801,48 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Deux chiffres qui se contredisent, et une alerte toutes les huit secondes
+
+« Il montre 51 % mais le nombre d'images ne bouge pas. »
+
+**Les deux chiffres ne comptaient pas la même chose.** Le pourcentage comptait
+les refus comme du travail fait — ce qui est juste — et la fraction ne comptait
+que les réussites. Deux vérités différentes côte à côte, et l'impression que
+l'une des deux ment. Désormais la fraction et le pourcentage disent la même
+chose, et les refus sont nommés à côté plutôt que fondus dedans :
+
+```
+▰▰▰▰▰▱▱▱▱▱  45/88  51 %  · 6 sans segment (format que le préparateur ne sait pas ouvrir)
+```
+
+**Et le total lui-même était faux.** Une bande-annonce YouTube ne peut pas avoir
+de segment : elle n'est pas un fichier. Elle comptait quand même dans les
+quatre-vingt-huit, où elle ne pouvait qu'être manquante — un dénominateur qu'on
+ne peut pas atteindre. Le bilan est maintenant calculé à un seul endroit,
+`bilanApercu`, et ne compte que les plans qui peuvent avoir un segment. Vérifié :
+un projet de six fichiers plus une bande-annonce annonce 4/6, pas 4/7.
+
+**Chaque envoi est une alerte, pas une mise à jour.** Une notification web ne se
+modifie pas : on en repose une, et l'iPhone la fait glisser sur l'écran
+verrouillé à chaque fois. Toutes les huit secondes, cela faisait une alerte
+toutes les huit secondes. Une minute entre deux envois, jamais deux fois le même
+texte — et surtout, on ne ferme plus la précédente avant de reposter : fermer
+puis reposter garantissait une nouvelle alerte. On laisse l'étiquette faire son
+travail de remplacement et on ne ferme que ce qui est en trop.
+
+Le seul compteur qui se met vraiment à jour sans alerter personne reste la
+pastille de l'icône — et c'est bien pour cela qu'elle est là.
+
+**Les erreurs sont traduites.** « pas de moov », « codec refusé (avc1.640028) »
+ne veulent rien dire pour qui les lit, et une erreur qu'on ne comprend pas est
+une erreur sur laquelle on ne peut rien faire :
+
+```
+pas de moov                → format que le préparateur ne sait pas ouvrir
+codec refusé (avc1…)       → codec vidéo non pris en charge par cet appareil
+aucun codec d'encodage     → ce navigateur ne sait pas encoder de vidéo
+```
+
 ## Un compteur qui ne peut pas arriver au bout
 
 Trois défauts d'affichage, tous les trois signalés depuis l'écran d'accueil.
