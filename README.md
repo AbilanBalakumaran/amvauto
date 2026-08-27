@@ -2801,6 +2801,37 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Le deuxième enregistrement : les rafales ont disparu
+
+Même mesure que la première fois, sur une capture d'écran de sept secondes :
+
+```
+premier enregistrement  : 53 gels en 9,24 s · rafales de 300-400 ms toutes les 0,9 s
+second enregistrement   : 26 gels en 6,98 s · 25 dans les 1,83 premières secondes
+                          puis UN seul gel de 33 ms en cinq secondes
+```
+
+Les rafales périodiques — une par coupe — ont disparu. Ce qui reste est le
+démarrage, où le premier plan s'ouvre et où le fichier recollé se charge.
+
+## La preuve, pas le raisonnement
+
+Restait l'image corrompue. Comparer les octets de la description est nécessaire,
+mais pas suffisant : rien ne dit qu'un décodeur réel se comportera comme le
+raisonnement le prévoit, et le décodeur qui compte est celui du téléphone, pas
+celui du banc d'essai — qui ne sait même pas lire le HEVC d'un enregistrement
+d'écran iOS.
+
+Le fichier recollé se vérifie donc **par décodage, sur l'appareil**. On décode la
+première image-clé du dernier segment deux fois : une fois avec les paramètres du
+fichier recollé, une fois avec les siens. Les deux images sont réduites à
+trente-deux points et comparées. Si elles diffèrent, le fichier ment, et il n'est
+pas livré — la lecture reste bloc par bloc, moins fluide mais juste, et Options
+dit pourquoi.
+
+Deux images décodées, une seule fois par recollage : le prix est nul, et la
+question ne se pose plus.
+
 ## Ce n'était pas de la pixellisation, c'était du décodage faux
 
 Trois captures d'écran ont tranché. Une image trop compressée devient molle et

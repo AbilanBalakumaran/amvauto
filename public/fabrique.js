@@ -84,9 +84,83 @@ function memeDescription(a, b) {
   return true;
 }
 
+/* Décoder une image avec des paramètres donnés, et la rendre en trente-deux
+   points de large. Sert à prouver qu'un segment se décode correctement avec les
+   paramètres du fichier recollé — pas à le supposer. */
+async function imageAvec(config, octets) {
+  if (typeof VideoDecoder !== "function") return null;
+  try {
+    if (!(await VideoDecoder.isConfigSupported(config)).supported) return null;
+  } catch { return null; }
+  return new Promise((rendre) => {
+    let fini = false;
+    const finir = (v) => { if (!fini) { fini = true; rendre(v); } };
+    let decodeur;
+    try {
+      decodeur = new VideoDecoder({
+        output: (image) => {
+          try {
+            const t = new OffscreenCanvas(32, 18);
+            const c = t.getContext("2d", { willReadFrequently: true });
+            c.drawImage(image, 0, 0, 32, 18);
+            const d = c.getImageData(0, 0, 32, 18).data;
+            const gris = new Uint8Array(32 * 18);
+            for (let i = 0, k = 0; i < d.length; i += 4, k += 1) {
+              gris[k] = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+            }
+            finir(gris);
+          } catch { finir(null); } finally { image.close(); }
+        },
+        error: () => finir(null),
+      });
+      decodeur.configure(config);
+      decodeur.decode(new EncodedVideoChunk({ type: "key", timestamp: 0, data: octets }));
+      decodeur.flush().then(() => finir(null)).catch(() => finir(null));
+    } catch { finir(null); }
+    setTimeout(() => finir(null), 4000);
+  });
+}
+
+/* La preuve, pas le raisonnement.
+
+   On a d'abord comparé les octets de la description : nécessaire, mais pas
+   suffisant — rien ne dit qu'un décodeur réel se comportera comme prévu. Ce qui
+   décide, c'est l'image. On décode donc la première image-clé du dernier
+   segment deux fois : une fois avec les paramètres du fichier recollé, une fois
+   avec les siens. Si les deux images diffèrent, le fichier recollé ment, et on
+   ne le livre pas.
+
+   C'est bon marché : deux images, une seule fois par recollage. */
+async function verifierFlux(piste, dernier) {
+  if (!dernier || typeof VideoDecoder !== "function") return "";
+  const ech = dernier.carte.echantillons || [];
+  const i = ech.findIndex((e) => e.cle);
+  if (i < 0) return "";
+  const octets = dernier.donnees.slice(ech[i].ou, ech[i].ou + ech[i].taille);
+  const base = { codedWidth: dernier.carte.largeur, codedHeight: dernier.carte.hauteur };
+  const avecMontage = await imageAvec(
+    { ...base, codec: piste.codec, ...(piste.description ? { description: piste.description } : {}) },
+    octets,
+  );
+  const avecSien = await imageAvec(
+    { ...base, codec: dernier.carte.codec,
+      ...(dernier.carte.description ? { description: dernier.carte.description } : {}) },
+    octets,
+  );
+  // Le segment seul ne se décode pas : ce n'est pas le recollage qui est en
+  // cause, et on ne peut rien conclure.
+  if (!avecSien) return "";
+  if (!avecMontage) return "un segment ne se décode pas avec les paramètres du montage";
+  let ecart = 0;
+  for (let k = 0; k < avecSien.length; k += 1) ecart += Math.abs(avecSien[k] - avecMontage[k]);
+  ecart /= avecSien.length;
+  return ecart > 12 ? `le montage décode faux (écart ${Math.round(ecart)})` : "";
+}
+
 async function assembler(morceaux) {
   const ECHELLE = 90000;
   let piste = null;
+  let dernier = null;
   for (const morceau of morceaux) {
     const donnees = new Uint8Array(await morceau.arrayBuffer());
     const carte = lireMp4(donnees);
@@ -114,6 +188,7 @@ async function assembler(morceaux) {
          décode pas. */
       return { echec: "segments aux paramètres de flux différents" };
     }
+    dernier = { carte, donnees };
     for (const e of carte.echantillons) {
       piste.echantillons.push({
         octets: donnees.subarray(e.ou, e.ou + e.taille),
@@ -124,6 +199,8 @@ async function assembler(morceaux) {
     }
   }
   if (!piste || !piste.echantillons.length) return { echec: "rien à assembler" };
+  const faux = await verifierFlux(piste, dernier);
+  if (faux) return { echec: faux };
   const mp4 = ecrireMp4([piste]);
   return { mp4, images: piste.echantillons.length, octets: mp4.size,
     largeur: piste.largeur, hauteur: piste.hauteur };
