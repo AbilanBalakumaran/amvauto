@@ -333,7 +333,24 @@ self.onmessage = async (evt) => {
        sert plus qu'à dire de quoi il s'agit : fondu au noir, carton blanc, ou
        plan d'attente. */
     const immobile = bouges.length >= 3 && bouge < 1.2;
+
+    /* Le noir du début, qui n'est pas le noir du bloc.
+
+       Un bloc qui commence par un fondu au noir et s'anime ensuite n'était
+       jamais condamné — et il ne doit pas l'être, il contient quelque chose.
+       Mais ce qu'on voit à l'écran, c'est un plan qui commence par du noir : sur
+       un bloc d'une seconde, un tiers de noir se remarque autant qu'un bloc
+       entièrement noir.
+
+       On compte donc les images sombres du début, et on les rend en secondes.
+       L'application décalera le bloc d'autant, sans changer sa durée. */
+    let tete = 0;
+    while (tete < lumas.length && lumas[tete] < 14) tete += 1;
+    // Une image échantillonnée sur trois : chaque échantillon vaut trois images.
+    const debutNoir = tete >= lumas.length ? 0 : (tete * 3) / cadence;
+
     const verdict = {
+      debutNoir: Math.round(debutNoir * 100) / 100,
       luminance: Math.round(moyenne(lumas)),
       mouvement: Math.round(bouge * 10) / 10,
       vues: lumas.length,

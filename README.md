@@ -2801,6 +2801,49 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Les petits plans se pixelisent, et pour une raison mécanique
+
+Chaque segment commence par une image complète — la seule par où un décodeur
+peut entrer. Elle coûte cinq à dix fois une image ordinaire. Sur un bloc de deux
+secondes elle se dilue dans quarante-huit images ; sur un bloc de six dixièmes,
+elle représente le tiers du budget, et le régulateur écrase tout le reste pour
+la faire tenir.
+
+Le débit d'un bloc court est donc relevé de ce que son image-clé lui prend :
+
+```
+bloc de 0,4 s  → débit ×1,73
+bloc de 0,6 s  → débit ×1,60
+bloc de 1,0 s  → débit ×1,33
+bloc de 1,5 s  → débit ×1,00
+```
+
+## Le noir de tête, qui n'est pas le noir du bloc
+
+Un bloc entièrement noir était repéré et déplacé ailleurs dans son rush. Un bloc
+qui **commence** par un fondu au noir et s'anime ensuite, non : il contient
+quelque chose, donc il n'est pas « douteux ». Mais ce qu'on voit à l'écran, c'est
+un plan qui commence par du noir — et sur un bloc d'une seconde, un tiers de
+noir se remarque autant qu'un bloc entièrement noir.
+
+Le contrôle compte donc les images sombres du début et les rend en secondes ; le
+bloc est avancé d'exactement ce qu'il faut pour les sauter, **sans changer sa
+durée**, et refabriqué à ses nouvelles bornes.
+
+```
+rush avec un fondu au noir de 0 à 0,5 s · bloc taillé 0,30 → 1,10
+  verdict : debutNoir 0,25 s · luminance 113
+  corrigé : 0,65 → 1,45   (même durée : 0,80 s)
+  nouveau verdict : debutNoir 0 · luminance 158
+```
+
+Un défaut a été trouvé en écrivant ce correctif, et il aurait été grave : la
+durée était relue **après** avoir changé l'entrée, si bien que la sortie était
+calculée sur une durée déjà raccourcie. Un bloc de 0,80 s avancé de 0,35 s se
+serait retrouvé à 0,45 s — le montage se serait décalé de la musique à chaque
+correction. La durée se lit maintenant avant de toucher aux bornes, et le test
+le vérifie.
+
 ## Ce qu'un enregistrement de l'écran a dit
 
 Une capture vidéo de l'écran vaut mieux que n'importe quelle description, et
