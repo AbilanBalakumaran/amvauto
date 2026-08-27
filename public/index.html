@@ -1614,6 +1614,18 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
           <button type="button" id="btn-notifs" class="interrupteur" role="switch" aria-checked="false">Notifications</button>
         </span>
       </div>
+      <div class="reglage">
+        <div class="reglage-texte">
+          <strong>Économiser l'espace</strong>
+          <span id="etat-economie">état inconnu</span>
+        </div>
+        <span class="reglage-boutons">
+          <button type="button" id="btn-liberer" class="interrupteur discret">Libérer</button>
+          <button type="button" id="btn-economie" class="interrupteur" role="switch" aria-checked="true">Économie</button>
+        </span>
+      </div>
+      <p class="note-reglage" id="note-economie"></p>
+
       <p class="note-reglage" id="etat-chargement"></p>
       <p class="note-reglage" id="note-notifs"></p>
 
@@ -1638,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-27 03:19";
+const VERSION_PAGE = "2026-08-27 12:28";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4328,6 +4340,9 @@ function filFabrique() {
            affiche à ce que le bloc devait montrer. Les deux premiers segments
            suffisent : un défaut de conteneur est systématique. */
         verifierAuLecteur(attente.cle, verdict).catch(() => {});
+        // Le rush n'a plus de raison d'occuper la place si tous ses blocs sont
+        // faits : on le rend au téléphone.
+        libererRush(attente.cle).catch(() => {});
       }
       // Le suivant, mais jamais dans la foulée : on rend la main d'abord.
       setTimeout(() => fabriquerSuivant(), 0);
@@ -4432,6 +4447,46 @@ function surveillerFabrique() {
   // Deux fois sans réponse sur le même bloc : c'est lui le problème, on passe.
   if (faits >= 2) { segmentsRates.add(attente.cle); fabrique.rates += 1; }
   redemarrerFabrique("le fil n'a pas répondu");
+}
+
+/* Rendre au téléphone la place d'un rush entièrement découpé.
+
+   Un rush pèse dix mégaoctets, ses extraits un peu plus d'un. Tant qu'un seul
+   de ses blocs n'est pas prêt, il faut le garder — c'est lui qu'on découpe. Dès
+   que tous le sont, il ne sert plus qu'à l'export, qui le retéléchargera le
+   moment venu.
+
+   Mesuré sur le projet qui a servi à tout ce travail : quatre cent cinquante-six
+   mégaoctets de rushs pour quatre-vingt-huit blocs, contre une cinquantaine de
+   mégaoctets d'extraits. Neuf dixièmes de la place rendus. */
+const octetsRendus = { total: 0, fichiers: 0 };
+
+async function libererRush(cleFaite) {
+  if (!reglages.economie) return;
+  const projet = projetActif();
+  if (!projet) return;
+  const fait = (projet.plans || []).find((p) => cleSegment(p) === cleFaite);
+  const adresse = fait && mediaDe(fait);
+  if (!adresse || !locales.has(adresse)) return;
+
+  // Tous les blocs de tous les projets qui tirent de ce rush doivent être prêts.
+  for (const autre of state.projets || []) {
+    for (const plan of autre.plans || []) {
+      if (mediaDe(plan) !== adresse) continue;
+      if (!surSegment(plan)) return;
+    }
+  }
+
+  const garde = await lireBase(adresse).catch(() => null);
+  if (!(garde instanceof Blob)) return;
+  await effacerBase(adresse).catch(() => {});
+  await effacerBase(cleParticelle(adresse)).catch(() => {});
+  octetsRendus.total += garde.size;
+  octetsRendus.fichiers += 1;
+  /* On garde l'adresse en mémoire pour cette séance : le fichier est déjà
+     ouvert, le retirer maintenant couperait un lecteur en cours. Il ne sera
+     simplement pas retrouvé au prochain lancement — et il n'aura pas à l'être. */
+  mesurerPlace();
 }
 
 /* La vérification par le vrai lecteur.
@@ -5915,6 +5970,17 @@ function servirImagettes() {
      le moniteur — et interdit d'en relire quoi que ce soit. Sur une copie
      locale, la question ne se pose pas : elle vient de la page elle-même. */
   const local = estLocal(plan);
+  /* Une imagette ne vaut pas dix mégaoctets.
+
+     Quand le rush a été rendu au téléphone — son extrait est fait, il ne sert
+     plus —, la bande allait le rechercher sur le réseau pour dessiner une
+     vignette : dix mégaoctets en 4G pour une image de cent points. La pellicule
+     garde ce qu'elle a déjà ; ce qui manque restera gris jusqu'à ce que le rush
+     revienne pour une autre raison. C'est le sens du réglage d'économie. */
+  if (!local && reglages.economie && surSegment(plan)) {
+    bande.demandes.delete(identifiant);
+    return;
+  }
   const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(mediaDe(plan))}`;
   const exact = identifiant.startsWith("exact:");
 
@@ -8610,6 +8676,22 @@ async function mesurerPlace() {
 }
 mesurerPlace();
 
+/* Savoir si une clé existe, sans en lire les octets.
+
+   « lireBase » rend le blob entier : demander « est-il là ? » de cette façon,
+   c'est relire des mégaoctets pour une réponse d'un bit. */
+async function existeBase(cle) {
+  const base = await ouvrirBase();
+  if (!base) return false;
+  return new Promise((ok) => {
+    try {
+      const requete = base.transaction(MAGASIN, "readonly").objectStore(MAGASIN).getKey(cle);
+      requete.onsuccess = () => ok(requete.result !== undefined);
+      requete.onerror = () => ok(false);
+    } catch { ok(false); }
+  });
+}
+
 async function effacerBase(adresse) {
   const base = await ouvrirBase();
   if (!base) return;
@@ -8709,6 +8791,27 @@ async function preparerLocal(plan) {
     retrouveLocalement(plan);
     return;
   }
+  /* Un plan dont l'extrait est déjà fait n'a plus besoin de son rush.
+
+     C'est tout l'intérêt de l'extrait : il contient exactement ce bloc, il pèse
+     dix fois moins, et l'aperçu ne lit que lui. Rapatrier les quatre cent
+     cinquante mégaoctets du rush pour un extrait de quatre, c'est remplir le
+     téléphone pour rien — et sur un appareil qui manque de place, c'est ce qui
+     bloque tout le reste.
+
+     Le rush reste nécessaire pour l'export en pleine définition : il sera
+     retéléchargé à ce moment-là, une fois, quand on en aura vraiment besoin. */
+  /* Et l'extrait peut être rangé sans être encore chargé en mémoire.
+
+     Au lancement, les extraits sont retrouvés en base de façon asynchrone :
+     pendant ces quelques centaines de millisecondes, « surSegment » répond non
+     pour des blocs parfaitement prêts, et l'on relançait le téléchargement de
+     leurs rushs — c'est-à-dire tout ce qu'on venait d'économiser. On regarde
+     donc aussi ce qui est rangé, sans en lire les octets. */
+  if (reglages.economie) {
+    const cle = cleSegment(plan);
+    if (cle && (segments.has(cle) || await existeBase(cle))) return;
+  }
   planifierImport(plan);
 }
 
@@ -8729,6 +8832,10 @@ function interrompreImport(plan) {
 function planifierImport(plan) {
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube || locales.has(adresse) || enImport.has(adresse)) return;
+  /* Le point de passage unique : quatre endroits mettent des plans en file, et
+     aucun n'a de raison de connaître le réglage d'économie. La règle est ici :
+     un bloc dont l'extrait existe n'a pas besoin de son rush. */
+  if (reglages.economie && surSegment(plan)) return;
   if (fileImport.some((autre) => mediaDe(autre) === adresse)) return;
   fileImport.push(plan);
   lancerImport();
@@ -9068,7 +9175,7 @@ const CLE_REGLAGES = "amvauto-reglages";
 const reglages = lireReglages();
 
 function lireReglages() {
-  const base = { notifications: true };
+  const base = { notifications: true, economie: true };
   try {
     return { ...base, ...JSON.parse(localStorage.getItem(CLE_REGLAGES) || "{}") };
   } catch { return { ...base }; }
@@ -9111,6 +9218,7 @@ function majReglages() {
   if (essai) essai.hidden = !actives;
 
   majEtatChargement();
+  majReglageEspace();
 
   const etat = $("etat-notifs");
   if (etat) {
@@ -9179,6 +9287,91 @@ async function fermerToutesNotifications() {
    3. les notifications sont coupées — et cela, l'interrupteur au-dessus le dit.
 
    Cette ligne dit laquelle des trois, plutôt que de laisser chercher. */
+function majReglageEspace() {
+  const bouton = $("btn-economie");
+  if (!bouton) return;
+  bouton.classList.toggle("on", Boolean(reglages.economie));
+  bouton.setAttribute("aria-checked", String(Boolean(reglages.economie)));
+  bouton.textContent = reglages.economie ? "Activée" : "Désactivée";
+
+  const etat = $("etat-economie");
+  if (etat) {
+    const libre = place.total ? ` \u00b7 ${((place.total - place.octets) / 1e9).toFixed(1)} Go libres` : "";
+    etat.textContent = (reglages.economie
+      ? "Les rushs sont effacés dès que leurs extraits sont faits"
+      : "Tout est gardé sur l'appareil") + libre;
+  }
+  const note = $("note-economie");
+  if (note) {
+    note.textContent = "Un rush pèse une dizaine de mégaoctets, l'extrait qu'on en tire un peu plus d'un\u00a0: "
+      + "une fois l'extrait fait, le rush ne sert plus à l'aperçu. Il est retéléchargé au moment de l'export, "
+      + "qui le veut en pleine définition."
+      + (octetsRendus.fichiers
+        ? ` Cette séance a rendu ${(octetsRendus.total / 1e6).toFixed(0)} Mo (${octetsRendus.fichiers} fichiers).`
+        : "");
+  }
+}
+
+/* Libérer tout de suite : les rushs dont les extraits sont faits, les extraits
+   d'une fabrication précédente, les morceaux à moitié reçus. Rien de ce qui
+   sert encore. */
+async function libererEspace() {
+  const bouton = $("btn-liberer");
+  if (bouton) { bouton.disabled = true; bouton.textContent = "\u2026"; }
+  let rendus = 0;
+  let fichiers = 0;
+  try {
+    const base = await ouvrirBase();
+    const cles = base ? await new Promise((ok) => {
+      try {
+        const q = base.transaction(MAGASIN, "readonly").objectStore(MAGASIN).getAllKeys();
+        q.onsuccess = () => ok(q.result || []);
+        q.onerror = () => ok([]);
+      } catch { ok([]); }
+    }) : [];
+
+    // Les rushs encore nécessaires : ceux dont un bloc n'a pas d'extrait.
+    const necessaires = new Set();
+    const extraitsVivants = new Set();
+    for (const projet of state.projets || []) {
+      for (const plan of projet.plans || []) {
+        const adresse = mediaDe(plan);
+        if (adresse && !surSegment(plan)) necessaires.add(adresse);
+        const cle = cleSegment(plan);
+        if (cle) extraitsVivants.add(cle);
+      }
+    }
+
+    for (const cle of cles) {
+      if (typeof cle !== "string") continue;
+      const partiel = cle.startsWith("partiel:");
+      const extrait = cle.startsWith("seg:");
+      const autre = cle.startsWith("rendu:") || cle.startsWith("musique:");
+      const rush = !partiel && !extrait && !autre;
+      const aJeter = partiel
+        || (extrait && !extraitsVivants.has(cle))
+        || (rush && !necessaires.has(cle));
+      if (!aJeter) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const garde = await lireBase(cle).catch(() => null);
+      const taille = garde instanceof Blob ? garde.size : 0;
+      // eslint-disable-next-line no-await-in-loop
+      await effacerBase(cle).catch(() => {});
+      rendus += taille;
+      fichiers += 1;
+    }
+    octetsRendus.total += rendus;
+    octetsRendus.fichiers += fichiers;
+    await mesurerPlace();
+  } finally {
+    if (bouton) { bouton.disabled = false; bouton.textContent = "Libérer"; }
+  }
+  majReglageEspace();
+  alert(fichiers
+    ? `${(rendus / 1e6).toFixed(0)} Mo rendus au téléphone (${fichiers} fichiers).\n\nLes extraits en service et les rushs dont il manque un bloc n'ont pas été touchés.`
+    : "Rien à libérer : tout ce qui est là sert encore.");
+}
+
 function majEtatChargement() {
   const ligne = $("etat-chargement");
   if (!ligne) return;
@@ -9333,6 +9526,12 @@ async function testerNotif() {
 
 $("btn-notifs")?.addEventListener("click", () => { basculerNotifs().catch(() => {}); });
 $("btn-test-notif")?.addEventListener("click", () => { testerNotif().catch(() => {}); });
+$("btn-economie")?.addEventListener("click", () => {
+  reglages.economie = !reglages.economie;
+  ecrireReglages();
+  majReglageEspace();
+});
+$("btn-liberer")?.addEventListener("click", () => { libererEspace().catch(() => {}); });
 majReglages();
 
 /* --- suspendre, reprendre, arrêter les transferts ---------------------

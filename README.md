@@ -2801,6 +2801,49 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Rendre la place au téléphone
+
+« Ça prend de l'espace de stockage sur mon téléphone, et je n'en ai pas assez. »
+
+C'est vrai, et c'est aussi ce qui avait causé le plafond des trente-neuf blocs :
+l'appareil était plein, les écritures échouaient, et la fabrique ne trouvait
+plus rien à découper.
+
+Un rush pèse une dizaine de mégaoctets ; l'extrait qu'on en tire, un peu plus
+d'un. **Une fois l'extrait fait, le rush ne sert plus à l'aperçu** — il contient
+exactement le bloc, à la bonne définition, et c'est lui seul que la lecture
+utilise. Le rush ne redevient utile qu'à l'export, en pleine définition, et il
+sera retéléchargé à ce moment-là.
+
+Trois règles, un seul point de passage :
+
+- un bloc dont l'extrait existe **ne met plus son rush en file** — la règle vit
+  dans `planifierImport`, que quatre endroits appellent sans avoir à la
+  connaître ;
+- dès que **tous** les blocs d'un rush sont faits, le rush est effacé de la
+  réserve ; il reste ouvert pour la séance en cours, pour ne couper aucun
+  lecteur ;
+- au lancement, les extraits sont retrouvés de façon asynchrone : pendant ces
+  quelques centaines de millisecondes, on vérifie leur présence **en base**
+  plutôt que de conclure trop vite et de retélécharger tout ce qu'on venait
+  d'économiser.
+
+Et une imagette ne vaut pas dix mégaoctets : la pellicule n'ira plus chercher un
+rush effacé sur le réseau pour dessiner une vignette de cent points.
+
+```
+neuf blocs tirés de trois rushs —
+  après préparation : 0 rush gardé · 3 extraits · 1,28 Mo
+                      (contre 4,8 Mo de rushs)
+  réouverture       : 9/9 extraits retrouvés · 0 rush en base
+  téléchargements   : 4 avant ce travail, 1 après
+```
+
+Le réglage vit dans Infos, partie Options, avec un bouton **Libérer** qui rend
+la place immédiatement : les rushs dont les extraits sont faits, les extraits
+d'une fabrication précédente, les morceaux à moitié reçus. Rien de ce qui sert
+encore.
+
 ## Le débordement de pile
 
 Le vrai défaut, trouvé en écrivant un test pour un autre.
