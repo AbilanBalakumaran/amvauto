@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-27 02:27";
+const VERSION_PAGE = "2026-08-27 02:47";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3661,6 +3661,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     refuses: bilanApercu(projetActif()).refuses,
     parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
+    fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
     faits: fabrique.faits, rates: fabrique.rates,
     octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
   imports: { file: fileImport.length, enVol: arretsImport.size, places: importsEnCours,
@@ -4280,6 +4281,45 @@ function filFabrique() {
            navigateur sait le lire — c'est lui qui le joue déjà à l'écran. On
            refait donc le bloc par ce chemin-là. */
         raisonsSegment.set(attente.cle, echec || "le fil n'a rien rendu");
+
+        /* Un segment refusé par sa propre relecture n'est pas un accident de
+           fichier : c'est que la chaîne d'encodage de cet appareil ne produit
+           pas ce que l'on croit. Le refaire par un autre chemin donnerait le
+           même résultat, et trois fois de suite suffit à conclure.
+
+           On éteint alors l'accélération pour la séance. La lecture redevient
+           directe — un lecteur par plan, moins fluide — mais elle montre les
+           images du rush, telles qu'elles sont. Une image juste et un peu
+           saccadée vaut mieux qu'une bouillie fluide. */
+        if (/ne se relit pas|ne se décode pas|pas la bonne image|pas d'image-clé|illisible/.test(String(echec))) {
+          fabrique.fauxSegments = (fabrique.fauxSegments || 0) + 1;
+          if (fabrique.fauxSegments >= 3) {
+            fabrique.possible = false;
+            fabrique.pourquoi = "les segments fabriqués ici ne se relisent pas — lecture directe";
+            segmentsRates.add(attente.cle);
+            /* Et l'on jette ceux qui ont déjà été faits.
+
+               Trois refusés veut dire que la chaîne est en cause, pas ces trois
+               fichiers-là : ceux qui sont passés ont pu passer de justesse. Les
+               garder, c'est garder des images fausses à l'écran. On repart de
+               zéro, en lecture directe, et l'on efface aussi ce qui avait été
+               rangé — sinon la prochaine ouverture les retrouverait. */
+            for (const [cleMorte, seg] of segments) {
+              try { URL.revokeObjectURL(seg.url); } catch { /* déjà libéré */ }
+              effacerBase(cleMorte).catch(() => {});
+            }
+            segments.clear();
+            if (colle.url) { try { URL.revokeObjectURL(colle.url); } catch { /* déjà libéré */ } }
+            if (colle.suivant?.url) { try { URL.revokeObjectURL(colle.suivant.url); } catch { /* déjà libéré */ } }
+            colle.url = ""; colle.cle = ""; colle.jusqua = 0; colle.suivant = null;
+            colle.echec = fabrique.pourquoi;
+            changerMontage();
+            majBarreCache();
+            const projetVu = projetActif();
+            if (projetVu) majPreparation(projetVu);
+            return;
+          }
+        }
         parLecteur.add(attente.cle);
       } else {
         fabrique.faits += 1;

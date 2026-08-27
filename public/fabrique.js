@@ -157,6 +157,31 @@ async function verifierFlux(piste, dernier) {
   return ecart > 12 ? `le montage décode faux (écart ${Math.round(ecart)})` : "";
 }
 
+/* Relire un segment fraîchement écrit et le comparer à ce qu'il devrait
+   montrer. Rend une raison si le fichier est faux, une chaîne vide sinon. */
+async function relireSegment(mp4, attendu) {
+  if (!attendu || typeof VideoDecoder !== "function") return "";
+  let carte;
+  try {
+    carte = lireMp4(await mp4.arrayBuffer());
+  } catch { return "le segment produit ne se relit pas"; }
+  if (carte.echec) return `le segment produit est illisible (${carte.echec})`;
+  const ech = carte.echantillons || [];
+  const i = ech.findIndex((x) => x.cle);
+  if (i < 0) return "le segment produit n'a pas d'image-clé";
+  const donnees = new Uint8Array(await mp4.arrayBuffer());
+  const octets = donnees.slice(ech[i].ou, ech[i].ou + ech[i].taille);
+  const vu = await imageAvec({
+    codec: carte.codec, codedWidth: carte.largeur, codedHeight: carte.hauteur,
+    ...(carte.description ? { description: carte.description } : {}),
+  }, octets);
+  if (!vu) return "le segment produit ne se décode pas";
+  let ecart = 0;
+  for (let k = 0; k < attendu.length; k += 1) ecart += Math.abs(attendu[k] - vu[k]);
+  ecart /= attendu.length;
+  return ecart > 18 ? `le segment produit ne montre pas la bonne image (écart ${Math.round(ecart)})` : "";
+}
+
 async function assembler(morceaux) {
   const ECHELLE = 90000;
   let piste = null;
@@ -342,6 +367,8 @@ self.onmessage = async (evt) => {
     const controle = new OffscreenCanvas(32, 18);
     const ctxControle = controle.getContext("2d", { willReadFrequently: true });
     const lumas = [];
+    // La toute première image du bloc, gardée pour la relire après encodage.
+    let premierGris = null;
     const bouges = [];
     let precedent = null;
 
@@ -362,6 +389,7 @@ self.onmessage = async (evt) => {
         }
         lumas.push(somme / gris.length);
         if (precedent) bouges.push(bouge / gris.length);
+        if (!premierGris) premierGris = gris;
         precedent = gris;
       } catch { /* image illisible : on ne saura rien de celle-là */ }
     };
@@ -484,6 +512,25 @@ self.onmessage = async (evt) => {
     };
 
     const mp4 = ecrireMp4([piste]);
+
+    /* Relire ce qu'on vient d'écrire.
+
+       Trois défauts successifs ont produit la même bouillie de macroblocs, et
+       aucun n'était visible depuis le banc d'essai : ils tenaient à ce que le
+       navigateur de l'appareil fait de sa sortie d'encodage, et à ce que notre
+       propre emballage en fait ensuite. Raisonner sur les octets ne suffit
+       manifestement pas.
+
+       On décode donc la première image du fichier qu'on vient de fabriquer, et
+       on la compare à l'image qu'on avait sous les yeux avant de l'encoder. Si
+       elles ne se ressemblent pas, le fichier est faux — quelle qu'en soit la
+       raison, connue ou non — et on ne le livre pas. Le plan se lira depuis son
+       rush : moins fluide, mais juste.
+
+       Une image décodée par segment. C'est le prix d'une garantie. */
+    const relu = await relireSegment(mp4, premierGris);
+    if (relu) return repondre({ echec: relu });
+
     repondre({ mp4, images: piste.echantillons.length, largeur: l, hauteur: h,
       duree: piste.echantillons.length / cadence, octets: mp4.size, verdict });
   } catch (erreur) {

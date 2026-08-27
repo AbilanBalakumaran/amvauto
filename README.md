@@ -2801,6 +2801,47 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Relire ce qu'on vient d'écrire
+
+Trois défauts successifs ont produit la même bouillie de macroblocs, et **aucun
+n'était visible depuis le banc d'essai** : ils tenaient à ce que le navigateur de
+l'appareil fait de sa sortie d'encodage, et à ce que notre propre emballage en
+fait ensuite. Chaque correction était juste, et la bouillie revenait.
+
+Raisonner sur les octets ne suffit manifestement pas. On décode donc la première
+image du fichier qu'on vient de fabriquer, et on la compare à l'image qu'on avait
+sous les yeux avant de l'encoder — la même réduction en trente-deux points qui
+sert déjà au contrôle des blocs. Si elles ne se ressemblent pas, le fichier est
+faux, **quelle qu'en soit la raison, connue ou non**, et il n'est pas livré.
+
+Une image décodée par segment. C'est le prix d'une garantie.
+
+### Et si la chaîne elle-même est en cause
+
+Trois segments refusés d'affilée ne veut pas dire trois mauvais fichiers : cela
+veut dire que la chaîne d'encodage de cet appareil ne produit pas ce que l'on
+croit. Le refaire autrement donnerait le même résultat.
+
+L'accélération s'éteint alors pour la séance, **et les segments déjà faits sont
+jetés** — ceux qui sont passés ont pu passer de justesse, et les garder serait
+garder des images fausses à l'écran. Ce qui avait été rangé est effacé aussi,
+sinon la prochaine ouverture les retrouverait.
+
+La lecture redevient directe : un lecteur par plan, moins fluide, mais elle
+montre les images du rush telles qu'elles sont. **Une image juste et un peu
+saccadée vaut mieux qu'une bouillie fluide.**
+
+```
+appareil dont la chaîne d'encodage produit des fichiers faux (simulé) —
+  segments faux détectés : 5
+  segments conservés     : 0 sur 8
+  bandeau : « Aperçu accéléré indisponible sur ce navigateur »
+  lecture : la tête avance normalement, zéro arrêt
+
+appareil sain, même version —
+  20/8 segments préparés · 0 faux · fichier recollé livré
+```
+
 ## Deux emballages pour un flux H.264, et un seul convient au MP4
 
 Le défaut que le banc d'essai ne pouvait pas trouver, parce qu'il ne se produit
