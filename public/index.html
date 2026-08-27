@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-26 17:00";
+const VERSION_PAGE = "2026-08-27 01:04";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3917,7 +3917,35 @@ function majBarreCache() {
    lecteur tient déjà le bon fichier au bon endroit — et ne fait rien. La coupe
    cesse d'exister au lieu d'être mieux traitée. */
 const colle = { url: "", cle: "", duree: 0, octets: 0, images: 0, encours: false, echec: "",
-  version: -1, jusqua: 0 };
+  version: -1, jusqua: 0, suivant: null };
+
+/* Adopter le fichier recollé qui attendait.
+
+   « Jamais pendant la lecture » était trop raide : sur un montage qu'on regarde
+   en boucle, le fichier neuf n'était plus jamais pris, et l'on gardait les
+   coupes à froid de la version courte pour toute la séance.
+
+   Le vrai critère n'est pas « joue-t-on ? » mais « est-on en train de lire ce
+   fichier-là ? ». Quand la tête est au-delà de ce que le fichier couvre, elle
+   lit un lecteur ordinaire : le remplacer ne coûte rien, et la coupe suivante
+   tombera sur le fichier neuf. */
+function adopterColle() {
+  const neuf = colle.suivant;
+  if (!neuf) return;
+  if (lecture.demande && colle.url && lecture.index < (colle.jusqua || 0)) return;
+  colle.suivant = null;
+  if (colle.url) URL.revokeObjectURL(colle.url);
+  colle.url = neuf.url;
+  colle.cle = neuf.cle;
+  colle.jusqua = neuf.jusqua;
+  colle.octets = neuf.octets;
+  colle.images = neuf.images;
+  colle.version = neuf.version;
+  colle.echec = "";
+  colle.duree = offsets(projetActif()?.plans || [])[neuf.jusqua]
+    ?? total(projetActif() || { plans: [] });
+  majBarreCache();
+}
 
 /* Le numéro de version du montage.
 
@@ -4158,6 +4186,26 @@ function filFabrique() {
         const vise = colle.attente;
         colle.attente = null;
         if (echec || !mp4 || !vise || vise.id !== id) { colle.echec = echec || "assemblage refusé"; return; }
+
+        /* Ne jamais changer le fichier sous le lecteur qui le joue.
+
+           Le fichier recollé s'allonge à mesure que les blocs se préparent. Le
+           remplacer pendant la lecture veut dire changer la source du lecteur
+           en marche : il rouvre un fichier de plusieurs mégaoctets, se replace,
+           remplit son tampon — mesuré à plus de sept secondes d'arrêt sur un
+           appareil bridé. On gagnait de la fluidité future en payant un gel
+           immédiat, ce qui est exactement le mauvais échange.
+
+           Le nouveau fichier attend donc son tour : la prochaine pause, ou le
+           prochain retour au début. */
+        if (lecture.demande && colle.url) {
+          if (colle.suivant?.url) URL.revokeObjectURL(colle.suivant.url);
+          colle.suivant = { url: URL.createObjectURL(mp4), cle: vise.signature,
+            jusqua: vise.jusqua, octets: octets || mp4.size, images: images || 0,
+            version: vise.version };
+          majBarreCache();
+          return;
+        }
         if (colle.url) URL.revokeObjectURL(colle.url);
         colle.url = URL.createObjectURL(mp4);
         colle.cle = vise.signature;
@@ -4839,6 +4887,10 @@ function battreMoniteur() {
     lecture.audio.play().catch(() => {});
     sons.repris = (sons.repris || 0) + 1;
   }
+
+  // Le fichier recollé qui attendait son tour : on regarde à chaque battement
+  // si le moment est venu de le prendre.
+  if (colle.suivant) adopterColle();
 
   surveillerFabrique();
   fabriquerSuivant().catch(() => {});
@@ -6302,10 +6354,23 @@ function amorcerSuivant(reste) {
   // Sur le montage recollé, le plan suivant est déjà en train de se jouer —
   // à condition qu'il soit lui aussi dans le fichier.
   if (montageEntier() || surColle(planApres())) return;
-  // Amorcer, c'est faire jouer une deuxième vidéo pendant que la première joue.
-  // C'est ce qui rend la coupe invisible quand l'appareil suit, et ce qui
-  // l'empêche de suivre quand il ne suit pas.
-  if (!alAise()) return;
+  /* L'amorce ne se gouverne pas comme la fabrique.
+
+     Elles étaient soumises au même verdict d'allure, et c'était une erreur de
+     raisonnement. La fabrique prend du processeur pour un bénéfice futur : la
+     couper quand l'appareil peine est juste. L'amorce, elle, ne prépare rien —
+     elle est ce qui rend la coupe indolore, ici et maintenant. La couper au
+     moment où l'appareil peine, c'est retirer le parachute parce qu'on tombe.
+
+     Mesuré sur un enregistrement de l'écran d'un iPhone XR : des rafales de
+     gels de trois à quatre cents millisecondes, revenant toutes les
+     huit à neuf dixièmes de seconde — la durée exacte d'un plan. Chaque coupe
+     démarrait à froid. Le retrait immédiat ajouté la veille pour protéger la
+     lecture coupait justement l'amorce dès le premier accroc, et rendait donc
+     froide chaque coupe suivante : le remède nourrissait le mal.
+
+     L'amorce reste donc, même quand ça peine. Elle ne coûte qu'un lecteur muet
+     déjà chargé, lancé quelques dixièmes avant la coupe. */
   const attente = elementAttente();
   if (!attente || attente.dataset.amorce === "oui" || !attente.dataset.plan) return;
   /* On lance le lecteur d'exactement ce qu'on l'a garé en avance — pas d'une
@@ -7115,6 +7180,9 @@ function demarrerSon() {
    lecteur du vivier et ses premières images sont déjà décodées, parce que
    « plansApres » les a préparés en repassant par le début. */
 function rebouclerLecture() {
+  // Le retour au début est le bon moment pour prendre le fichier recollé qui
+  // attendait : on rouvre de toute façon.
+  adopterColle();
   const projet = projetActif();
   if (!projet?.plans.length) { terminerLecture(); return; }
   lecture.position = 0;
@@ -7449,14 +7517,22 @@ function poserPlan(index, decalage = 0, enchainer = false) {
        bascule est survenue entre-temps : un lecteur qu'on laisse courir finit
        par atteindre la fin de son fichier et fait avancer le montage tout
        seul. */
-    /* Le relais coûte un lecteur en vol de plus. Sur un appareil qui peine, ou
-       qui refuse la troisième vidéo, il ne couvre rien et prend la place : on
-       arrête le sortant tout de suite. */
+    /* Le relais tient, même quand l'appareil peine — surtout quand il peine.
+
+       Il était coupé net dans ce cas, au motif qu'il « prend la place ». Mais le
+       relais est ce qui montre des images pendant que le lecteur entrant se
+       réveille : sans lui, l'écran garde la dernière image et ne bouge plus.
+       C'est ce que montre l'enregistrement de l'écran — non pas des images
+       laides, mais des images qui ne changent pas, trois à quatre cents
+       millisecondes à chaque coupe.
+
+       Entre voir la fin du plan précédent un instant de trop et voir une image
+       figée, le choix n'est pas douteux. */
     setTimeout(() => {
       if (sortant === elementActif()) return;
       sortant.pause();
       if (lecture.bascule?.sortant === sortant) lecture.bascule = null;
-    }, alAise() ? RELAIS_SORTANT : 0);
+    }, RELAIS_SORTANT);
     lecture.actif = pret;
     video = elementActif();
     /* On note l'instant de la bascule et la position de départ du nouveau
@@ -7686,6 +7762,7 @@ function basculerLecture() {
 }
 
 function arreter() {
+  adopterColle();
   lecture.demande = false;
   lecture.jouant = false;
   lecture.horloge = null;

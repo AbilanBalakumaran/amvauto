@@ -2801,6 +2801,71 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Ce qu'un enregistrement de l'écran a dit
+
+Une capture vidéo de l'écran vaut mieux que n'importe quelle description, et
+elle se mesure : un fichier d'écran iOS ne réenregistre pas une image identique,
+il allonge la durée de l'échantillon. La table des durées dit donc exactement
+quand l'écran n'a pas changé.
+
+```
+9,24 s d'enregistrement · 53 moments sans changement d'au moins 33 ms
+
+t=0,00 → 0,88   rafale (démarrage)
+t=1,48 → 1,83   rafale
+t=2,50 → 2,78   rafale de six
+t=3,28 → 3,63   rafale de huit
+t=4,30 → 4,45   rafale
+t=6,88 → 6,98   rafale
+t=8,00 → 8,75   rafales
+```
+
+Des **rafales de trois à quatre cents millisecondes, revenant toutes les huit à
+neuf dixièmes de seconde**. Le montage fait quatre-vingt-huit plans pour cent
+trois secondes : un plan dure un peu plus d'une seconde. Les rafales tombent sur
+les coupes. Chaque coupe démarrait à froid.
+
+### Le remède nourrissait le mal
+
+La veille, pour protéger la lecture, un retrait immédiat avait été ajouté : au
+premier accroc, la fabrique se tait pendant trois secondes. Juste — sauf que
+trois choses passaient par le même verdict d'allure :
+
+- la **fabrique**, qui prend du processeur pour un bénéfice futur : la couper
+  quand l'appareil peine est juste ;
+- l'**amorce**, qui lance le plan suivant en sourdine quelques dixièmes avant la
+  coupe ;
+- le **relais sortant**, qui laisse le plan précédent à l'écran le temps que le
+  suivant se réveille.
+
+Les deux dernières ne préparent rien : elles sont ce qui rend la coupe indolore,
+ici et maintenant. Les couper au moment où l'appareil peine, c'est retirer le
+parachute parce qu'on tombe — et c'est ce qui rendait froide chaque coupe
+suivante.
+
+L'amorce et le relais ne dépendent donc plus de l'allure. La fabrique, si.
+
+### Et le fichier recollé ne se remplace plus sous le lecteur
+
+Il s'allonge à mesure que les blocs se préparent. Le remplacer pendant la
+lecture veut dire changer la source du lecteur en marche : il rouvre plusieurs
+mégaoctets, se replace, remplit son tampon — **mesuré à plus de sept secondes
+d'arrêt** sur un appareil bridé. On gagnait de la fluidité future en payant un
+gel immédiat.
+
+Le fichier neuf attend son tour. Pas « la fin de la lecture » — sur un montage
+qu'on regarde en boucle, il ne serait jamais pris — mais le premier instant où
+la tête de lecture est **au-delà de ce que le fichier couvre** : à cet endroit
+elle lit un lecteur ordinaire, le remplacement ne coûte rien, et la coupe
+suivante tombe sur le fichier neuf.
+
+```
+                          avant    après
+images par seconde         19,8     23,2
+arrêts de lecture             7        2
+écran figé (tenues)          24       11
+```
+
 ## Le son qui se coupe désigne le coupable
 
 « Ça bug, ça se pixelise, des images noires, des freezes, et **des pauses dans
