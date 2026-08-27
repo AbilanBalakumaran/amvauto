@@ -49,6 +49,90 @@ const MATRICE = new Uint8Array([
   0, 0, 0, 0, 0, 0, 0, 0, 0x40, 0, 0, 0,
 ]);
 
+/* --- H.264 : deux emballages, et un seul convient au MP4 ----------------
+
+   Un flux H.264 se présente sous deux formes. En « Annex B », chaque unité est
+   précédée d'un code de départ — trois ou quatre octets — et les jeux de
+   paramètres voyagent dans le flux lui-même. En « AVCC », celle du MP4, chaque
+   unité est précédée de sa longueur sur quatre octets, et les jeux de paramètres
+   vivent à part, dans la boîte « avcC ».
+
+   WebCodecs permet de demander la seconde : « avc: { format: "avc" } ». Tous les
+   navigateurs ne l'honorent pas. Celui qui rend de l'Annex B alors qu'on écrit
+   un MP4 produit un fichier où le décodeur lit une longueur là où il y a un code
+   de départ : il saute au hasard dans les octets, et rend des macroblocs
+   déplacés et des couleurs qui bavent — la bouillie exacte qui a été
+   photographiée, et que le banc d'essai ne pouvait pas reproduire puisque son
+   navigateur, lui, honore la demande.
+
+   On ne demande donc plus : on regarde les octets, et on convertit s'il le
+   faut. */
+const CODE_DEPART = (o, i) => (o[i] === 0 && o[i + 1] === 0
+  && (o[i + 2] === 1 || (o[i + 2] === 0 && o[i + 3] === 1)));
+
+export function estAnnexB(octets) {
+  return octets.length > 4 && CODE_DEPART(octets, 0);
+}
+
+/* Découper un flux Annex B en unités, sans leur code de départ. */
+export function unitesAnnexB(octets) {
+  const unites = [];
+  let i = 0;
+  while (i < octets.length && !CODE_DEPART(octets, i)) i += 1;
+  while (i < octets.length) {
+    const saut = octets[i + 2] === 1 ? 3 : 4;
+    let j = i + saut;
+    while (j < octets.length && !CODE_DEPART(octets, j)) j += 1;
+    if (j > i + saut) unites.push(octets.subarray(i + saut, j));
+    i = j;
+  }
+  return unites;
+}
+
+/* Réemballer en longueurs de quatre octets, en laissant de côté les jeux de
+   paramètres et les délimiteurs, qui n'ont rien à faire dans un échantillon. */
+export function versAvcc(unites) {
+  const gardees = unites.filter((u) => {
+    const type = u[0] & 0x1f;
+    return type !== 7 && type !== 8 && type !== 9;
+  });
+  let taille = 0;
+  for (const u of gardees) taille += 4 + u.length;
+  const sortie = new Uint8Array(taille);
+  let o = 0;
+  for (const u of gardees) {
+    sortie[o] = (u.length >>> 24) & 0xff;
+    sortie[o + 1] = (u.length >>> 16) & 0xff;
+    sortie[o + 2] = (u.length >>> 8) & 0xff;
+    sortie[o + 3] = u.length & 0xff;
+    sortie.set(u, o + 4);
+    o += 4 + u.length;
+  }
+  return sortie;
+}
+
+/* Construire la boîte « avcC » à partir des jeux de paramètres trouvés dans le
+   flux. C'est elle qui dit au décodeur comment lire tout le reste. */
+export function avcCDepuis(sps, pps) {
+  if (!sps || !pps || sps.length < 4) return null;
+  const sortie = new Uint8Array(11 + sps.length + pps.length);
+  sortie[0] = 1;                    // version
+  sortie[1] = sps[1];               // profil
+  sortie[2] = sps[2];               // compatibilité
+  sortie[3] = sps[3];               // niveau
+  sortie[4] = 0xff;                 // longueurs sur quatre octets
+  sortie[5] = 0xe1;                 // un seul jeu SPS
+  sortie[6] = (sps.length >> 8) & 0xff;
+  sortie[7] = sps.length & 0xff;
+  sortie.set(sps, 8);
+  let o = 8 + sps.length;
+  sortie[o] = 1;                    // un seul jeu PPS
+  sortie[o + 1] = (pps.length >> 8) & 0xff;
+  sortie[o + 2] = pps.length & 0xff;
+  sortie.set(pps, o + 3);
+  return sortie;
+}
+
 /* La description du codec, telle que l'encodeur nous l'a donnée. Pour H.264
    c'est le « avcC » — profils, niveaux, jeux de paramètres — sans quoi aucun
    lecteur ne sait démarrer le décodage. */
@@ -56,6 +140,13 @@ function entreeVideo(piste) {
   const avc = piste.codec.startsWith("avc1");
   if (!avc && !piste.codec.startsWith("vp8")) {
     throw new Error(`codec non emballable : ${piste.codec}`);
+  }
+  /* Sans description, un « avc1 » est un fichier que rien ne peut décoder : le
+     décodeur n'a ni profil, ni niveau, ni jeux de paramètres. On refusait
+     silencieusement d'y penser — la boîte était écrite vide, et le résultat
+     était une bouillie. Mieux vaut ne pas produire le fichier. */
+  if (avc && (!piste.description || piste.description.length < 7)) {
+    throw new Error("flux H.264 sans description : rien à emballer");
   }
   const specifique = avc
     ? boiteMp4("avcC", piste.description)

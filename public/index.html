@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-27 02:11";
+const VERSION_PAGE = "2026-08-27 02:27";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4530,15 +4530,7 @@ async function fabriquerParLecteur(suite, cadre) {
       description: null, echantillons: [] };
     let cassé = "";
     const encodeur = new VideoEncoder({
-      output: (bloc, meta) => {
-        if (meta?.decoderConfig?.description && !piste.description) {
-          piste.description = new Uint8Array(meta.decoderConfig.description);
-        }
-        const octets = new Uint8Array(bloc.byteLength);
-        bloc.copyTo(octets);
-        piste.echantillons.push({ octets, taille: octets.length,
-          duree: Math.round(echelle / cadence), cle: bloc.type === "key" });
-      },
+      output: (bloc, meta) => rangerImage(piste, bloc, meta, Math.round(echelle / cadence)),
       error: (erreur) => { cassé = String(erreur?.message || erreur); },
     });
     encodeur.configure({ codec, width: l, height: h, framerate: cadence,
@@ -4697,7 +4689,7 @@ async function fabriquerSuivant() {
 
    Plafonné par la source : dépenser plus de bits que le fichier d'origine n'en
    contient ne fabrique rien, cela remplit le disque. */
-const VERSION_SEGMENT = 5;
+const VERSION_SEGMENT = 6;
 const BITS_PAR_PIXEL = 0.35;
 // Et un plancher : en dessous, l'encodeur rend des blocs, quelle que soit la
 // source. Une source déjà pauvre ne justifie pas de la rendre pire.
@@ -10768,7 +10760,7 @@ async function reprendreRendu(projet) {
 
 /* Le multiplexeur MP4 vit maintenant dans « mp4.js » : la fabrique de segments
    en a besoin depuis son fil, et un multiplexeur recopié se corrige mal. */
-import { ecrireMp4 } from "./mp4.js";
+import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis } from "./mp4.js";
 
 
 /* --- rendre image par image, hors du temps réel -----------------------
@@ -10796,6 +10788,39 @@ import { ecrireMp4 } from "./mp4.js";
    décrivait bien, durait bien seize secondes, et pas une image n'en sortait —
    « Invalid sync code ». Un format que l'on ne sait pas décrire correctement
    n'a rien à faire dans la liste. */
+/* Ranger une image encodée dans une piste — en regardant les octets, pas la
+   demande.
+
+   « avc: { format: "avc" } » réclame des longueurs de quatre octets, pas des
+   codes de départ. Tous les navigateurs ne l'honorent pas. Celui qui rend de
+   l'Annex B produisait un MP4 où le décodeur lit une longueur là où il y a un
+   code de départ : il saute au hasard dans les octets et rend des macroblocs
+   déplacés. C'est ce qui a été photographié — et le banc d'essai ne pouvait pas
+   le reproduire, son navigateur honorant la demande.
+
+   Cette fonction sert aux deux encodeurs de l'application : celui qui prépare
+   les segments de l'aperçu, et celui qui écrit la vidéo finale. L'export était
+   exposé au même défaut. */
+function rangerImage(piste, bloc, meta, duree) {
+  if (meta?.decoderConfig?.description && !piste.description) {
+    piste.description = new Uint8Array(meta.decoderConfig.description);
+  }
+  const brut = new Uint8Array(bloc.byteLength);
+  bloc.copyTo(brut);
+  let octets = brut;
+  if (estAnnexB(brut)) {
+    const unites = unitesAnnexB(brut);
+    if (!piste.description) {
+      const avcc = avcCDepuis(unites.find((u) => (u[0] & 0x1f) === 7),
+        unites.find((u) => (u[0] & 0x1f) === 8));
+      if (avcc) piste.description = avcc;
+    }
+    octets = versAvcc(unites);
+  }
+  if (!octets.length) return;
+  piste.echantillons.push({ octets, taille: octets.length, duree, cle: bloc.type === "key" });
+}
+
 const CODECS_VIDEO = ["avc1.42E01E", "avc1.4D401E", "avc1.640028", "vp8"];
 const CODECS_SON = ["mp4a.40.2", "opus"];
 
@@ -11023,15 +11048,7 @@ async function rendreImages(projet, reglages) {
   const pisteVideo = { id: 1, type: "video", codec, echelle, largeur, hauteur,
     description: null, echantillons: [] };
   const encodeur = new VideoEncoder({
-    output: (bloc, meta) => {
-      if (meta?.decoderConfig?.description && !pisteVideo.description) {
-        pisteVideo.description = new Uint8Array(meta.decoderConfig.description);
-      }
-      const octets = new Uint8Array(bloc.byteLength);
-      bloc.copyTo(octets);
-      pisteVideo.echantillons.push({ octets, taille: octets.length,
-        duree: Math.round(echelle / cadence), cle: bloc.type === "key" });
-    },
+    output: (bloc, meta) => rangerImage(pisteVideo, bloc, meta, Math.round(echelle / cadence)),
     error: (erreur) => { rendu.erreur = String(erreur); },
   });
   encodeur.configure({ codec, width: largeur, height: hauteur, framerate: cadence,

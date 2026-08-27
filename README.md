@@ -2801,6 +2801,52 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Deux emballages pour un flux H.264, et un seul convient au MP4
+
+Le défaut que le banc d'essai ne pouvait pas trouver, parce qu'il ne se produit
+pas chez lui.
+
+Un flux H.264 se présente sous deux formes. En **Annex B**, chaque unité est
+précédée d'un code de départ — `00 00 00 01` — et les jeux de paramètres
+voyagent dans le flux. En **AVCC**, celle du MP4, chaque unité est précédée de sa
+longueur sur quatre octets, et les jeux de paramètres vivent à part, dans la
+boîte `avcC`.
+
+WebCodecs permet de demander la seconde : `avc: { format: "avc" }`. **Tous les
+navigateurs ne l'honorent pas.** Celui qui rend de l'Annex B produisait un
+fichier où le décodeur lit une longueur là où il y a un code de départ : il saute
+au hasard dans les octets, et rend des macroblocs déplacés et des couleurs qui
+bavent. La bouillie exacte des captures — et Chromium, qui honore la demande, ne
+pouvait pas la reproduire.
+
+Pire : dans ce cas l'encodeur ne fournit pas non plus de description, et le
+muxeur écrivait une boîte `avcC` **vide** sans rien dire. Un fichier `avc1` sans
+description n'a ni profil, ni niveau, ni jeux de paramètres : rien ne peut le
+décoder.
+
+Trois mesures, vérifiées sur des octets construits à la main :
+
+```
+reconnu comme Annex B : oui · un AVCC ne l'est pas          ✔
+unités trouvées : 5 · types [7, 8, 9, 5, 1]                 ✔
+après conversion : [{type 5, 8 octets}, {type 1, 4 octets}] ✔   (SPS, PPS et
+                                                                 délimiteur ôtés)
+avcC construit : version 1 · profil 66 · niveau 30 ·
+                 longueurs sur 4 octets                     ✔
+muxeur sans description : refusé                            ✔
+muxeur avec description : 648 octets                        ✔
+```
+
+On ne demande donc plus, on **regarde les octets** : s'ils sont en Annex B, ils
+sont convertis, et les jeux de paramètres que le flux transporte servent à
+construire la description manquante. Et si, malgré tout, un `avc1` se présentait
+sans description, le muxeur **refuse** au lieu d'écrire un fichier illisible.
+
+Les deux encodeurs de l'application passent par la même fonction : celui qui
+prépare les segments de l'aperçu, et celui qui écrit la vidéo finale. **L'export
+était exposé au même défaut** — une vidéo rendue sur un tel navigateur aurait été
+corrompue de la même façon.
+
 ## Le deuxième enregistrement : les rafales ont disparu
 
 Même mesure que la première fois, sur une capture d'écran de sept secondes :

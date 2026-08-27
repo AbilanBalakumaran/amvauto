@@ -17,7 +17,7 @@
    dans la boucle qui produit l'image suivante. */
 
 import { lireMp4 } from "./demux.js";
-import { ecrireMp4 } from "./mp4.js";
+import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis } from "./mp4.js";
 
 /* Les cartes et les octets des fichiers, gardés d'un segment à l'autre : un
    montage tire cent blocs de vingt-quatre rushs, et relire le même fichier à
@@ -297,7 +297,30 @@ self.onmessage = async (evt) => {
         }
         const buf = new Uint8Array(bloc.byteLength);
         bloc.copyTo(buf);
-        piste.echantillons.push({ octets: buf, taille: buf.length,
+        /* On regarde les octets plutôt que de croire la demande.
+
+           « avc: { format: "avc" } » réclame des longueurs, pas des codes de
+           départ. Le navigateur qui ne l'honore pas rend de l'Annex B, et l'on
+           écrivait ces octets tels quels dans un MP4 qui annonce des longueurs :
+           le décodeur lit alors une longueur là où il y a un code de départ, et
+           saute au hasard dans le fichier. C'est la bouillie de macroblocs.
+
+           On convertit donc, et l'on récupère au passage les jeux de paramètres
+           que l'Annex B transporte dans le flux — ceux que la description
+           n'apporte pas dans ce cas-là. */
+        let octets = buf;
+        if (estAnnexB(buf)) {
+          const unites = unitesAnnexB(buf);
+          if (!piste.description) {
+            const sps = unites.find((u) => (u[0] & 0x1f) === 7);
+            const pps = unites.find((u) => (u[0] & 0x1f) === 8);
+            const avcc = avcCDepuis(sps, pps);
+            if (avcc) piste.description = avcc;
+          }
+          octets = versAvcc(unites);
+        }
+        if (!octets.length) return;
+        piste.echantillons.push({ octets, taille: octets.length,
           duree: Math.round(echelle / cadence), cle: bloc.type === "key" });
       },
       error: () => { /* relevé plus bas par l'absence d'échantillons */ },
