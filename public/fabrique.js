@@ -74,6 +74,16 @@ async function choisirCodec(config) {
    La contrainte est stricte et vérifiée : un segment qui n'a pas exactement le
    même codec, la même taille ni la même description que le premier fait échouer
    l'assemblage plutôt que de produire un fichier illisible. */
+function memeDescription(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return false;
+  return true;
+}
+
 async function assembler(morceaux) {
   const ECHELLE = 90000;
   let piste = null;
@@ -89,6 +99,20 @@ async function assembler(morceaux) {
     } else if (carte.codec !== piste.codec || carte.largeur !== piste.largeur
                || carte.hauteur !== piste.hauteur) {
       return { echec: "segments de formats différents" };
+    } else if (!memeDescription(piste.description, carte.description)) {
+      /* La description du flux — les paramètres SPS et PPS — décrit comment
+         décoder les images. Le fichier recollé n'en porte qu'une, celle du
+         premier segment. Si un segment suivant a été encodé avec des paramètres
+         différents, ses images sont décodées avec les mauvaises consignes : les
+         macroblocs se déplacent, les couleurs bavent, et l'on voit une bouillie
+         colorée à la place de l'image. C'est ce qui a été photographié.
+
+         Deux segments de même codec et de même taille peuvent parfaitement
+         avoir des descriptions différentes — il suffit que l'encodeur ait choisi
+         un autre niveau, ce qu'il fait selon le débit. On compare donc les
+         octets, et l'on refuse plutôt que de fabriquer un fichier qui ne se
+         décode pas. */
+      return { echec: "segments aux paramètres de flux différents" };
     }
     for (const e of carte.echantillons) {
       piste.echantillons.push({

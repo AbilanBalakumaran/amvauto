@@ -2801,6 +2801,44 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
+## Ce n'était pas de la pixellisation, c'était du décodage faux
+
+Trois captures d'écran ont tranché. Une image trop compressée devient molle et
+carrée, mais elle reste l'image. Ce qu'elles montrent est autre chose : des
+macroblocs déplacés, des couleurs qui bavent en traînées, une bouillie qui garde
+vaguement la forme du plan. C'est la signature d'un **décodeur qui travaille
+avec les mauvaises consignes**.
+
+Le fichier recollé ne porte qu'une **description de flux** — les paramètres SPS
+et PPS qui disent comment décoder les images —, celle du premier segment. Le
+contrôle à la concaténation comparait le codec, la largeur et la hauteur… mais
+pas cette description. Or deux segments de même codec et de même taille peuvent
+parfaitement avoir des paramètres différents : il suffit que l'encodeur ait
+choisi un autre niveau, ce qu'il fait **selon le débit**.
+
+Et le débit variait d'un bloc à l'autre depuis la veille — le renfort ajouté
+pour les blocs courts. La correction précédente a donc fabriqué le défaut
+suivant : chaque segment encodé à son propre débit, une seule description
+retenue, et tous les segments suivants décodés de travers.
+
+Deux mesures, l'une contre l'autre :
+
+- **Un seul débit par projet**, calculé sur le bloc le plus court. Tous les
+  segments partagent la même description et se recollent sans risque ; les blocs
+  longs reçoivent un peu plus que nécessaire, ce qui est un prix dérisoire
+  devant une image illisible.
+- **Le contrôle compare les octets de la description**, et refuse d'assembler
+  plutôt que de fabriquer un fichier qui ne se décode pas. La lecture retombe
+  alors bloc par bloc — moins fluide, mais juste — et la raison est dite dans
+  Options.
+
+```
+projet mêlant des blocs de 0,4 s et de 2,5 s —
+  huit segments · un seul codec · une seule taille
+  descriptions distinctes : 1  ✔
+  fichier recollé : prêt, huit plans, 261 images, aucun refus
+```
+
 ## Les petits plans se pixelisent, et pour une raison mécanique
 
 Chaque segment commence par une image complète — la seule par où un décodeur

@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-27 01:31";
+const VERSION_PAGE = "2026-08-27 01:48";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4697,7 +4697,7 @@ async function fabriquerSuivant() {
 
    Plafonné par la source : dépenser plus de bits que le fichier d'origine n'en
    contient ne fabrique rien, cela remplit le disque. */
-const VERSION_SEGMENT = 4;
+const VERSION_SEGMENT = 5;
 const BITS_PAR_PIXEL = 0.35;
 // Et un plancher : en dessous, l'encodeur rend des blocs, quelle que soit la
 // source. Une source déjà pauvre ne justifie pas de la rendre pire.
@@ -4732,13 +4732,32 @@ function debitSegment(plan, cadre) {
      peut entrer. Elle coûte cinq à dix fois une image ordinaire. Sur un bloc de
      deux secondes elle se dilue ; sur un bloc de six dixièmes, elle représente
      le tiers du budget, et le régulateur écrase tout le reste pour la faire
-     tenir. C'est exactement ce qui se voit : « les petits plans se pixelisent ».
+     tenir. Le débit est donc relevé de ce que l'image-clé prend.
 
-     Le débit d'un bloc court est donc relevé de ce que son image-clé lui prend.
-     Un bloc d'une demi-seconde reçoit deux fois le débit d'un bloc de deux
-     secondes, pour la même qualité d'image. */
-  const large = Math.max(0.1, sortieDe(plan) - entreeDe(plan));
-  const renfort = 1 + Math.max(0, Math.min(1, (1.5 - large) / 1.5));
+     Mais ce renfort est le MÊME pour tout le projet, et c'est essentiel.
+
+     Il a d'abord été calculé bloc par bloc, selon la durée de chacun. Chaque
+     segment était alors encodé à un débit différent — et un encodeur qui change
+     de débit peut changer de niveau, donc de paramètres de flux. Or le fichier
+     recollé ne porte qu'une description : celle du premier segment. Tous les
+     suivants étaient décodés avec les mauvaises consignes, et rendaient une
+     bouillie de macroblocs déplacés. Photographié sur trois plans, et
+     parfaitement reproductible : ce n'était pas de la pixellisation, c'était du
+     décodage faux.
+
+     Un seul débit par projet, donc, calculé sur le bloc le plus court : tous les
+     segments partagent la même description, et se recollent sans risque. Les
+     blocs longs reçoivent un peu plus que nécessaire — c'est le prix, et il est
+     petit devant une image illisible. */
+  const projet = projetActif();
+  const plans = projet?.plans || [];
+  let plusCourt = Infinity;
+  for (const p of plans) {
+    const d = sortieDe(p) - entreeDe(p);
+    if (d > 0.05 && d < plusCourt) plusCourt = d;
+  }
+  if (!Number.isFinite(plusCourt)) plusCourt = Math.max(0.1, sortieDe(plan) - entreeDe(plan));
+  const renfort = 1 + Math.max(0, Math.min(1, (1.5 - plusCourt) / 1.5));
   return Math.round(Math.max(plancher, Math.min(plafond * renfort, 12_000_000)));
 }
 
@@ -9104,6 +9123,10 @@ function pourquoiCoince() {
     bouts.push(` ${fabrique.rates} bloc${fabrique.rates > 1 ? "s" : ""} refusé${fabrique.rates > 1 ? "s" : ""} à la préparation`
       + (dits.length ? `\u00a0: ${dits.join(", ")}` : "")
       + ". Ces plans-là se liront directement, sans segment.");
+  }
+  if (colle.echec) {
+    bouts.push(` Le fichier recollé a été refusé\u00a0: ${colle.echec}.`
+      + " La lecture reste bloc par bloc — c'est moins fluide, mais c'est juste.");
   }
   if (fabrique.parLecteur) {
     bouts.push(` ${fabrique.parLecteur} bloc${fabrique.parLecteur > 1 ? "s ont été préparés" : " a été préparé"} par le lecteur vidéo`
