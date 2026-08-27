@@ -16,7 +16,7 @@
    Elle tourne sur son propre fil. Rien de ce qu'elle fait ne doit jamais tomber
    dans la boucle qui produit l'image suivante. */
 
-import { lireMp4 } from "./demux.js";
+import { lireMp4, departCle } from "./demux.js";
 import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis } from "./mp4.js";
 
 /* Les cartes et les octets des fichiers, gardés d'un segment à l'autre : un
@@ -298,10 +298,8 @@ self.onmessage = async (evt) => {
     const instant = (e) => e.instant / carte.echelle;
     // On repart de l'image-clé qui précède l'entrée : c'est la seule par où un
     // décodeur peut commencer. Ces images-là sont décodées puis jetées.
-    let depuis = 0;
-    for (let i = 0; i < ech.length; i += 1) {
-      if (ech[i].cle && instant(ech[i]) <= entree) depuis = i;
-    }
+    const depuis = departCle(carte, entree);
+    if (depuis < 0) return repondre({ echec: "aucune image-clé dans le fichier" });
 
     /* Et tous à la même cadence. Un montage assemblé de morceaux à vingt-trois
        et vingt-cinq images par seconde n'a pas de cadence du tout : on rééchan-
@@ -437,11 +435,22 @@ self.onmessage = async (evt) => {
     });
     decodeur.configure(config);
 
+    /* On s'arrête sur l'instant de décodage, pas sur celui d'affichage.
+
+       Les deux ne vont pas dans le même sens : une image B s'affiche après des
+       images décodées plus tard qu'elle. Couper la boucle au premier instant
+       d'affichage dépassé, c'est priver le décodeur d'images dont il a encore
+       besoin — et retomber, autrement, sur la même bouillie. Une demi-seconde
+       de marge couvre largement le réordonnancement de n'importe quel encodeur.
+     */
+    const MARGE_REORDRE = 0.5;
     for (let i = depuis; i < ech.length; i += 1) {
       const e = ech[i];
-      if (instant(e) > sortie + 0.05) break;
+      if (e.decodage / carte.echelle > sortie + MARGE_REORDRE) break;
       decodeur.decode(new EncodedVideoChunk({
-        type: e.cle ? "key" : "delta",
+        // La toute première image donnée à un décodeur doit être une clé :
+        // « departCle » n'en rend pas d'autre, et on ne le suppose pas.
+        type: e.cle || i === depuis ? "key" : "delta",
         timestamp: Math.round(instant(e) * 1e6),
         duration: Math.round((e.duree / carte.echelle) * 1e6),
         data: donnees.subarray(e.ou, e.ou + e.taille),

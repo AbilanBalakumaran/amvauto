@@ -4,7 +4,7 @@
    rend des images déjà réduites. Il tourne à part pour que ce travail ne tombe
    jamais dans la boucle qui doit produire l'image suivante. */
 
-import { lireMp4 } from "./demux.js";
+import { lireMp4, departCle } from "./demux.js";
 
 
 /* Les cartes de fichiers déjà lues, gardées par adresse.
@@ -77,10 +77,8 @@ self.onmessage = async (evt) => {
     // On repart de l'image-clé qui précède le point d'entrée : c'est la seule
     // par où un décodeur peut commencer.
     const ech = carte.echantillons;
-    let depuis = 0;
-    for (let i = 0; i < ech.length; i += 1) {
-      if (ech[i].cle && ech[i].instant / carte.echelle <= entree) depuis = i;
-    }
+    const depuis = departCle(carte, entree);
+    if (depuis < 0) return repondre({ echec: "aucune image-clé dans le fichier" });
 
     /* Les images retenues sont étalées sur toute la plage demandée.
 
@@ -105,15 +103,41 @@ self.onmessage = async (evt) => {
       error: () => { cassee = true; },
     });
     dec.configure(config);
+    /* On s'arrête sur l'instant de décodage, pas sur celui d'affichage.
+
+       Les deux ne vont pas dans le même sens : une image B s'affiche après des
+       images décodées plus tard qu'elle. Couper la boucle au premier instant
+       d'affichage dépassé, c'est priver le décodeur d'images dont il a encore
+       besoin — et retomber, autrement, sur la même bouillie. Une demi-seconde
+       de marge couvre largement le réordonnancement de n'importe quel encodeur.
+     */
+    const MARGE_REORDRE = 0.5;
     for (let i = depuis; i < ech.length; i += 1) {
       const e = ech[i];
-      if (e.instant / carte.echelle > fin + 0.05) break;
+      if (e.decodage / carte.echelle > fin + MARGE_REORDRE) break;
       dec.decode(new EncodedVideoChunk({
-        type: e.cle ? "key" : "delta",
+        // La toute première image donnée à un décodeur doit être une clé :
+        // « departCle » n'en rend pas d'autre, et on ne le suppose pas.
+        type: e.cle || i === depuis ? "key" : "delta",
         timestamp: Math.round((e.instant / carte.echelle) * 1e6),
         duration: Math.round((e.duree / carte.echelle) * 1e6),
         data: donnees.subarray(e.ou, e.ou + e.taille),
       }));
+      /* On ne noie pas le décodeur.
+
+         Tout enfourner d'un coup, c'est demander à un téléphone de garder en
+         mémoire une trentaine d'images compressées et autant d'images décodées.
+         Le décodeur matériel d'un iPhone a une file courte : au-delà, il rend
+         la main tard, et sous la pression mémoire le système peut le reprendre
+         en pleine tranche — ce qui se voit à l'écran comme une image à moitié
+         faite. La fabrique s'en garde déjà ; ce fil-ci, non. */
+      if (dec.decodeQueueSize > 24) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((suite) => {
+          dec.addEventListener?.("dequeue", suite, { once: true });
+          setTimeout(suite, 40);
+        });
+      }
     }
     await dec.flush().catch(() => { cassee = true; });
     try { dec.close(); } catch { /* déjà fermé */ }
