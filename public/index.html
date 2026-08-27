@@ -1638,7 +1638,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-27 02:47";
+const VERSION_PAGE = "2026-08-27 03:19";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3662,6 +3662,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
+    verifies: fabrique.verifies || 0, ecartLecteur: fabrique.ecartLecteur,
     faits: fabrique.faits, rates: fabrique.rates,
     octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
   imports: { file: fileImport.length, enVol: arretsImport.size, places: importsEnCours,
@@ -4294,29 +4295,8 @@ function filFabrique() {
         if (/ne se relit pas|ne se décode pas|pas la bonne image|pas d'image-clé|illisible/.test(String(echec))) {
           fabrique.fauxSegments = (fabrique.fauxSegments || 0) + 1;
           if (fabrique.fauxSegments >= 3) {
-            fabrique.possible = false;
-            fabrique.pourquoi = "les segments fabriqués ici ne se relisent pas — lecture directe";
             segmentsRates.add(attente.cle);
-            /* Et l'on jette ceux qui ont déjà été faits.
-
-               Trois refusés veut dire que la chaîne est en cause, pas ces trois
-               fichiers-là : ceux qui sont passés ont pu passer de justesse. Les
-               garder, c'est garder des images fausses à l'écran. On repart de
-               zéro, en lecture directe, et l'on efface aussi ce qui avait été
-               rangé — sinon la prochaine ouverture les retrouverait. */
-            for (const [cleMorte, seg] of segments) {
-              try { URL.revokeObjectURL(seg.url); } catch { /* déjà libéré */ }
-              effacerBase(cleMorte).catch(() => {});
-            }
-            segments.clear();
-            if (colle.url) { try { URL.revokeObjectURL(colle.url); } catch { /* déjà libéré */ } }
-            if (colle.suivant?.url) { try { URL.revokeObjectURL(colle.suivant.url); } catch { /* déjà libéré */ } }
-            colle.url = ""; colle.cle = ""; colle.jusqua = 0; colle.suivant = null;
-            colle.echec = fabrique.pourquoi;
-            changerMontage();
-            majBarreCache();
-            const projetVu = projetActif();
-            if (projetVu) majPreparation(projetVu);
+            renoncerAcceleration("les segments fabriqués ici ne se relisent pas");
             return;
           }
         }
@@ -4335,6 +4315,19 @@ function filFabrique() {
         // Le bloc vient d'être vu image par image : s'il ne montre rien, on le
         // déplace dans son rush, à durée constante.
         jugerBloc(attente.cle, verdict);
+        /* Et l'on demande son avis au vrai lecteur.
+
+           La relecture faite dans le fil de fabrication passe par notre propre
+           démultiplexeur et par un décodeur d'images isolées : deux chemins
+           écrits ici, qui partagent les mêmes hypothèses que le muxeur. Un
+           conteneur mal formé leur convient donc parfaitement — et c'est
+           exactement ce qui manquait, puisque l'écran, lui, n'utilise ni l'un
+           ni l'autre : il donne le fichier à un élément vidéo.
+
+           On donne donc le fichier à un élément vidéo, et l'on compare ce qu'il
+           affiche à ce que le bloc devait montrer. Les deux premiers segments
+           suffisent : un défaut de conteneur est systématique. */
+        verifierAuLecteur(attente.cle, verdict).catch(() => {});
       }
       // Le suivant, mais jamais dans la foulée : on rend la main d'abord.
       setTimeout(() => fabriquerSuivant(), 0);
@@ -4439,6 +4432,92 @@ function surveillerFabrique() {
   // Deux fois sans réponse sur le même bloc : c'est lui le problème, on passe.
   if (faits >= 2) { segmentsRates.add(attente.cle); fabrique.rates += 1; }
   redemarrerFabrique("le fil n'a pas répondu");
+}
+
+/* La vérification par le vrai lecteur.
+
+   C'est le seul juge qui compte : c'est lui qui affiche. On lui donne le
+   segment, on prend sa première image, on la réduit aux mêmes trente-deux
+   points que le contrôle, et on compare. Un écart énorme veut dire que le
+   fichier ne se lit pas comme prévu par le lecteur de cet appareil-là, quelle
+   qu'en soit la cause — conteneur, emballage, jeu de paramètres. */
+const VERIFS_LECTEUR = 2;
+
+async function verifierAuLecteur(cle, verdict) {
+  if (!verdict?.apercu || fabrique.possible === false) return;
+  if ((fabrique.verifies || 0) >= VERIFS_LECTEUR) return;
+  if (lecture.demande) return;               // jamais pendant qu'on regarde
+  const segment = segments.get(cle);
+  if (!segment?.url) return;
+  fabrique.verifies = (fabrique.verifies || 0) + 1;
+
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.setAttribute("muted", "");
+  video.setAttribute("playsinline", "");
+  video.preload = "auto";
+  video.style.cssText = "position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
+  document.body.append(video);
+  const ranger = () => { try { video.pause(); video.removeAttribute("src"); video.load(); } catch { /* parti */ } video.remove(); };
+
+  try {
+    video.src = segment.url;
+    video.load();
+    video.play().then(() => video.pause()).catch(() => {});
+    const pret = await new Promise((ok) => {
+      let fini = false;
+      const dire = (v) => { if (!fini) { fini = true; ok(v); } };
+      video.addEventListener("loadeddata", () => dire(true), { once: true });
+      video.addEventListener("canplay", () => dire(true), { once: true });
+      video.addEventListener("error", () => dire(false), { once: true });
+      setTimeout(() => dire(video.readyState >= 2), 8000);
+    });
+    if (!pret || !video.videoWidth) { ranger(); return renoncerAcceleration("le lecteur ne sait pas ouvrir les segments"); }
+
+    const toile = document.createElement("canvas");
+    toile.width = 32;
+    toile.height = 18;
+    const ctx = toile.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(video, 0, 0, 32, 18);
+    const d = ctx.getImageData(0, 0, 32, 18).data;
+    let ecart = 0;
+    for (let i = 0, k = 0; i < d.length; i += 4, k += 1) {
+      const y = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+      ecart += Math.abs(y - verdict.apercu[k]);
+    }
+    ecart /= verdict.apercu.length;
+    fabrique.ecartLecteur = Math.round(ecart);
+    ranger();
+    // Vingt-cinq points d'écart moyen sur une échelle de deux cent
+    // cinquante-cinq : ce n'est plus une différence d'encodage, c'est une autre
+    // image.
+    if (ecart > 25) renoncerAcceleration(`le lecteur affiche autre chose que le bloc (écart ${Math.round(ecart)})`);
+  } catch (erreur) {
+    ranger();
+  }
+}
+
+/* Renoncer proprement : plus de segments, plus de fichier recollé, lecture
+   directe, et l'on efface ce qui avait été rangé pour que la prochaine
+   ouverture ne les retrouve pas. */
+function renoncerAcceleration(pourquoi) {
+  if (fabrique.possible === false) return;
+  fabrique.possible = false;
+  fabrique.pourquoi = `${pourquoi} — lecture directe`;
+  for (const [cleMorte, seg] of segments) {
+    try { URL.revokeObjectURL(seg.url); } catch { /* déjà libéré */ }
+    effacerBase(cleMorte).catch(() => {});
+  }
+  segments.clear();
+  if (colle.url) { try { URL.revokeObjectURL(colle.url); } catch { /* déjà libéré */ } }
+  if (colle.suivant?.url) { try { URL.revokeObjectURL(colle.suivant.url); } catch { /* déjà libéré */ } }
+  colle.url = ""; colle.cle = ""; colle.jusqua = 0; colle.suivant = null;
+  colle.echec = fabrique.pourquoi;
+  changerMontage();
+  majBarreCache();
+  const projetVu = projetActif();
+  if (projetVu) majPreparation(projetVu);
 }
 
 /* Préparer un bloc avec le lecteur vidéo, quand le fil n'a pas su.
@@ -7287,13 +7366,27 @@ function demarrerSon() {
    lecteur du vivier et ses premières images sont déjà décodées, parce que
    « plansApres » les a préparés en repassant par le début. */
 function rebouclerLecture() {
-  // Le retour au début est le bon moment pour prendre le fichier recollé qui
-  // attendait : on rouvre de toute façon.
-  adopterColle();
+  /* Et un verrou, parce qu'un retour au début ne doit jamais en déclencher un
+     autre. La cause ci-dessus est corrigée ; ce verrou garantit qu'aucune autre
+     ne pourra produire la même avalanche. */
+  if (lecture.reboucle) return;
+  lecture.reboucle = true;
+  try {
+    rebouclerVraiment();
+  } finally {
+    lecture.reboucle = false;
+  }
+}
+
+function rebouclerVraiment() {
   const projet = projetActif();
   if (!projet?.plans.length) { terminerLecture(); return; }
   lecture.position = 0;
   lecture.horloge = { debut: performance.now(), depart: 0 };
+  // Le retour au début est le bon moment pour prendre le fichier recollé qui
+  // attendait : on rouvre de toute façon. Après avoir remis l'horloge à zéro,
+  // jamais avant.
+  adopterColle();
   poserPlan(0, 0, lecture.demande);
   if (lecture.audio) {
     lecture.audio.loop = true;
@@ -9866,7 +9959,23 @@ function positionCourante() {
   if (video && !video.paused && video.readyState >= 2 && !lecture.cible && !lecture.secousse) {
     const plan = projet.plans[lecture.index];
     const reelle = (offsets(projet.plans)[lecture.index] || 0) + video.currentTime - entreeLue(plan);
-    if (Math.abs(reelle - position) > 0.35) {
+    /* Une position hors du montage n'est pas une correction, c'est une erreur.
+
+       Le lecteur donne l'heure juste — quand il joue le bon endroit. Au retour
+       au début, il est encore à la fin du fichier recollé : sa position, lue
+       telle quelle, plaçait la tête cent secondes après la fin du montage. On
+       en concluait qu'il fallait reboucler… ce qu'on venait de faire. Le retour
+       au début se redéclenchait à chaque fois, sans jamais laisser le lecteur
+       revenir : « majTransport → positionCourante → rebouclerLecture →
+       poserPlan → majTransport », jusqu'au débordement de pile.
+
+       Un débordement de pile en pleine lecture n'arrête pas seulement la
+       fonction : il interrompt la boucle d'affichage là où elle en était.
+       Images figées, images à moitié peintes, son qui décroche — tout ce qui a
+       été signalé, et rien de tout cela ne venait des codecs.
+
+       On n'accepte donc du lecteur qu'une position qui existe. */
+    if (reelle >= 0 && reelle <= duree_totale && Math.abs(reelle - position) > 0.35) {
       position = reelle;
       lecture.horloge = { debut: performance.now(), depart: reelle };
     }

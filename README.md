@@ -2801,7 +2801,44 @@ et vérifiée : la police des titres, ObelixPro, **ne contient aucun glyphe
 accentué**. « Réglages » s'affichait avec un « é » emprunté à une autre police,
 ce qui se lit comme une faute.
 
-## Relire ce qu'on vient d'écrire
+## Le débordement de pile
+
+Le vrai défaut, trouvé en écrivant un test pour un autre.
+
+```
+RangeError: Maximum call stack size exceeded
+  at majTransport
+  at positionCourante
+  at rebouclerLecture
+  at poserPlan
+  at majTransport
+  ...
+```
+
+`positionCourante` se recale sur le lecteur : c'est lui qui donne l'heure juste,
+quand il joue le bon endroit. Au retour au début, il est encore à la fin du
+fichier recollé — sa position, lue telle quelle, plaçait la tête cent secondes
+**après** la fin du montage. On en concluait qu'il fallait reboucler… ce qu'on
+venait de faire. Le retour au début se redéclenchait à chaque fois, sans jamais
+laisser le lecteur revenir, jusqu'au débordement.
+
+Un débordement de pile en pleine lecture n'arrête pas seulement une fonction :
+il **interrompt la boucle d'affichage là où elle en était**. Images figées,
+images à moitié peintes, son qui décroche. Tout ce qui a été signalé — et rien
+de tout cela ne venait des codecs, qui ont pourtant occupé quatre corrections.
+
+Deux mesures :
+
+- **On n'accepte du lecteur qu'une position qui existe** : hors des bornes du
+  montage, ce n'est pas une correction, c'est une erreur.
+- **Un retour au début ne peut plus en déclencher un autre** : un verrou le
+  garantit, quelle que soit la cause future.
+
+Et `adopterColle` est passé *après* la remise à zéro de l'horloge, au lieu
+d'ouvrir la fonction : reprendre un fichier avant d'avoir replacé la tête, c'est
+la même faute une marche plus haut.
+
+## Relire ce qu'on vient d'écrire — et le faire juger par le vrai lecteur
 
 Trois défauts successifs ont produit la même bouillie de macroblocs, et **aucun
 n'était visible depuis le banc d'essai** : ils tenaient à ce que le navigateur de
@@ -2815,6 +2852,16 @@ sert déjà au contrôle des blocs. Si elles ne se ressemblent pas, le fichier e
 faux, **quelle qu'en soit la raison, connue ou non**, et il n'est pas livré.
 
 Une image décodée par segment. C'est le prix d'une garantie.
+
+Une garantie incomplète, cependant : cette relecture passe par notre propre
+démultiplexeur et par un décodeur d'images isolées — deux chemins écrits ici,
+qui partagent les hypothèses du muxeur. Un conteneur mal formé leur convient
+parfaitement. Or l'écran n'utilise ni l'un ni l'autre : il donne le fichier à un
+**élément vidéo**.
+
+Les deux premiers segments de chaque séance sont donc donnés à un élément vidéo,
+et ce qu'il affiche est comparé à ce que le bloc devait montrer. C'est le seul
+juge qui compte, puisque c'est lui qui affiche.
 
 ### Et si la chaîne elle-même est en cause
 

@@ -502,6 +502,12 @@ self.onmessage = async (evt) => {
     const debutNoir = tete >= lumas.length ? 0 : (tete * 3) / cadence;
 
     const verdict = {
+      /* La première image du bloc, en trente-deux points sur dix-huit.
+
+         Elle voyage jusqu'à l'application pour que celle-ci puisse vérifier ce
+         que le vrai lecteur vidéo, lui, affiche de ce fichier. Cinq cent
+         soixante-seize octets : c'est le prix d'une preuve. */
+      apercu: premierGris ? Array.from(premierGris) : null,
       debutNoir: Math.round(debutNoir * 100) / 100,
       luminance: Math.round(moyenne(lumas)),
       mouvement: Math.round(bouge * 10) / 10,
