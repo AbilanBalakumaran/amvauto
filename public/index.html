@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 01:59";
+const VERSION_PAGE = "2026-08-28 02:13";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3661,6 +3661,10 @@ function compterJouants() {
 }
 
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
+  // De quoi voir, du dehors, ce que la lecture croit être en train de faire.
+  lecture: { index: lecture.index, position: Math.round((lecture.position || 0) * 100) / 100,
+    demande: !!lecture.demande, scrub: !!lecture.scrub, reboucle: !!lecture.reboucle,
+    cible: lecture.cible ? { temps: Math.round(lecture.cible.temps * 100) / 100, essais: lecture.cible.essais } : null },
   fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0 },
   bascules: { ...bascules }, vues: { ...vues }, arrets: { ...arrets },
   defauts: { ...defauts, enCours: Boolean(fabrique.encours) },
@@ -7469,6 +7473,23 @@ function chargerSon(projet, fichier) {
   }, { once: true });
 }
 
+/* Déverrouiller la sortie audio pendant le geste, sans encore jouer.
+
+   Un iPhone n'ouvre le son que sur un geste de l'utilisateur, et refuse
+   silencieusement toute lecture lancée depuis un rappel asynchrone. Quand la
+   lecture est armée en attendant le premier plan, le vrai départ aura lieu plus
+   tard — hors du geste. On profite donc de l'appui pour lancer puis arrêter
+   aussitôt la bande son : l'élément est dès lors « déverrouillé », et le départ
+   différé aura du son. */
+function deverrouillerSon() {
+  if (!lecture.audio) return;
+  try {
+    const essai = lecture.audio.play();
+    if (essai) essai.then(() => lecture.audio.pause()).catch(() => {});
+    else lecture.audio.pause();
+  } catch { /* rien à déverrouiller */ }
+}
+
 function demarrerSon() {
   if (!lecture.audio) return;
   /* Le morceau tourne en rond, comme le montage.
@@ -8018,15 +8039,34 @@ function basculerLecture() {
      l'on dit pourquoi — le bandeau donne déjà le compte et l'attente. */
   const dispo = projet.plans.some((autre) => autre.youtube || !mediaDe(autre) || estLocal(autre));
   if (!dispo) {
+    /* On garde l'intention au lieu de la jeter.
+
+       Le refus était juste — une tête qui avance sur un écran noir donne un
+       montage qui semble cassé — mais il perdait l'appui. On appuyait sur
+       lecture pendant que les fichiers arrivaient, il ne se passait rien, le
+       message disparaissait au bout de quatre secondes, et il fallait deviner
+       qu'il fallait réappuyer. Mesuré au banc : l'appui est avalé chaque fois
+       qu'il précède l'arrivée du premier plan.
+
+       La lecture est donc armée : elle partira d'elle-même dès qu'un plan sera
+       là. Et le son est déverrouillé maintenant, dans le geste — c'est la seule
+       occasion. Un iPhone refuse d'ouvrir le son depuis un rappel asynchrone,
+       et le refus est silencieux : sans cette précaution la lecture repartirait
+       muette. */
+    lecture.armee = !lecture.armee;
+    if (lecture.armee) deverrouillerSon();
     const vide = $("ecran-vide");
     if (vide) {
-      vide.textContent = "Aucun plan n'est encore sur l'appareil : il n'y a rien à montrer. "
-        + "Les fichiers arrivent — le bandeau en bas dit combien il en reste.";
+      vide.textContent = lecture.armee
+        ? "Aucun plan n'est encore sur l'appareil. La lecture partira toute seule dès que le premier sera là."
+        : "Lecture annulée.";
       vide.hidden = false;
       setTimeout(() => { if (vide) vide.hidden = true; }, 4000);
     }
+    majTransport();
     return;
   }
+  lecture.armee = false;
 
   lecture.demande = true;
   /* La sonde à imagettes lâche son décodeur avant qu'on démarre : sur un
@@ -8921,6 +8961,14 @@ async function lancerImport() {
        « bloqué à 39 sur 88 » qu'aucun bouton ne débloquait. */
     importsEnCours -= 1;
     setTimeout(lancerImport, 60);
+    /* Et si l'on avait appuyé sur lecture avant que rien ne soit arrivé, c'est
+       maintenant que ça part. Le son a été déverrouillé dans le geste ; il ne
+       reste qu'à démarrer. */
+    if (lecture.armee && !lecture.demande) {
+      const projet = projetActif();
+      const pret = projet?.plans.some((autre) => autre.youtube || !mediaDe(autre) || estLocal(autre));
+      if (pret) { lecture.armee = false; setTimeout(basculerLecture, 0); }
+    }
   }
 }
 
