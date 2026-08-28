@@ -105,6 +105,35 @@ export function copierMorceau(donnees, carte, entree, sortie, caler = true) {
   }
   if (echantillons.length < 2) return { echec: "trop peu d'images entières" };
 
+  /* Le segment doit commencer à zéro, et non à quatre-vingts millisecondes.
+
+     Les instants recopiés sont ceux du rush, et le premier d'entre eux n'est pas
+     nul : une image-clé s'affiche un peu après avoir été décodée, c'est
+     justement ce que dit « ctts ». Le fichier produit commençait donc par un
+     petit trou, et l'application devait déplacer le lecteur pour entrer dedans —
+     à chaque coupe.
+
+     Ce déplacement est ce qu'on voyait. Pendant qu'il a lieu, le lecteur n'a
+     aucune image à donner : le moniteur passe au noir entre les plans, et comme
+     rien n'a jamais été retenu pour ce plan-là, il se rabat sur la vignette de
+     couverture — trois cents points agrandis sur tout l'écran. « Un plan noir
+     entre chaque plan », « une frame pixelisée avant que ça se lance », « on
+     voit l'image de couverture » : trois façons de décrire le même trou.
+
+     On décale donc tous les instants d'affichage pour que le premier tombe à
+     zéro. Le lecteur n'a plus rien à chercher : il joue. */
+  {
+    let minimum = Infinity;
+    let horloge = 0;
+    for (const e of echantillons) {
+      minimum = Math.min(minimum, horloge + e.composition);
+      horloge += e.duree;
+    }
+    if (Number.isFinite(minimum) && minimum !== 0) {
+      for (const e of echantillons) e.composition -= minimum;
+    }
+  }
+
   const piste = {
     id: 1,
     type: "video",
@@ -123,8 +152,11 @@ export function copierMorceau(donnees, carte, entree, sortie, caler = true) {
     images: echantillons.length,
     largeur: carte.largeur,
     hauteur: carte.hauteur,
-    // De combien avancer dans ce fichier pour retrouver le point d'entrée.
-    decalage: Math.max(0, debutVise - debut / carte.echelle),
+    /* Plus rien à avancer : le premier instant du fichier est le bon. Le champ
+       reste, parce qu'un fichier dont les instants ne se ramèneraient pas à zéro
+       devrait encore être positionné, et que l'application n'a pas à le
+       supposer. */
+    decalage: 0,
     // Où, dans le rush, ce morceau commence réellement — l'app en a besoin
     // pour rester d'accord avec elle-même sur ce que montre ce plan.
     entree: debutVise,

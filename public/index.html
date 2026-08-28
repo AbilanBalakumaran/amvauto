@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 10:17";
+const VERSION_PAGE = "2026-08-28 10:50";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5628,8 +5628,22 @@ function dessinerMoniteur() {
        la première chose qu'on voit en appuyant sur lecture. Là, et là
        seulement, une imagette floue vaut mieux que du noir. Ensuite, l'image
        tenue prend le relais et la réserve redevient inutile. */
-    const rienDuTout = !derniereImage.toile.width;
-    source = lecture.demande && !rienDuTout
+    /* Pendant la lecture, jamais de couverture — même au tout premier instant.
+
+       La règle d'avant disait « une imagette floue vaut mieux que du noir » tant
+       qu'aucune image n'avait encore été retenue. C'était vrai quand le premier
+       plan mettait un tiers de seconde à se décoder. Ce n'est plus le cas — le
+       bloc est découpé avant que la lecture ne parte — et le prix, lui, n'a pas
+       changé : la couverture d'un rush fait trois cents points, étalés sur tout
+       le moniteur. « Une frame pixelisée avant que ça se lance », « on voit
+       l'image de couverture au lieu du bloc noir » : c'était cela, les deux
+       fois.
+
+       En lecture, on n'accepte donc qu'une imagette réellement proche de
+       l'instant demandé. À défaut, du noir — bref, honnête, et qui ne prétend
+       rien. À l'arrêt et pendant un déplacement, la couverture reste : elle sert
+       à se repérer, et personne n'y attend une image animée. */
+    source = lecture.demande
       ? imagetteLaPlusProche(bandeDe(plan), instant, 0.4)
       : imagetteLaPlusProche(bandeDe(plan), instant, 1.5)
         || bandeDe(plan).couverture?.image
