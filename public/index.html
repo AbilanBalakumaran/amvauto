@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 11:16";
+const VERSION_PAGE = "2026-08-28 11:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -8107,6 +8107,55 @@ function planSuivant() {
   }
 }
 
+/* L'horloge du montage part à la première image, pas à l'appui.
+
+   Elle partait au moment du clic, avec la musique, pendant que le lecteur, lui,
+   chargeait encore son fichier et se plaçait. Sur un téléphone cela prend de
+   deux à huit dixièmes de seconde — et le montage, lui, avançait. Quand la
+   première image arrivait enfin, la tête était déjà au milieu du premier plan,
+   parfois au-delà : « le premier bloc de vidéo passe trop rapidement, je pense
+   que c'est quand on lance la vidéo qu'il y a un délai et que pendant ce délai
+   la prévisualisation se lance en arrière-plan ». C'était exactement cela.
+
+   On attend donc la première image présentée. Le son part avec elle, pour que
+   les deux restent d'accord. Et jamais plus longtemps qu'une seconde deux : si
+   rien ne vient — codec refusé, fichier absent — on part quand même, comme
+   avant, plutôt que de rester sur un bouton qui ne fait rien. */
+const ATTENTE_PREMIERE_IMAGE = 1200;
+
+function partirALaPremiereImage(video) {
+  if (lecture.horloge) return;
+  let parti = false;
+  const partir = () => {
+    if (parti || !lecture.demande || lecture.horloge) return;
+    parti = true;
+    demarrerHorloge();
+    demarrerSon();
+    majTransport();
+  };
+  /* Les écouteurs ne sont pas posés « une seule fois ».
+
+     Un « timeupdate » peut arriver avant que le lecteur ait vraiment une image,
+     et un écouteur à usage unique se serait alors consommé pour rien : on
+     attendrait ensuite le délai de garde en entier. Ils restent donc en place
+     jusqu'à ce que le départ ait lieu, et c'est le départ qui les retire. */
+  const ecoutes = [];
+  const oublier = () => { for (const enlever of ecoutes) enlever(); ecoutes.length = 0; };
+  const siPret = () => { if (video && video.readyState >= 2 && video.videoWidth) { partir(); oublier(); } };
+  if (video) {
+    /* « requestVideoFrameCallback » est le seul signal qui dise vraiment
+       « une image est à l'écran ». Là où il manque, on se rabat sur les
+       événements du lecteur, qui arrivent un peu plus tôt. */
+    try { video.requestVideoFrameCallback?.(() => { partir(); oublier(); }); } catch { /* pas partout */ }
+    for (const nom of ["loadeddata", "playing", "timeupdate", "canplay"]) {
+      video.addEventListener(nom, siPret);
+      ecoutes.push(() => video.removeEventListener(nom, siPret));
+    }
+    siPret();
+  }
+  setTimeout(() => { partir(); oublier(); }, ATTENTE_PREMIERE_IMAGE);
+}
+
 function basculerLecture() {
   const projet = projetActif();
   const video = elementActif();
@@ -8185,23 +8234,22 @@ function basculerLecture() {
     lecture.position = 0;
     lecture.index = 0;
   }
-  demarrerHorloge();
-  /* La musique part dans le geste, pas dans un rappel.
+  /* Le son est déverrouillé dans le geste, mais il ne part pas encore.
 
-     Elle démarrait jusqu'ici depuis l'événement « lecture » d'un lecteur vidéo,
-     qui arrive après le clic — donc hors du geste. Un iPhone refuse d'ouvrir le
-     son d'un élément qui n'a pas été lancé par un geste, et le refus est avalé
-     en silence : la tête avançait, l'image défilait, et il n'y avait pas un son.
-     Tant que la vidéo était audible, le clic sur « lecture » déverrouillait la
-     sortie audio de la page au passage ; maintenant qu'elle est muette pour de
-     bon, la musique doit être lancée pour elle-même. */
-  demarrerSon();
+     Un iPhone refuse d'ouvrir la sortie audio depuis un rappel asynchrone, et le
+     refus est silencieux. On lance donc la bande son puis on l'arrête aussitôt,
+     ici, dans le geste : l'élément est déverrouillé, et le vrai départ pourra
+     avoir lieu plus tard sans être refusé. */
+  deverrouillerSon();
   // La piste devient une image le temps de la lecture : ses blocs coûtent cher
   // rien qu'à exister, et elle ne change pas pendant qu'on regarde.
   figerPiste();
   suivreTete();
 
   if (projet.plans[lecture.index]?.youtube) {
+    // Rien à attendre ici : c'est le lecteur du site distant qui affiche.
+    demarrerHorloge();
+    demarrerSon();
     lecture.jouant = true;
     planSuivant();
     suivreTete();
@@ -8229,6 +8277,8 @@ function basculerLecture() {
   deverrouille = true;
   const essai = video.play();
   if (essai) essai.catch(() => { if (lecture.demande) { lecture.jouant = false; majTransport(); } });
+  // L'horloge et la musique attendent que quelque chose s'affiche.
+  partirALaPremiereImage(video);
   selectionner(cible.index);
   suivreTete();
 }
