@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 02:13";
+const VERSION_PAGE = "2026-08-28 09:24";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3423,8 +3423,26 @@ oublierApercus().catch(() => {});
    vingtaine de mégaoctets, contre quarante-cinq à pleine cadence en 640. */
 const AVANCE_IMAGES = 0.34;
 const PLANS_EN_MEMOIRE = 2;
-const LARGE_MEMOIRE = 640;
-const IMAGES_PAR_PLAN = 10;
+/* Sept images par plan, et non dix.
+
+   La réserve est ce que le moniteur montre tant que le lecteur vidéo n'a rien
+   produit — à la coupe, et surtout au lancement, où il n'a encore rien du tout.
+   Elle était décodée à six cent quarante points, en dur, pendant que les
+   segments, eux, avaient été portés à la définition réelle de l'écran. Sur un
+   iPhone XR, « LARGE_SEGMENT » vaut neuf cent soixante et l'application en
+   affiche huit cent vingt-huit : six cent quarante était donc agrandi d'un
+   tiers, et c'est cette image-là qu'on voit au démarrage, avant que le lecteur
+   n'ait produit la sienne. « Le début au lancement se pixelise » décrit
+   exactement cela — et un tour précédent l'avait déjà écrit sans le corriger.
+
+   Elle suit donc l'écran, comme les segments. Ce que cela coûte a été mesuré,
+   et non calculé : dix-neuf mégaoctets et huit tenus en réserve, contre
+   dix-huit avant. Sept images au lieu de dix payent l'agrandissement de la
+   définition ; sur les trois cent quarante millisecondes que couvre la réserve,
+   sept images font une toutes les quarante-neuf millisecondes — vingt par
+   seconde, au-dessus de ce qu'il faut pour tenir jusqu'à ce que le lecteur
+   prenne le relais. */
+const IMAGES_PAR_PLAN = 7;
 
 const moteur = {
   pretes: new Map(), enCours: new Map(), refuses: new Set(), fil: null, possible: null, numero: 0,
@@ -3519,7 +3537,10 @@ async function amorcerImages(plan) {
   const fin = Math.min(sortieDe(plan), entree + AVANCE_IMAGES);
   fil.postMessage({
     id, blob: garde, entree, fin,
-    large: LARGE_MEMOIRE, combien: IMAGES_PAR_PLAN,
+    // La même définition que les segments : « decodeur.js » plafonne de toute
+    // façon à la taille du rush, si bien qu'un rush de 854 points rend son
+    // image d'origine, intacte, et pour moins cher que 896.
+    large: LARGE_SEGMENT, combien: IMAGES_PAR_PLAN,
     // La carte du fichier se garde d'une demande à l'autre : un montage revient
     // sans cesse au même rush, et la relire à chaque fois est du travail refait.
     cle: adresse,
@@ -3661,6 +3682,20 @@ function compterJouants() {
 }
 
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
+  /* La réserve, en chiffres : c'est elle que le moniteur montre au lancement et
+     à chaque coupe, et sa définition décide de la netteté de ces instants-là.
+     Elle était plus petite que l'écran sans que rien ne le dise. */
+  reserve: (() => {
+    let images = 0; let large = 0; let octets = 0;
+    for (const tenue of moteur.pretes.values()) {
+      for (const x of tenue.images) {
+        images += 1;
+        large = Math.max(large, x.image?.width || 0);
+        octets += (x.image?.width || 0) * (x.image?.height || 0) * 4;
+      }
+    }
+    return { images, large, mo: Math.round(octets / 104857.6) / 10 };
+  })(),
   // De quoi voir, du dehors, ce que la lecture croit être en train de faire.
   lecture: { index: lecture.index, position: Math.round((lecture.position || 0) * 100) / 100,
     demande: !!lecture.demande, scrub: !!lecture.scrub, reboucle: !!lecture.reboucle,
@@ -4456,6 +4491,39 @@ let tourPreparation = 0;
 const ATTENTE_FABRIQUE = 25000;
 const REDEMARRAGES_MAX = 5;
 const essaisSegment = new Map();
+
+/* Partir sur le premier bloc découpé, pas sur le premier fichier arrivé.
+
+   La lecture armée partait dès qu'un rush était sur l'appareil. À cet instant
+   précis, aucun bloc n'est encore découpé : le premier plan est donc servi par
+   la réserve, et c'est la réserve qu'on voit — plus molle que le rush, puisque
+   réduite. Attendre le bloc coûtait cher du temps où il fallait le réencoder ;
+   depuis qu'on le recopie, il est prêt en seize millisecondes.
+
+   On attend donc le bloc du plan sous la tête. Mais jamais longtemps : un rush
+   WebM doit encore être réencodé, une découpe peut être refusée, et il ne
+   faudrait pas qu'un appui sur lecture reste sans effet pour autant. Passé le
+   délai de garde, on part avec ce qu'on a — ce que faisait l'ancienne version,
+   tout de suite. */
+const ATTENTE_PREMIER_BLOC = 500;
+
+function demarrerQuandPret() {
+  if (!lecture.armee || lecture.demande) return;
+  const projet = projetActif();
+  if (!projet?.plans.length) return;
+  const dispo = projet.plans.some((autre) => autre.youtube || !mediaDe(autre) || estLocal(autre));
+  if (!dispo) return;                      // rien n'est encore là : on repassera
+  if (!lecture.limiteArmee) lecture.limiteArmee = performance.now() + ATTENTE_PREMIER_BLOC;
+  const premier = projet.plans[lecture.index] || projet.plans[0];
+  const pret = !premier || premier.youtube || surSegment(premier);
+  if (pret || performance.now() >= lecture.limiteArmee) {
+    lecture.armee = false;
+    lecture.limiteArmee = 0;
+    setTimeout(basculerLecture, 0);
+    return;
+  }
+  setTimeout(demarrerQuandPret, 50);
+}
 
 function redemarrerFabrique(pourquoi) {
   try { fabrique.fil?.terminate(); } catch { /* déjà mort */ }
@@ -8054,6 +8122,7 @@ function basculerLecture() {
        et le refus est silencieux : sans cette précaution la lecture repartirait
        muette. */
     lecture.armee = !lecture.armee;
+    lecture.limiteArmee = 0;
     if (lecture.armee) deverrouillerSon();
     const vide = $("ecran-vide");
     if (vide) {
@@ -8961,14 +9030,9 @@ async function lancerImport() {
        « bloqué à 39 sur 88 » qu'aucun bouton ne débloquait. */
     importsEnCours -= 1;
     setTimeout(lancerImport, 60);
-    /* Et si l'on avait appuyé sur lecture avant que rien ne soit arrivé, c'est
-       maintenant que ça part. Le son a été déverrouillé dans le geste ; il ne
-       reste qu'à démarrer. */
-    if (lecture.armee && !lecture.demande) {
-      const projet = projetActif();
-      const pret = projet?.plans.some((autre) => autre.youtube || !mediaDe(autre) || estLocal(autre));
-      if (pret) { lecture.armee = false; setTimeout(basculerLecture, 0); }
-    }
+    // Et si l'on avait appuyé sur lecture avant que rien ne soit arrivé, c'est
+    // ici que la question se repose.
+    if (lecture.armee && !lecture.demande) demarrerQuandPret();
   }
 }
 
