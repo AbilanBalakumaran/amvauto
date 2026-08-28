@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 09:24";
+const VERSION_PAGE = "2026-08-28 10:17";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3681,6 +3681,8 @@ function compterJouants() {
   return n;
 }
 
+// La ligne d'avancement telle qu'elle s'affiche, pour le banc d'essai.
+window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } catch { return ""; } };
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
   /* La réserve, en chiffres : c'est elle que le moniteur montre au lancement et
      à chaque coupe, et sa définition décide de la netteté de ces instants-là.
@@ -9178,6 +9180,33 @@ async function rapatrier(plan) {
    Le décompte porte sur les sources, pas sur les blocs : un rush découpé en
    trois morceaux ne se télécharge qu'une fois, et annoncer trois fichiers pour
    un seul transfert donnerait une attente fausse du simple au triple. */
+/* Un rush dont tous les blocs sont déjà découpés n'a plus à être rapatrié.
+
+   C'est la règle de l'économie de place, et elle était appliquée sans être
+   comptée. « planifierImport » refuse de mettre un tel rush en file, et
+   « libererRush » efface celui qui a servi ; au lancement suivant, le fichier
+   n'est plus sur l'appareil et ne sera jamais redemandé — ce qui est voulu.
+
+   Mais le décompte des fichiers, lui, ne connaissait que trois états : présent,
+   abandonné, ou en route. Un rush volontairement absent tombait donc dans le
+   troisième, et y restait : « Fichiers 86/87 » indéfiniment, sans nouvelle
+   tentative annoncée puisqu'il n'y en a pas, et sans échec puisqu'il n'y en a
+   pas non plus. « Le dernier fichier ne se charge pas » : il ne se charge pas
+   parce qu'il n'a pas à se charger.
+
+   Un rush n'est inutile que si TOUS les plans qui y puisent ont leur bloc : il
+   suffit qu'un seul n'en ait pas pour qu'il faille encore le fichier. */
+const rushInutile = (adresse, plans) => {
+  if (!reglages.economie || !adresse) return false;
+  let concerne = false;
+  for (const plan of plans) {
+    if (mediaDe(plan) !== adresse) continue;
+    concerne = true;
+    if (!surSegment(plan)) return false;
+  }
+  return concerne;
+};
+
 function resteAImporter(projet) {
   const sources = new Map();
   for (const plan of projet.plans) {
@@ -9189,6 +9218,9 @@ function resteAImporter(projet) {
   let octets = 0;
   for (const [adresse, plan] of sources) {
     if (locales.has(adresse)) { prets += 1; continue; }
+    // Rendu au téléphone, ou jamais rapatrié : dans les deux cas ce plan est
+    // prêt à être lu, et c'est cela que le compteur doit dire.
+    if (rushInutile(adresse, projet.plans)) { prets += 1; continue; }
     if (importsRates.has(adresse)) { perdus += 1; continue; }
     const part = enImport.get(adresse) || 0;
     octets += Math.max(0, (plan.mb || 4) * 1e6 * (1 - part));
