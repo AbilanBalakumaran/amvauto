@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 11:00";
+const VERSION_PAGE = "2026-08-28 11:16";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4965,6 +4965,10 @@ async function fabriquerSuivant() {
     large: cadre.large, haut: cadre.haut, cadence: IMAGES_PAR_SECONDE,
     debit: debitSegment(suite.plan, cadre),
     recule,
+    /* On ne recopie que si le montage entier tire d'une seule source : sinon
+       les blocs ne se recolleraient plus, et le fichier unique est ce qui fait
+       l'enchaînement. */
+    copie: sourceUnique(projetActif()),
   });
 }
 
@@ -4989,11 +4993,40 @@ async function fabriquerSuivant() {
    Un segment fabriqué avant ce changement ressortirait du cache tel quel, avec
    ses carrés — et l'on conclurait que rien n'a bougé. Changer ce numéro refait
    tout. */
-const VERSION_SEGMENT = 7;
-const BITS_PAR_PIXEL = 0.35;
+/* Un montage qui ne puise qu'à une seule source peut être recopié sans rien
+   perdre : tous ses blocs partagent forcément les mêmes paramètres, donc ils se
+   recolleront quand même. Dès qu'il y en a deux, on réencode dans un cadre
+   commun — le fichier recollé vaut mieux que l'image exacte. */
+function sourceUnique(projet) {
+  const vues = new Set();
+  for (const plan of projet?.plans || []) {
+    const adresse = !plan.youtube && mediaDe(plan);
+    if (adresse) vues.add(adresse);
+    if (vues.size > 1) return false;
+  }
+  return vues.size === 1;
+}
+
+/* Version 8 : retour au réencodage, et plus de débit.
+
+   Les blocs recopiés de la version 7 ne se recollaient pas entre rushs
+   différents ; ceux-ci le font. Et le débit monte, parce que la raison d'avoir
+   réduit la définition et le débit — « ça pixellise » — n'était pas l'encodage
+   mais le démultiplexeur, corrigé depuis. */
+const VERSION_SEGMENT = 8;
+/* Le débit, relevé de 0,35 à 0,55 bit par pixel.
+
+   Zéro trente-cinq avait été choisi quand les images données à l'encodeur
+   étaient elles-mêmes abîmées : on payait cher un débit qui ne pouvait rien
+   sauver. Les images sont justes maintenant, et le trait d'un dessin animé —
+   des aplats bordés de lignes nettes — est précisément ce qu'un encodeur rend
+   mal quand on le serre. Sur un cadre de 960 sur 540 à 24 images, cela fait
+   environ sept mégabits par seconde : un bloc d'une seconde pèse moins d'un
+   mégaoctet, et il remplace un rush de plusieurs. */
+const BITS_PAR_PIXEL = 0.55;
 // Et un plancher : en dessous, l'encodeur rend des blocs, quelle que soit la
 // source. Une source déjà pauvre ne justifie pas de la rendre pire.
-const BITS_PLANCHER = 0.18;
+const BITS_PLANCHER = 0.30;
 
 function debitSegment(plan, cadre) {
   const vise = BITS_PAR_PIXEL * cadre.large * cadre.haut * IMAGES_PAR_SECONDE;

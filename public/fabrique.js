@@ -242,7 +242,7 @@ async function assembler(morceaux) {
 }
 
 self.onmessage = async (evt) => {
-  const { id, blob, cle, entree, sortie, large, debit, haut, cadence: cadenceVoulue, recule } = evt.data || {};
+  const { id, blob, cle, entree, sortie, large, debit, haut, cadence: cadenceVoulue, recule, copie } = evt.data || {};
   const repondre = (quoi) => self.postMessage({ id, ...quoi });
 
   if (Array.isArray(evt.data?.morceaux)) {
@@ -283,7 +283,29 @@ self.onmessage = async (evt) => {
        Ce chemin passe avant le test de compatibilité du décodeur, et c'est
        voulu : il ne décode rien. Un appareil dont le décodeur logiciel refuse
        l'H.264 sait tout de même lire un MP4 dans sa balise vidéo. */
-    if (!recule && copiable(carte) && carte.largeur <= 1280) {
+    /* Recopier ne sert que si l'on peut ensuite tout recoller.
+
+       Un bloc recopié garde les paramètres de son rush. Deux rushs différents
+       n'en ont pas les mêmes, et le fichier recollé n'en porte qu'un : dès que
+       le montage puise dans plusieurs sources, le recollage devient impossible
+       et la lecture repasse bloc par bloc, avec une coupe à chaque plan. C'est
+       ce qui a été signalé — « ça n'améliore pas l'enchaînement, avant c'était
+       le cas ».
+
+       Or l'enchaînement, c'est le fichier unique : un seul lecteur qui ne
+       s'arrête jamais. Il vaut mieux que l'image exacte, parce que l'écart entre
+       une image recopiée et une image bien réencodée ne se voit pas, alors qu'un
+       trou à chaque coupe se voit toujours.
+
+       La copie reste donc pour le cas où elle ne coûte rien : un montage qui
+       ne tire que d'une seule source, où tous les blocs partagent forcément les
+       mêmes paramètres. Partout ailleurs, on réencode dans un cadre commun.
+
+       Et il faut le rappeler : la bouillie qui avait motivé la copie ne venait
+       pas de l'encodage. Elle venait du démultiplexeur, qui livrait les images
+       dans l'ordre d'affichage au lieu de l'ordre de décodage — corrigé depuis.
+       Le réencodage n'avait jamais été jugé sur des images justes. */
+    if (!recule && copie && copiable(carte) && carte.largeur <= 1280) {
       const copie = copierMorceau(donnees, carte, entree, sortie);
       if (!copie.echec) {
         return repondre({
