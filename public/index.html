@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-27 14:04";
+const VERSION_PAGE = "2026-08-28 01:17";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4295,6 +4295,20 @@ function filFabrique() {
            refait donc le bloc par ce chemin-là. */
         raisonsSegment.set(attente.cle, echec || "le fil n'a rien rendu");
 
+        /* Des images mal décodées : ce bloc-là se refait, il ne se jette pas.
+
+           C'est la seule panne dont on connaisse la cause probable — le point
+           où le décodeur s'est posé — et donc la seule qu'on sache corriger.
+           On recule d'une image-clé et on redemande le bloc ; il repassera par
+           le même contrôle. Au second échec, la cause est ailleurs et le plan
+           part au lecteur vidéo, qui lit le rush entier et n'a pas ce problème. */
+        if (evt.data.abime && !(attente.recule > 0)) {
+          repriseDecodage.set(attente.cle, 1);
+          raisonsSegment.set(attente.cle, `${echec} — on refait ce bloc en reculant d'une image-clé`);
+          fabriquerSuivant();
+          return;
+        }
+
         /* Un segment refusé par sa propre relecture n'est pas un accident de
            fichier : c'est que la chaîne d'encodage de cet appareil ne produit
            pas ce que l'on croit. Le refaire par un autre chemin donnerait le
@@ -4588,6 +4602,9 @@ function renoncerAcceleration(pourquoi) {
    mais c'est la différence entre un bloc préparé et un bloc refusé. */
 const parLecteur = new Set();
 const raisonsSegment = new Map();
+/* Les blocs dont les images étaient mal décodées, et de combien d'images-clés
+   on a déjà reculé pour les refaire. Une seule reprise par bloc. */
+const repriseDecodage = new Map();
 // Les fichiers déjà repris une fois : on ne tourne pas en rond.
 const refaits = new Set();
 
@@ -4835,7 +4852,14 @@ async function fabriquerSuivant() {
   if (fabrique.encours) return;
   const id = (fabrique.numero = (fabrique.numero || 0) + 1);
   const cadre = cadreVise;
-  fabrique.encours = { id, cle: suite.cle, depart: performance.now() };
+  /* Un bloc dont les images étaient mal décodées se refait en reculant.
+
+     La fabrique repart alors de l'image-clé d'avant, ce qui lui rend les
+     références qui manquaient au décodeur. Une seule reprise : si le second
+     essai est abîmé lui aussi, la panne n'est pas dans le point de départ et
+     ce plan se lira depuis son rush. */
+  const recule = repriseDecodage.get(suite.cle) || 0;
+  fabrique.encours = { id, cle: suite.cle, depart: performance.now(), recule };
   fil.postMessage({
     id, blob: garde, cle: mediaDe(suite.plan),
     entree: entreeDe(suite.plan), sortie: sortieDe(suite.plan),
@@ -4843,6 +4867,7 @@ async function fabriquerSuivant() {
     // les recoller en un seul fichier sans rien réencoder.
     large: cadre.large, haut: cadre.haut, cadence: IMAGES_PAR_SECONDE,
     debit: debitSegment(suite.plan, cadre),
+    recule,
   });
 }
 

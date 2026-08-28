@@ -38,6 +38,26 @@
    remonte donc à la première image-clé du fichier plutôt que de se poser
    n'importe où — le début du bloc manquera, mais ce qui s'affiche sera juste.
    Et si le fichier n'a aucune image-clé, on le dit au lieu de décoder du vide. */
+/* Et l'image-clé d'avant celle-là.
+
+   Quand un bloc sort abîmé, c'est le plus souvent que le point de départ ne
+   valait rien : une image-clé qui n'était pas une IDR, un groupe ouvert dont
+   les premières images renvoient encore à celles d'avant. Repartir de l'image-
+   clé précédente donne au décodeur les références qui lui manquaient. Cela
+   coûte un groupe d'images de plus à décoder — rien, à côté d'un plan refait au
+   lecteur vidéo. */
+export function reculerCle(carte, depuis, combien = 1) {
+  const ech = (carte && carte.echantillons) || [];
+  let i = Math.min(depuis, ech.length - 1);
+  for (let n = 0; n < combien && i > 0; n += 1) {
+    let precedente = -1;
+    for (let k = i - 1; k >= 0; k -= 1) if (ech[k].cle) { precedente = k; break; }
+    if (precedente < 0) break;
+    i = precedente;
+  }
+  return i;
+}
+
 export function departCle(carte, entree) {
   const ech = (carte && carte.echantillons) || [];
   const echelle = (carte && carte.echelle) || 1;

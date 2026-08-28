@@ -16,7 +16,8 @@
    Elle tourne sur son propre fil. Rien de ce qu'elle fait ne doit jamais tomber
    dans la boucle qui produit l'image suivante. */
 
-import { lireMp4, departCle } from "./demux.js";
+import { lireMp4, departCle, reculerCle } from "./demux.js";
+import { mesurer, apercuLuma, bandeFigee, abimee } from "./juge.js";
 import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis } from "./mp4.js";
 
 /* Les cartes et les octets des fichiers, gardés d'un segment à l'autre : un
@@ -232,7 +233,7 @@ async function assembler(morceaux) {
 }
 
 self.onmessage = async (evt) => {
-  const { id, blob, cle, entree, sortie, large, debit, haut, cadence: cadenceVoulue } = evt.data || {};
+  const { id, blob, cle, entree, sortie, large, debit, haut, cadence: cadenceVoulue, recule } = evt.data || {};
   const repondre = (quoi) => self.postMessage({ id, ...quoi });
 
   if (Array.isArray(evt.data?.morceaux)) {
@@ -298,8 +299,10 @@ self.onmessage = async (evt) => {
     const instant = (e) => e.instant / carte.echelle;
     // On repart de l'image-clé qui précède l'entrée : c'est la seule par où un
     // décodeur peut commencer. Ces images-là sont décodées puis jetées.
-    const depuis = departCle(carte, entree);
+    let depuis = departCle(carte, entree);
     if (depuis < 0) return repondre({ echec: "aucune image-clé dans le fichier" });
+    // Un bloc refait après un décodage raté repart d'une image-clé plus tôt.
+    if (recule > 0) depuis = reculerCle(carte, depuis, recule);
 
     /* Et tous à la même cadence. Un montage assemblé de morceaux à vingt-trois
        et vingt-cinq images par seconde n'a pas de cadence du tout : on rééchan-
@@ -370,6 +373,58 @@ self.onmessage = async (evt) => {
     const bouges = [];
     let precedent = null;
 
+    /* Et le contrôle du décodage lui-même, qui ne se fait pas au même endroit.
+
+       Ce qui précède juge le contenu — noir, blanc, figé — et se contente de
+       trente-deux points. Reconnaître une image que le décodeur a ratée demande
+       autre chose : la grille de seize pixels sur laquelle il travaille, et
+       celle-ci n'existe qu'à la taille d'origine du rush. Réduite, elle a
+       disparu ; c'est pourquoi le contrôle d'avant ne voyait jamais rien.
+
+       On regarde donc deux images source entières par bloc, pas une de plus :
+       chacune coûte une lecture de pixels et une passe de mesure, et le banc a
+       montré qu'à quatre le contrôle mangeait la lecture — vingt-trois images
+       par seconde tombées à deux. Deux suffisent : une panne de décodage ne
+       touche jamais une image isolée, elle dure jusqu'à l'image-clé suivante. */
+    /* Quand regarder : par paires, et à deux endroits du bloc.
+
+       Par paires, parce que la tranche perdue — une bande de l'image restée sur
+       l'image d'avant — ne se voit qu'en comparant deux images qui se suivent
+       vraiment. À deux endroits, parce qu'une panne née à l'entrée du bloc et
+       une panne née au milieu ne se ressemblent pas : la première vient du point
+       où l'on a posé le décodeur, la seconde d'une image abîmée dans le rush. */
+    const QUAND_JUGER = new Set([0, 1]);
+    let toile = null;
+    let ctxToile = null;
+    let avant = null;
+    const juges = [];
+    let jugees = 0;
+
+    let rang = -1;
+    const juger = (image) => {
+      rang += 1;
+      if (!QUAND_JUGER.has(rang)) return;
+      const li = image.codedWidth || image.displayWidth;
+      const hi = image.codedHeight || image.displayHeight;
+      if (!li || !hi || li < 48 || hi < 48) return;
+      try {
+        if (!toile || toile.width !== li || toile.height !== hi) {
+          toile = new OffscreenCanvas(li, hi);
+          ctxToile = toile.getContext("2d", { alpha: false, willReadFrequently: true });
+        }
+        ctxToile.drawImage(image, 0, 0, li, hi);
+        const donnees = ctxToile.getImageData(0, 0, li, hi).data;
+        const m = mesurer(donnees, li, hi);
+        const apercu = apercuLuma(donnees, li, hi);
+        // Deux images qui se suivent : la comparaison n'a de sens que là.
+        const mouvement = QUAND_JUGER.has(rang - 1) && avant ? bandeFigee(avant, apercu) : null;
+        avant = apercu;
+        jugees += 1;
+        const mal = abimee(m, mouvement);
+        if (mal) juges.push(mal);
+      } catch { /* une image qu'on ne sait pas lire ne prouve rien */ }
+    };
+
     const inspecter = (image) => {
       if (!ctxControle) return;
       try {
@@ -427,6 +482,9 @@ self.onmessage = async (evt) => {
         const t = image.timestamp / 1e6;
         if (t < entree - 0.001) { image.close(); return; }
         if (t > sortie + 0.001) { image.close(); return; }
+        // Juger l'image du rush, entière et à sa taille : c'est la seule où la
+        // grille du décodeur existe encore.
+        juger(image);
         // Les cases jusqu'à cette image reviennent à la précédente.
         if (derniere) { produire(derniere.image, t - entree - 1e-6); derniere.image.close(); }
         derniere = { image, t };
@@ -524,6 +582,15 @@ self.onmessage = async (evt) => {
       noir: immobile && lumas.length >= 3 && sombres >= lumas.length * 0.8,
       blanc: immobile && lumas.length >= 3 && clairs >= lumas.length * 0.8,
       fige: immobile,
+      /* Le décodage lui-même a-t-il raté ?
+
+         Il faut deux images d'accord, pas une. Le détecteur n'accuse aucune
+         image propre sur les deux cent soixante-dix du corpus, mais il travaille
+         ici sur des rushs qu'aucun corpus ne contient : une seule image
+         douteuse ne doit pas faire refaire un bloc qui allait bien. Une panne
+         de décodage, elle, ne touche jamais une image isolée — elle dure
+         jusqu'à l'image-clé suivante, donc bien au-delà de deux prises. */
+      abime: juges.length >= 2 ? { quoi: juges[0].quoi, valeur: juges[0].valeur, combien: juges.length } : null,
     };
 
     const mp4 = ecrireMp4([piste]);
@@ -545,6 +612,16 @@ self.onmessage = async (evt) => {
        Une image décodée par segment. C'est le prix d'une garantie. */
     const relu = await relireSegment(mp4, premierGris);
     if (relu) return repondre({ echec: relu });
+
+    /* Un bloc dont les images source sont abîmées ne se livre pas.
+
+       Ce n'est pas l'encodage qui est en cause — la relecture ci-dessus l'a
+       vérifié — c'est ce que le décodeur a rendu du rush. Le refaire depuis
+       l'image-clé d'avant lui donne les références qui lui manquaient ; c'est
+       l'application qui le redemande, une fois, avec « recule ». */
+    if (verdict.abime) {
+      return repondre({ echec: `images mal décodées (${verdict.abime.quoi})`, abime: verdict.abime, verdict });
+    }
 
     repondre({ mp4, images: piste.echantillons.length, largeur: l, hauteur: h,
       duree: piste.echantillons.length / cadence, octets: mp4.size, verdict });
