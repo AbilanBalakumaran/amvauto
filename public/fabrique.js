@@ -18,6 +18,7 @@
 
 import { lireMp4, departCle, reculerCle } from "./demux.js";
 import { mesurer, apercuLuma, bandeFigee, abimee } from "./juge.js";
+import { copiable, copierMorceau } from "./copier.js";
 import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis } from "./mp4.js";
 
 /* Les cartes et les octets des fichiers, gardés d'un segment à l'autre : un
@@ -198,7 +199,7 @@ async function assembler(morceaux) {
         echantillons: [] };
     } else if (carte.codec !== piste.codec || carte.largeur !== piste.largeur
                || carte.hauteur !== piste.hauteur) {
-      return { echec: "segments de formats différents" };
+      return { echec: "segments de définitions différentes" };
     } else if (!memeDescription(piste.description, carte.description)) {
       /* La description du flux — les paramètres SPS et PPS — décrit comment
          décoder les images. Le fichier recollé n'en porte qu'une, celle du
@@ -212,7 +213,12 @@ async function assembler(morceaux) {
          un autre niveau, ce qu'il fait selon le débit. On compare donc les
          octets, et l'on refuse plutôt que de fabriquer un fichier qui ne se
          décode pas. */
-      return { echec: "segments aux paramètres de flux différents" };
+      /* Et depuis que les segments sont recopiés de leurs rushs sans être
+         réencodés, c'est devenu le cas ordinaire : deux rushs différents n'ont
+         aucune raison de partager leurs paramètres. Ce n'est plus une panne,
+         c'est la contrepartie de l'image exacte — et le nom du refus le dit,
+         pour que l'application n'en fasse pas une alerte. */
+      return { echec: "segments de définitions différentes" };
     }
     dernier = { carte, donnees };
     for (const e of carte.echantillons) {
@@ -220,6 +226,9 @@ async function assembler(morceaux) {
         octets: donnees.subarray(e.ou, e.ou + e.taille),
         taille: e.taille,
         duree: Math.max(1, Math.round((e.duree / carte.echelle) * ECHELLE)),
+        // L'écart entre décodage et affichage suit l'image : sans lui, un flux
+        // recopié s'afficherait dans l'ordre où il a été décodé.
+        composition: Math.round(((e.instant - e.decodage) / carte.echelle) * ECHELLE),
         cle: e.cle,
       });
     }
@@ -255,6 +264,42 @@ self.onmessage = async (evt) => {
     const carte = carteDe(cle, donnees);
     if (carte.echec) return repondre({ echec: carte.echec });
 
+    /* D'abord : ne rien encoder du tout.
+
+       Le rush est déjà du H.264, à la bonne définition, encodé une fois pour
+       toutes. Le morceau demandé est une suite d'images déjà compressées, à la
+       file dans le fichier : le préparer, c'est recopier ces octets-là dans un
+       petit conteneur. Le résultat est identique à la source au bit près — il
+       ne peut pas être « mieux encodé », il est le même. Ni décodage, ni
+       encodage, ni débit à régler : les carrés visibles à l'aperçu venaient tous
+       de là, et il n'y a plus rien qui puisse les produire.
+
+       Deux réserves. Un rush qu'on ne sait pas emballer — du WebM, et c'est le
+       cas des génériques d'AnimeThemes — repart par l'ancien chemin. Et un rush
+       nettement plus grand que l'écran garde un intérêt à être réduit : le
+       recopier obligerait le téléphone à décoder du 1080p pour l'afficher en
+       400 points.
+
+       Ce chemin passe avant le test de compatibilité du décodeur, et c'est
+       voulu : il ne décode rien. Un appareil dont le décodeur logiciel refuse
+       l'H.264 sait tout de même lire un MP4 dans sa balise vidéo. */
+    if (!recule && copiable(carte) && carte.largeur <= 1280) {
+      const copie = copierMorceau(donnees, carte, entree, sortie);
+      if (!copie.echec) {
+        return repondre({
+          mp4: copie.mp4,
+          images: copie.images,
+          largeur: copie.largeur,
+          hauteur: copie.hauteur,
+          duree: copie.couverte,
+          octets: copie.octets,
+          copie: true,
+          decalage: copie.decalage,
+          entreeReelle: copie.entree,
+          verdict: null,
+        });
+      }
+    }
     const config = { codec: carte.codec, codedWidth: carte.largeur, codedHeight: carte.hauteur };
     if (carte.description) config.description = carte.description;
     if (carte.accepte === undefined) {
@@ -262,6 +307,7 @@ self.onmessage = async (evt) => {
       catch { carte.accepte = false; }
     }
     if (!carte.accepte) return repondre({ echec: `codec refusé (${carte.codec})` });
+
 
     /* La taille du segment : celle du moniteur, pas celle du rush.
 

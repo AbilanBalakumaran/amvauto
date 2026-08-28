@@ -19,6 +19,9 @@ function nombreVersOctets(valeur, taille) {
 const u8 = (...v) => new Uint8Array(v);
 const u16 = (v) => nombreVersOctets(v, 2);
 const u32 = (v) => nombreVersOctets(v, 4);
+// Un entier signé sur quatre octets : les décalages d'affichage peuvent être
+// négatifs, et le complément à deux se lit comme un entier non signé.
+const i32 = (v) => nombreVersOctets(v < 0 ? v + 0x100000000 : v, 4);
 const u64 = (v) => nombreVersOctets(v, 8);
 
 /* Une boîte : sa taille, son nom, son contenu. Tout le format n'est que cela,
@@ -223,6 +226,32 @@ function tableDurees(echantillons) {
   return boiteMp4Pleine("stts", 0, 0, ...corps);
 }
 
+/* La table des décalages d'affichage.
+
+   Elle manquait, et son absence interdisait tout simplement de recopier un
+   flux H.264 tel quel. Un fichier courant réordonne ses images : une image B
+   s'affiche entre deux images décodées avant elle, et l'écart entre l'instant
+   de décodage et l'instant d'affichage est écrit là, dans « ctts ». Sans cette
+   table, les images recopiées s'affichent dans l'ordre où elles ont été
+   décodées — c'est-à-dire dans le désordre.
+
+   Elle ne coûte rien quand elle ne sert pas : un flux sans image B n'a que des
+   décalages nuls, et l'on n'écrit alors pas la boîte. Version 1, la seule qui
+   accepte des décalages négatifs. */
+function tableComposition(echantillons) {
+  if (!echantillons.some((e) => e.composition)) return new Uint8Array(0);
+  const lignes = [];
+  for (const e of echantillons) {
+    const ecart = e.composition || 0;
+    const derniere = lignes[lignes.length - 1];
+    if (derniere && derniere.ecart === ecart) derniere.compte += 1;
+    else lignes.push({ compte: 1, ecart });
+  }
+  const corps = [u32(lignes.length)];
+  for (const l of lignes) corps.push(u32(l.compte), i32(l.ecart));
+  return boiteMp4Pleine("ctts", 1, 0, ...corps);
+}
+
 function tableTailles(echantillons) {
   const corps = [u32(0), u32(echantillons.length)];
   for (const e of echantillons) corps.push(u32(e.taille));
@@ -273,6 +302,7 @@ function pisteMoov(piste, dureeFilm, echelleFilm) {
   const stbl = boiteMp4("stbl",
     boiteMp4Pleine("stsd", 0, 0, u32(1), video ? entreeVideo(piste) : entreeAudio(piste)),
     tableDurees(piste.echantillons),
+    tableComposition(piste.echantillons),
     tableCles(piste.echantillons),
     tableBlocs(),
     tableTailles(piste.echantillons),

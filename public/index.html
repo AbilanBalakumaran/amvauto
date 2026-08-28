@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 01:17";
+const VERSION_PAGE = "2026-08-28 01:59";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3676,6 +3676,10 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
     verifies: fabrique.verifies || 0, ecartLecteur: fabrique.ecartLecteur,
     faits: fabrique.faits, rates: fabrique.rates,
+    // Combien de blocs sont des copies exactes du rush, et combien réencodés.
+    copies: [...segments.values()].filter((x) => x.copie).length,
+    reencodes: [...segments.values()].filter((x) => !x.copie).length,
+    avances: [...segments.values()].filter((x) => x.copie).map((x) => Math.round((x.decalage || 0) * 100) / 100).slice(0, 6),
     octets: fabrique.octets, msParBloc: fabrique.faits ? Math.round(fabrique.duree / fabrique.faits) : 0 },
   imports: { file: fileImport.length, enVol: arretsImport.size, places: importsEnCours,
     attentes: [...attentesImport.values()].map((x) => Math.round((x.quand - Date.now()) / 1000)),
@@ -3874,10 +3878,16 @@ const surColle = (plan) => {
   const index = projetActif()?.plans.indexOf(plan);
   return index >= 0 && index < (colle.jusqua || 0);
 };
-const entreeLue = (plan) => (surColle(plan) ? departMontage(plan)
-  : surSegment(plan) ? 0 : entreeDe(plan));
-const sortieLue = (plan) => (surColle(plan) ? departMontage(plan) + duree(plan)
-  : surSegment(plan) ? duree(plan) : sortieDe(plan));
+const entreeLue = (plan) => {
+  if (surColle(plan)) return departMontage(plan);
+  const seg = segmentDe(plan);
+  return seg ? (seg.decalage || 0) : entreeDe(plan);
+};
+const sortieLue = (plan) => {
+  if (surColle(plan)) return departMontage(plan) + duree(plan);
+  const seg = segmentDe(plan);
+  return seg ? (seg.decalage || 0) + duree(plan) : sortieDe(plan);
+};
 
 /* Dessiner la barre du cache : un trait par bloc, vert quand il est fabriqué.
 
@@ -4236,7 +4246,7 @@ function filFabrique() {
     fabrique.fil = new Worker("fabrique.js", { type: "module" });
     fabrique.possible = true;
     fabrique.fil.onmessage = (evt) => {
-      const { id, mp4, echec, octets, duree: d, verdict, assemble, images } = evt.data || {};
+      const { id, mp4, echec, octets, duree: d, verdict, assemble, images, copie, decalage } = evt.data || {};
       if (assemble) {
         colle.encours = false;
         const vise = colle.attente;
@@ -4331,7 +4341,14 @@ function filFabrique() {
         fabrique.faits += 1;
         fabrique.octets += octets || mp4.size;
         fabrique.duree += performance.now() - attente.depart;
-        segments.set(attente.cle, { url: URL.createObjectURL(mp4), taille: mp4.size, duree: d, verdict });
+        segments.set(attente.cle, {
+          url: URL.createObjectURL(mp4), taille: mp4.size, duree: d, verdict,
+          /* Un segment recopié tel quel commence sur l'image-clé qui précède le
+             point d'entrée : quelques centièmes de seconde d'avance, dont le
+             lecteur doit tenir compte. Un segment réencodé, lui, commence à
+             zéro. */
+          copie: !!copie, decalage: copie ? (decalage || 0) : 0,
+        });
         changerMontage();
         ecrireBase(attente.cle, mp4).catch(() => {});
         rangerSegments();
@@ -4513,7 +4530,14 @@ async function libererRush(cleFaite) {
 const VERIFS_LECTEUR = 2;
 
 async function verifierAuLecteur(cle, verdict) {
-  if (!verdict?.apercu || fabrique.possible === false) return;
+  if (fabrique.possible === false) return;
+  /* Un segment recopié n'a pas d'aperçu à comparer — rien n'a été décodé pour
+     le fabriquer, c'est tout son intérêt. Il reste pourtant une chose à
+     vérifier, et elle est capitale : que le lecteur de cet appareil sache
+     l'ouvrir. Un navigateur sans H.264 recevrait sinon des blocs parfaits et
+     illisibles, et l'aperçu resterait noir sans que rien ne le dise. */
+  const parCopie = segments.get(cle)?.copie === true;
+  if (!verdict?.apercu && !parCopie) return;
   if ((fabrique.verifies || 0) >= VERIFS_LECTEUR) return;
   if (lecture.demande) return;               // jamais pendant qu'on regarde
   const segment = segments.get(cle);
@@ -4543,6 +4567,9 @@ async function verifierAuLecteur(cle, verdict) {
       setTimeout(() => dire(video.readyState >= 2), 8000);
     });
     if (!pret || !video.videoWidth) { ranger(); return renoncerAcceleration("le lecteur ne sait pas ouvrir les segments"); }
+    // Le bloc recopié s'ouvre : c'est tout ce qu'on avait à savoir. Il n'y a
+    // rien à comparer, ses octets sont ceux du rush.
+    if (!verdict?.apercu) { ranger(); return; }
 
     const toile = document.createElement("canvas");
     toile.width = 32;
@@ -4781,6 +4808,10 @@ async function fabriquerParLecteur(suite, cadre) {
 
 async function fabriquerSuivant() {
   if (fabrique.encours || fabrique.lecteurEnCours || rendu.encours || rendu.parImage) return;
+  /* On a renoncé à l'accélération : il n'y a plus rien à fabriquer.
+     Sans cette porte, la fabrique continuait de produire des blocs que plus
+     personne ne lirait — du processeur pris à l'écran, pour rien. */
+  if (fabrique.possible === false) return;
   /* Elle travaille aussi pendant qu'on regarde, et c'est ce qui la rend utile.
 
      Elle se taisait pendant la lecture, par prudence. Conséquence : un montage
@@ -4888,7 +4919,11 @@ async function fabriquerSuivant() {
 
    Plafonné par la source : dépenser plus de bits que le fichier d'origine n'en
    contient ne fabrique rien, cela remplit le disque. */
-const VERSION_SEGMENT = 6;
+/* Version 7 : les segments ne sont plus réencodés, ils sont recopiés du rush.
+   Un segment fabriqué avant ce changement ressortirait du cache tel quel, avec
+   ses carrés — et l'on conclurait que rien n'a bougé. Changer ce numéro refait
+   tout. */
+const VERSION_SEGMENT = 7;
 const BITS_PAR_PIXEL = 0.35;
 // Et un plancher : en dessous, l'encodeur rend des blocs, quelle que soit la
 // source. Une source déjà pauvre ne justifie pas de la rendre pire.
@@ -9467,7 +9502,12 @@ function pourquoiCoince() {
       + (dits.length ? `\u00a0: ${dits.join(", ")}` : "")
       + ". Ces plans-là se liront directement, sans segment.");
   }
-  if (colle.echec) {
+  if (colle.echec === "segments de définitions différentes") {
+    bouts.push(" Les blocs ne sont pas recollés en un seul fichier, et c'est normal\u00a0:"
+      + " ils sont désormais recopiés de leurs rushs sans être réencodés, donc chacun garde"
+      + " la définition et les paramètres du sien. On y gagne l'image exacte de la source ;"
+      + " on y perd le fichier unique. La lecture se fait bloc par bloc.");
+  } else if (colle.echec) {
     bouts.push(` Le fichier recollé a été refusé\u00a0: ${colle.echec}.`
       + " La lecture reste bloc par bloc — c'est moins fluide, mais c'est juste.");
   }
