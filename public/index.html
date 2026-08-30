@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-28 11:31";
+const VERSION_PAGE = "2026-08-30 05:12";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3103,8 +3103,7 @@ function rendreHistoire() {
     rouvrir.textContent = "Rouvrir";
     rouvrir.addEventListener("click", () => {
       archiver(projet, false);
-      state.actif = projet.id;
-      sauver();
+      changerProjet(projet.id);
       document.querySelector('[data-tab="projet"]').click();
     });
 
@@ -3154,8 +3153,7 @@ function barreProjets() {
 
     carte.append(vignette, texte);
     carte.addEventListener("click", () => {
-      state.actif = projet.id;
-      sauver();
+      changerProjet(projet.id);
       rendreProjet();
       rendre();
     });
@@ -3697,6 +3695,8 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
   fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0 },
   bascules: { ...bascules }, vues: { ...vues }, arrets: { ...arrets },
   defauts: { ...defauts, enCours: Boolean(fabrique.encours) },
+  // Quel projet est à l'écran, et à quel projet appartient le fichier recollé.
+  projet: { id: state.actif, colle: colle.projet },
   colle: { pret: Boolean(colle.url), utilise: Boolean(montageColle()), octets: colle.octets,
     jusqua: colle.jusqua, entier: montageEntier(),
     images: colle.images, encours: colle.encours, echec: colle.echec,
@@ -3975,7 +3975,55 @@ function majBarreCache() {
    lecteur tient déjà le bon fichier au bon endroit — et ne fait rien. La coupe
    cesse d'exister au lieu d'être mieux traitée. */
 const colle = { url: "", cle: "", duree: 0, octets: 0, images: 0, encours: false, echec: "",
-  version: -1, jusqua: 0, suivant: null };
+  version: -1, jusqua: 0, suivant: null, projet: "" };
+
+/* Le fichier recollé appartient au projet qui l'a produit.
+
+   Rien ne le disait. « montageColle » ne vérifiait que le numéro de version du
+   montage, lequel ne bouge pas quand on change de projet — c'est un autre
+   montage, pas une modification. Le fichier de l'ancien projet restait donc
+   valide, et « surColle » y envoyait les premiers plans du nouveau : on lisait
+   les images d'un montage dans le fichier d'un autre. « On dirait que l'outil a
+   du mal à passer d'un projet à l'autre » : c'était cela.
+
+   On l'oublie donc en changeant de projet, et on rend sa mémoire au passage. */
+function oublierColle() {
+  for (const quoi of [colle, colle.suivant]) {
+    if (quoi?.url) { try { URL.revokeObjectURL(quoi.url); } catch { /* déjà libéré */ } }
+  }
+  colle.url = "";
+  colle.cle = "";
+  colle.duree = 0;
+  colle.octets = 0;
+  colle.images = 0;
+  colle.jusqua = 0;
+  colle.version = -1;
+  colle.echec = "";
+  colle.attente = null;
+  colle.encours = false;
+  colle.suivant = null;
+  colle.projet = "";
+}
+
+/* Changer de projet, et rendre à celui qu'on quitte ce qui lui appartenait.
+
+   Trois choses traînaient : le fichier recollé, la file de téléchargements —
+   qui continuait de rapatrier les rushs de l'ancien montage pendant que le
+   nouveau attendait son tour — et la position de lecture. */
+function changerProjet(id) {
+  if (!id || state.actif === id) return;
+  state.actif = id;
+  oublierColle();
+  // La file se rend au nouveau projet ; ce qui est déjà en vol va à son terme,
+  // et ce qui n'a pas commencé sera replanifié par l'affichage.
+  fileImport.length = 0;
+  lecture.position = 0;
+  lecture.index = 0;
+  lecture.horloge = null;
+  lecture.armee = false;
+  lecture.limiteArmee = 0;
+  sauver();
+}
 
 /* Adopter le fichier recollé qui attendait.
 
@@ -3999,6 +4047,7 @@ function adopterColle() {
   colle.octets = neuf.octets;
   colle.images = neuf.images;
   colle.version = neuf.version;
+  colle.projet = neuf.projet || state.actif;
   colle.echec = "";
   colle.duree = offsets(projetActif()?.plans || [])[neuf.jusqua]
     ?? total(projetActif() || { plans: [] });
@@ -4067,7 +4116,8 @@ const montageEntier = () => Boolean(montageColle())
   && colle.jusqua >= (projetActif()?.plans.length || 0);
 
 const montageColle = () =>
-  (colle.url && colle.version === versionMontage && !window.__sansColle ? colle : null);
+  (colle.url && colle.version === versionMontage && colle.projet === state.actif
+    && !window.__sansColle ? colle : null);
 
 /* Où commence ce plan dans le fichier recollé : sa place dans le montage. */
 function departMontage(plan) {
@@ -4301,13 +4351,14 @@ function filFabrique() {
           if (colle.suivant?.url) URL.revokeObjectURL(colle.suivant.url);
           colle.suivant = { url: URL.createObjectURL(mp4), cle: vise.signature,
             jusqua: vise.jusqua, octets: octets || mp4.size, images: images || 0,
-            version: vise.version };
+            version: vise.version, projet: state.actif };
           majBarreCache();
           return;
         }
         if (colle.url) URL.revokeObjectURL(colle.url);
         colle.url = URL.createObjectURL(mp4);
         colle.cle = vise.signature;
+        colle.projet = state.actif;
         colle.jusqua = vise.jusqua;
         colle.octets = octets || mp4.size;
         colle.images = images || 0;
@@ -7595,6 +7646,19 @@ function deverrouillerSon() {
   } catch { /* rien à déverrouiller */ }
 }
 
+/* Replacer la musique sur la tête, sans la relancer.
+
+   C'est le seul geste permis hors du geste : déplacer un son qui joue déjà. On
+   s'en sert au démarrage, quand la première image arrive après la musique, pour
+   que les deux repartent d'accord. */
+function recalerSon() {
+  if (!lecture.audio) return;
+  const longueur = lecture.audio.duration || 0;
+  const ou = positionCourante();
+  try { lecture.audio.currentTime = longueur > 0 ? ou % longueur : 0; } catch { /* pas prêt */ }
+  if (lecture.audio.paused) lecture.audio.play().catch(() => {});
+}
+
 function demarrerSon() {
   if (!lecture.audio) return;
   /* Le morceau tourne en rond, comme le montage.
@@ -8130,7 +8194,10 @@ function partirALaPremiereImage(video) {
     if (parti || !lecture.demande || lecture.horloge) return;
     parti = true;
     demarrerHorloge();
-    demarrerSon();
+    /* La musique joue depuis l'appui : on ne la relance pas — ce serait refusé
+       hors du geste — on la replace à l'endroit où le montage commence
+       vraiment. */
+    recalerSon();
     majTransport();
   };
   /* Les écouteurs ne sont pas posés « une seule fois ».
@@ -8234,13 +8301,19 @@ function basculerLecture() {
     lecture.position = 0;
     lecture.index = 0;
   }
-  /* Le son est déverrouillé dans le geste, mais il ne part pas encore.
+  /* La musique part ici, dans le geste, et nulle part ailleurs.
 
-     Un iPhone refuse d'ouvrir la sortie audio depuis un rappel asynchrone, et le
-     refus est silencieux. On lance donc la bande son puis on l'arrête aussitôt,
-     ici, dans le geste : l'élément est déverrouillé, et le vrai départ pourra
-     avoir lieu plus tard sans être refusé. */
-  deverrouillerSon();
+     Elle avait été retardée jusqu'à la première image, pour qu'elle tombe avec
+     elle. C'était une erreur : un iPhone n'ouvre la sortie audio que sur un
+     geste, et le lancer-puis-arrêter censé « déverrouiller » l'élément ne suffit
+     pas toujours — « des fois quand j'appuie sur play la musique ne se lance
+     pas ». Un son qui ne part pas est pire qu'un son en avance.
+
+     Elle part donc tout de suite. L'accord avec l'image se fait à l'autre bout :
+     quand la première image arrive, on replace la musique à la position du
+     montage au lieu de la relancer. Déplacer un son n'a jamais eu besoin de
+     geste. */
+  demarrerSon();
   // La piste devient une image le temps de la lecture : ses blocs coûtent cher
   // rien qu'à exister, et elle ne change pas pendant qu'on regarde.
   figerPiste();
