@@ -73,6 +73,56 @@ const MATRICE = new Uint8Array([
 const CODE_DEPART = (o, i) => (o[i] === 0 && o[i + 1] === 0
   && (o[i + 2] === 1 || (o[i + 2] === 0 && o[i + 3] === 1)));
 
+/* Le niveau H.264 doit suivre la taille de l'image, pas être écrit en dur.
+
+   La liste des codecs demandés commençait par « avc1.42E01E » : profil Baseline,
+   niveau 3.0. Ce niveau plafonne à 1620 macroblocs par image — 720×576. Un cadre
+   de 960×540 en compte 2040 : hors spécification. Les navigateurs acceptent
+   pourtant la configuration sans broncher, puis l'encodeur tombe en marche à la
+   première image, et l'appel suivant lève « InvalidStateError ». C'est ce qui
+   s'affichait à l'écran, sans que le mot dise quoi que ce soit de la cause.
+
+   Le niveau est donc calculé : le plus petit qui tienne l'image, la cadence et
+   le débit demandés. Les valeurs viennent du tableau A-1 de la norme.
+
+   Rendu : la liste des codecs à essayer, du plus compatible au plus complet, et
+   VP8 en dernier pour les navigateurs sans H.264. */
+const NIVEAUX_H264 = [
+  // code, macroblocs par image, macroblocs par seconde, débit max en kb/s
+  [0x1e, 1620, 40500, 10000],     // 3.0
+  [0x1f, 3600, 108000, 14000],    // 3.1
+  [0x20, 5120, 216000, 20000],    // 3.2
+  [0x28, 8192, 245760, 20000],    // 4.0
+  [0x29, 8192, 245760, 50000],    // 4.1
+  [0x2a, 8704, 522240, 50000],    // 4.2
+  [0x32, 22080, 589824, 135000],  // 5.0
+  [0x33, 36864, 983040, 240000],  // 5.1
+];
+
+export function niveauH264(large, haut, cadence = 30, debit = 0) {
+  const parImage = Math.ceil((large || 16) / 16) * Math.ceil((haut || 16) / 16);
+  const parSeconde = parImage * Math.max(1, cadence || 30);
+  const kb = Math.max(0, debit || 0) / 1000;
+  for (const [code, maxImage, maxSeconde, maxKb] of NIVEAUX_H264) {
+    if (parImage <= maxImage && parSeconde <= maxSeconde && kb <= maxKb) return code;
+  }
+  return 0x33;
+}
+
+export function codecsH264(large, haut, cadence = 30, debit = 0) {
+  const n = niveauH264(large, haut, cadence, debit).toString(16).padStart(2, "0").toUpperCase();
+  return [`avc1.42E0${n}`, `avc1.4D40${n}`, `avc1.6400${n}`, "vp8"];
+}
+
+/* Et le débit ne dépasse pas ce que le niveau retenu autorise : le demander
+   plus haut, c'est demander à l'encodeur quelque chose qu'il n'a pas le droit
+   de faire. */
+export function debitPermis(large, haut, cadence, debit) {
+  const code = niveauH264(large, haut, cadence, debit);
+  const ligne = NIVEAUX_H264.find(([c]) => c === code) || NIVEAUX_H264[NIVEAUX_H264.length - 1];
+  return Math.max(120000, Math.min(debit || 0, ligne[3] * 1000));
+}
+
 export function estAnnexB(octets) {
   return octets.length > 4 && CODE_DEPART(octets, 0);
 }

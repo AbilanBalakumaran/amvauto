@@ -1650,7 +1650,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-30 05:12";
+const VERSION_PAGE = "2026-08-31 15:07";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4857,7 +4857,9 @@ async function fabriquerParLecteur(suite, cadre) {
     toile.height = h;
     const ctx = toile.getContext("2d", { alpha: false });
 
-    const codec = await choisirCodec(CODECS_VIDEO, { width: l, height: h, framerate: cadence });
+    const debitVise = debitPermis(l, h, cadence, debitSegment(plan, cadre));
+    const codec = await choisirCodec(CODECS_VIDEO(l, h, cadence, debitVise),
+      { width: l, height: h, framerate: cadence, bitrate: debitVise });
     if (!codec) { raisonsSegment.set(cle, "aucun codec d'encodage"); ranger(); return false; }
 
     const echelle = 90000;
@@ -4869,7 +4871,7 @@ async function fabriquerParLecteur(suite, cadre) {
       error: (erreur) => { cassé = String(erreur?.message || erreur); },
     });
     encodeur.configure({ codec, width: l, height: h, framerate: cadence,
-      bitrate: debitSegment(plan, cadre),
+      bitrate: debitVise,
       ...(codec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
 
     const fin = Math.max(0, (video.duration || sortie) - 0.03);
@@ -4917,7 +4919,7 @@ async function fabriquerParLecteur(suite, cadre) {
     majBarreCache();
     return true;
   } catch (erreur) {
-    raisonsSegment.set(cle, `préparation par le lecteur : ${erreur?.name || erreur}`);
+    raisonsSegment.set(cle, `préparation par le lecteur : ${nommerEncodage(erreur)}`);
     ranger();
     return false;
   }
@@ -5058,13 +5060,19 @@ function sourceUnique(projet) {
   return vues.size === 1;
 }
 
-/* Version 8 : retour au réencodage, et plus de débit.
+/* Version 9 : le niveau H.264 suit enfin la taille de l'image.
+
+   Les blocs de la version 8 ont été encodés en annonçant un niveau 3.0 — 720×576
+   au maximum — pour un cadre de 960×540. Ceux qui sont sortis sont hors
+   spécification : on les refait.
+
+   Version 8 : retour au réencodage, et plus de débit.
 
    Les blocs recopiés de la version 7 ne se recollaient pas entre rushs
    différents ; ceux-ci le font. Et le débit monte, parce que la raison d'avoir
    réduit la définition et le débit — « ça pixellise » — n'était pas l'encodage
    mais le démultiplexeur, corrigé depuis. */
-const VERSION_SEGMENT = 8;
+const VERSION_SEGMENT = 9;
 /* Le débit, relevé de 0,35 à 0,55 bit par pixel.
 
    Zéro trente-cinq avait été choisi quand les images données à l'encodeur
@@ -11475,7 +11483,7 @@ async function reprendreRendu(projet) {
 
 /* Le multiplexeur MP4 vit maintenant dans « mp4.js » : la fabrique de segments
    en a besoin depuis son fil, et un multiplexeur recopié se corrige mal. */
-import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis } from "./mp4.js";
+import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis, codecsH264, debitPermis } from "./mp4.js";
 
 
 /* --- rendre image par image, hors du temps réel -----------------------
@@ -11536,8 +11544,27 @@ function rangerImage(piste, bloc, meta, duree) {
   piste.echantillons.push({ octets, taille: octets.length, duree, cle: bloc.type === "key" });
 }
 
-const CODECS_VIDEO = ["avc1.42E01E", "avc1.4D401E", "avc1.640028", "vp8"];
+/* Les codecs vidéo ne sont plus une liste figée : le niveau H.264 se calcule à
+   partir de la taille de l'image et du débit. Écrit en dur, il valait 3.0 —
+   plafonné à 720×576 — pour un cadre qui en fait 960×540. Voir « niveauH264 »
+   dans mp4.js. */
+const CODECS_VIDEO = (large, haut, cadence, debit) => codecsH264(large, haut, cadence, debit);
 const CODECS_SON = ["mp4a.40.2", "opus"];
+
+/* Un nom d'exception n'est pas une explication.
+
+   « InvalidStateError » s'affichait tel quel à l'écran. Il veut dire une seule
+   chose ici : on a demandé quelque chose à un encodeur qui venait de tomber —
+   et s'il est tombé, c'est presque toujours qu'on lui a demandé une image plus
+   grande que ce que le niveau H.264 annoncé permet. Le dire ainsi vaut mieux
+   que de donner à lire un nom de classe. */
+function nommerEncodage(erreur) {
+  const nom = String(erreur?.name || erreur || "");
+  if (/InvalidState/i.test(nom)) return "l'encodeur s'est arrêté en cours de route";
+  if (/NotSupported/i.test(nom)) return "cet appareil refuse ce format d'encodage";
+  if (/Quota|Storage/i.test(nom)) return "plus de place pour ranger le bloc";
+  return String(erreur?.message || nom || "encodage refusé");
+}
 
 const rendreDisponible = () =>
   typeof VideoEncoder !== "undefined" && typeof VideoFrame !== "undefined";
@@ -11689,8 +11716,12 @@ async function rendreImages(projet, reglages) {
   const { largeur, hauteur, debit, avecSon, dire, arrete } = reglages;
   const cadence = reglages.cadence || IMAGES_PAR_SECONDE;
   libererVivier();
-  const codec = await choisirCodec(CODECS_VIDEO,
-    { width: largeur, height: hauteur, bitrate: debit,
+  /* L'export aussi : un rendu en 1280×720 dépasse largement le niveau 3.0, et
+     un encodeur qui tombe en marche au milieu d'un export de deux minutes est
+     le pire moment pour s'en apercevoir. */
+  const debitRendu = debitPermis(largeur, hauteur, cadence, debit);
+  const codec = await choisirCodec(CODECS_VIDEO(largeur, hauteur, cadence, debitRendu),
+    { width: largeur, height: hauteur, bitrate: debitRendu,
       framerate: cadence, avc: { format: "avc" } });
   if (!codec) return { echec: "codec" };
 
@@ -11767,7 +11798,7 @@ async function rendreImages(projet, reglages) {
     error: (erreur) => { rendu.erreur = String(erreur); },
   });
   encodeur.configure({ codec, width: largeur, height: hauteur, framerate: cadence,
-    bitrate: debit,
+    bitrate: debitRendu,
     ...(codec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
 
   const depart = performance.now();

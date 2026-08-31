@@ -19,7 +19,7 @@
 import { lireMp4, departCle, reculerCle } from "./demux.js";
 import { mesurer, apercuLuma, bandeFigee, abimee } from "./juge.js";
 import { copiable, copierMorceau } from "./copier.js";
-import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis } from "./mp4.js";
+import { ecrireMp4, estAnnexB, unitesAnnexB, versAvcc, avcCDepuis, codecsH264, debitPermis } from "./mp4.js";
 
 /* Les cartes et les octets des fichiers, gardés d'un segment à l'autre : un
    montage tire cent blocs de vingt-quatre rushs, et relire le même fichier à
@@ -49,10 +49,13 @@ function carteDe(cle, donnees) {
 /* Les codecs essayés, dans l'ordre — la même liste que l'export, et pour la
    même raison : H.264 est celui que lisent les téléphones, VP8 est le secours
    des navigateurs sans codec propriétaire. */
-const CODECS = ["avc1.42E01E", "avc1.4D401E", "avc1.640028", "vp8"];
+/* La liste n'est plus écrite en dur : le niveau H.264 dépend de la taille de
+   l'image et du débit. « avc1.42E01E » — niveau 3.0 — plafonne à 720×576 ; un
+   cadre de 960×540 le dépasse, l'encodeur tombe en marche, et tout le montage
+   se refuse. Voir « niveauH264 » dans mp4.js. */
 
 async function choisirCodec(config) {
-  for (const codec of CODECS) {
+  for (const codec of codecsH264(config.width, config.height, config.framerate, config.bitrate)) {
     try {
       const essai = await VideoEncoder.isConfigSupported({ ...config, codec });
       if (essai.supported) return codec;
@@ -377,7 +380,11 @@ self.onmessage = async (evt) => {
        tillonne sur celle du montage, en répétant ou en sautant une image quand
        il le faut. C'est ce que fait n'importe quel banc de montage. */
     const cadence = Math.max(1, Math.round(cadenceVoulue || 24));
-    const sortieCodec = await choisirCodec({ width: l, height: h, framerate: cadence });
+    /* Le débit demandé ne peut pas dépasser ce que le niveau H.264 autorise, et
+       le niveau est choisi à partir de l'image ET du débit : les deux se
+       décident ensemble. */
+    const debitVise = debitPermis(l, h, cadence, debit || 900000);
+    const sortieCodec = await choisirCodec({ width: l, height: h, framerate: cadence, bitrate: debitVise });
     if (!sortieCodec) return repondre({ echec: "aucun codec d'encodage" });
 
     const echelle = 90000;
@@ -420,7 +427,7 @@ self.onmessage = async (evt) => {
       error: () => { /* relevé plus bas par l'absence d'échantillons */ },
     });
     encodeur.configure({ codec: sortieCodec, width: l, height: h, framerate: cadence,
-      bitrate: debit || 900000,
+      bitrate: debitVise,
       ...(sortieCodec.startsWith("avc1") ? { avc: { format: "avc" } } : {}) });
 
     /* Regarder ce qu'on décode, puisqu'on le décode.
