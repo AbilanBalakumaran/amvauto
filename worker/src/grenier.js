@@ -22,6 +22,46 @@ import { codeValide } from "./coffre.js";
 
 const POIDS_MAX = 100_000_000;   // la limite d'un corps de requête chez Cloudflare
 const GARDES = 3;                // rendus conservés par code
+
+/* Les limites qu'il ne faut pas dépasser, et qui ne sont écrites nulle part
+   ailleurs que dans la grille tarifaire de Cloudflare.
+
+   Dix gigaoctets de stockage R2 par mois sont gratuits ; au-delà, c'est payant.
+   C'est la seule limite qui coûte de l'argent si on la franchit, donc la seule
+   qui mérite d'être montrée en clair dans l'application plutôt que devinée. */
+const PLAFOND_R2 = 10 * 1024 ** 3;
+// R2 ne rend pas la taille d'un compartiment : il faut la compter. Mille objets
+// par page, et l'on s'arrête à dix pages — au-delà, le total est annoncé comme
+// partiel plutôt que faux.
+const PAGES_MAX = 10;
+
+async function place(env, code) {
+  let octets = 0;
+  let objets = 0;
+  let curseur;
+  let complet = true;
+  for (let page = 0; page < PAGES_MAX; page += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const liste = await env.GRENIER.list({ limit: 1000, cursor: curseur });
+    for (const o of liste.objects) { octets += o.size || 0; objets += 1; }
+    if (!liste.truncated) { curseur = undefined; break; }
+    curseur = liste.cursor;
+    if (page === PAGES_MAX - 1) complet = false;
+  }
+  const miens = await inventaire(env, code);
+  return {
+    plafond: PLAFOND_R2,
+    utilise: octets,
+    objets,
+    complet,
+    gardesParCode: GARDES,
+    poidsMax: POIDS_MAX,
+    mien: {
+      octets: miens.reduce((somme, x) => somme + (x.taille || 0), 0),
+      rendus: miens.length,
+    },
+  };
+}
 const TYPES = new Set(["video/mp4", "video/webm", "application/zip"]);
 
 const texte = (message, statut) =>
@@ -64,6 +104,9 @@ export async function grenier(request, url, env) {
   if (!codeValide(code)) return texte("code invalide", 403);
 
   if (request.method === "GET") {
+    // « place » : ce que le compartiment occupe, et ce qu'il a le droit
+    // d'occuper. C'est ce que l'application montre dans ses réglages.
+    if (url.searchParams.has("place")) return donnees(await place(env, code));
     const nom = url.searchParams.get("nom");
     if (!nom) return donnees({ rendus: await inventaire(env, code) });
     const objet = await env.GRENIER.get(`${code}/${nomPropre(nom)}`);

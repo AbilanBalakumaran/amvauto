@@ -956,6 +956,42 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 
 /* La carte et son bouton de fermeture forment un seul bloc dans la barre : le
    bouton se pose dans le coin, sans réduire la surface cliquable de la carte. */
+/* --- réglages en panneaux ------------------------------------------- */
+.reglages-nav { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 var(--e3); scrollbar-width: none; }
+.reglages-nav::-webkit-scrollbar { display: none; }
+.reglages-onglet {
+  flex: none; padding: 8px 14px; border-radius: 999px;
+  border: 1px solid var(--trait); background: #111; color: var(--doux);
+  font: 600 0.84rem/1 system-ui, sans-serif; cursor: pointer;
+}
+.reglages-onglet.actif { border-color: var(--vert); color: var(--texte); background: rgba(53,194,77,.16); }
+.place-liste { display: flex; flex-direction: column; gap: 8px; margin: var(--e3) 0; }
+.place-ligne {
+  display: flex; align-items: center; gap: var(--e2);
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--trait); background: var(--surface);
+}
+.place-ligne .place-texte { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.place-ligne .place-nom { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-ligne .place-sous { color: var(--doux); font-size: 0.78rem; }
+.place-jauge { height: 6px; border-radius: 999px; background: rgba(255,255,255,.10); overflow: hidden; margin-top: 6px; }
+.place-jauge span { display: block; height: 100%; background: var(--vert); }
+.place-jauge.pleine span { background: #c1121f; }
+.form-compte { display: flex; flex-direction: column; gap: var(--e3); margin: var(--e3) 0; }
+.champ-compte { display: flex; flex-direction: column; gap: 4px; }
+.champ-compte span { color: var(--doux); font-size: 0.82rem; }
+.champ-compte input {
+  padding: 11px 12px; border-radius: 10px;
+  border: 1px solid var(--trait); background: #111; color: var(--texte);
+  font: 500 0.95rem/1.2 system-ui, sans-serif;
+}
+.champ-compte input:focus-visible { outline: none; border-color: var(--vert); }
+.place-ligne.secours { border-color: var(--vert); background: rgba(53,194,77,.10); }
+.place-ligne.secours .place-nom { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
+.place-nuage, .place-limites { margin: var(--e3) 0; }
+.place-limites dl { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin: 0; }
+.place-limites dt { color: var(--doux); font-size: 0.82rem; }
+.place-limites dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 0.82rem; }
 .projet-case { position: relative; flex: none; display: flex; }
 .projet-fermer {
   position: absolute; top: 3px; right: 3px;
@@ -1560,6 +1596,74 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
     <section id="vue-histoire" hidden></section>
 
     <section id="vue-apropos" class="apropos" hidden>
+      <!-- Les réglages ne sont plus un seul rouleau où les règles du jeu et les
+           interrupteurs se mélangent. Quatre panneaux, un seul visible à la
+           fois, et une barre pour passer de l'un à l'autre. -->
+      <nav class="reglages-nav" id="reglages-nav" aria-label="Sections des réglages">
+        <button type="button" class="reglages-onglet actif" data-panneau="general">Général</button>
+        <button type="button" class="reglages-onglet" data-panneau="stockage">Stockage</button>
+        <button type="button" class="reglages-onglet" data-panneau="compte">Compte</button>
+        <button type="button" class="reglages-onglet" data-panneau="aide">Aide</button>
+      </nav>
+
+      <div class="reglages-panneau" data-panneau="general">
+        <h2>Général</h2>
+        <div class="reglage">
+          <div class="reglage-texte">
+            <strong>Langue</strong>
+            <span id="etat-langue">Français</span>
+          </div>
+          <span class="reglage-boutons">
+            <select id="choix-langue" class="interrupteur" aria-label="Langue de l'application"></select>
+          </span>
+        </div>
+        <p class="note-reglage" id="note-langue"></p>
+
+        <div class="reglage">
+          <div class="reglage-texte">
+            <strong>Notifications</strong>
+            <span id="etat-notifs">état inconnu</span>
+          </div>
+          <span class="reglage-boutons">
+            <button type="button" id="btn-test-notif" class="interrupteur discret" hidden>Tester</button>
+            <button type="button" id="btn-notifs" class="interrupteur" role="switch" aria-checked="false">Notifications</button>
+          </span>
+        </div>
+        <p class="note-reglage" id="note-notifs"></p>
+        <p class="note-reglage" id="etat-chargement"></p>
+
+        <h2>Version</h2>
+        <p id="version-page">version inconnue</p>
+      </div>
+
+      <div class="reglages-panneau" data-panneau="stockage" hidden>
+        <h2>Sur cet appareil</h2>
+        <div class="reglage">
+          <div class="reglage-texte">
+            <strong>Économiser l'espace</strong>
+            <span id="etat-economie">état inconnu</span>
+          </div>
+          <span class="reglage-boutons">
+            <button type="button" id="btn-liberer" class="interrupteur discret">Tout libérer</button>
+            <button type="button" id="btn-economie" class="interrupteur" role="switch" aria-checked="true">Économie</button>
+          </span>
+        </div>
+        <p class="note-reglage" id="note-economie"></p>
+        <div id="place-projets" class="place-liste"></div>
+
+        <h2>En ligne</h2>
+        <p class="note-reglage">Les rendus déposés en ligne comptent dans le stockage gratuit de
+        Cloudflare. Au-delà, il devient payant : c'est la seule limite qui coûte quelque chose.</p>
+        <div id="place-nuage" class="place-nuage"></div>
+        <div id="place-limites" class="place-limites"></div>
+      </div>
+
+      <div class="reglages-panneau" data-panneau="compte" hidden>
+        <h2>Compte</h2>
+        <div id="zone-compte"></div>
+      </div>
+
+      <div class="reglages-panneau" data-panneau="aide" hidden>
       <h2>Ce que tu regardes</h2>
       <p>Trois sources alimentent l'explorateur :</p>
       <ul>
@@ -1618,38 +1722,10 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
       alors en plein écran, sans barre d'adresse, et vérifie sa version à chaque ouverture — la mise
       à jour se fait toute seule.</p>
 
-      <h2>Options</h2>
-      <div class="reglage">
-        <div class="reglage-texte">
-          <strong>Notifications</strong>
-          <span id="etat-notifs">état inconnu</span>
-        </div>
-        <span class="reglage-boutons">
-          <button type="button" id="btn-test-notif" class="interrupteur discret" hidden>Tester</button>
-          <button type="button" id="btn-notifs" class="interrupteur" role="switch" aria-checked="false">Notifications</button>
-        </span>
-      </div>
-      <div class="reglage">
-        <div class="reglage-texte">
-          <strong>Économiser l'espace</strong>
-          <span id="etat-economie">état inconnu</span>
-        </div>
-        <span class="reglage-boutons">
-          <button type="button" id="btn-liberer" class="interrupteur discret">Libérer</button>
-          <button type="button" id="btn-economie" class="interrupteur" role="switch" aria-checked="true">Économie</button>
-        </span>
-      </div>
-      <p class="note-reglage" id="note-economie"></p>
-
-      <p class="note-reglage" id="etat-chargement"></p>
-      <p class="note-reglage" id="note-notifs"></p>
-
-      <h2>Version</h2>
-      <p id="version-page">version inconnue</p>
-
       <h2>Contenu</h2>
       <p>Rien n'est réhébergé ici : les extraits sont servis par Sakugabooru et restent la propriété
       de leurs studios.</p>
+      </div>
     </section>
   </main>
 </div>
@@ -1665,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-31 15:10";
+const VERSION_PAGE = "2026-08-31 15:21";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -9623,11 +9699,349 @@ function majPreparation(projet) {
 
    Et il se souvient : un réglage qui se remet tout seul à chaque ouverture
    n'est pas un réglage, c'est une suggestion. */
+/* --- le compte -------------------------------------------------------
+
+   Un identifiant et un mot de passe, comme partout ailleurs. Derrière, rien de
+   neuf : le compte garde le code de vingt caractères qui servait déjà à
+   retrouver ses montages. Se connecter, c'est récupérer ce code ; l'application
+   fait ensuite ce qu'elle a toujours fait.
+
+   Le mot de passe oublié se retrouve avec le code de secours donné à
+   l'inscription — il n'y a pas de courriel, donc aucun service tiers à brancher,
+   et l'application reste entière entre Cloudflare et le navigateur. */
+const CLE_JETON = "amvauto-jeton";
+const session = { jeton: null, identifiant: "", etat: "" };
+
+function lireJeton() {
+  try { session.jeton = localStorage.getItem(CLE_JETON) || null; } catch { session.jeton = null; }
+}
+
+function ecrireJeton(jeton) {
+  session.jeton = jeton || null;
+  try {
+    if (jeton) localStorage.setItem(CLE_JETON, jeton);
+    else localStorage.removeItem(CLE_JETON);
+  } catch { /* navigation privée */ }
+}
+
+async function appelCompte(action, corps) {
+  const reponse = await fetch(`/api/compte?action=${encodeURIComponent(action)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(corps),
+  });
+  const charge = await reponse.json().catch(() => ({}));
+  if (!reponse.ok) throw new Error(charge.erreur || "L'espace en ligne n'a pas répondu.");
+  return charge;
+}
+
+/* Reprendre la session au lancement, sans bloquer quoi que ce soit : une
+   session expirée n'empêche pas de monter, elle empêche seulement de
+   retrouver ses montages ailleurs. */
+async function reprendreSession() {
+  lireJeton();
+  if (!session.jeton) return;
+  try {
+    const reponse = await fetch(`/api/compte?jeton=${encodeURIComponent(session.jeton)}`, { cache: "no-store" });
+    if (!reponse.ok) { ecrireJeton(null); return; }
+    const charge = await reponse.json();
+    session.identifiant = charge.identifiant || "";
+    if (charge.code) adopterCode(charge.code);
+  } catch { /* hors ligne : on réessaiera à l'ouverture des réglages */ }
+  majCompte();
+}
+
+/* Le code du compte devient celui de l'appareil : c'est par lui que les
+   montages voyagent. */
+function adopterCode(code) {
+  if (!code || coffre.code === code) return;
+  coffre.code = code;
+  coffre.actif = true;
+  noterCoffre();
+  chargerCoffre();
+}
+
+function champCompte(nom, type, marque, aide) {
+  const bloc = document.createElement("label");
+  bloc.className = "champ-compte";
+  const titre = document.createElement("span");
+  titre.textContent = nom;
+  const entree = document.createElement("input");
+  entree.type = type;
+  entree.name = marque;
+  entree.autocomplete = aide || "off";
+  entree.spellcheck = false;
+  bloc.append(titre, entree);
+  return { bloc, entree };
+}
+
+function majCompte() {
+  const zone = $("zone-compte");
+  if (!zone) return;
+  zone.replaceChildren();
+
+  if (session.jeton && session.identifiant) {
+    const ligne = document.createElement("div");
+    ligne.className = "place-ligne";
+    const texte = document.createElement("span");
+    texte.className = "place-texte";
+    const nom = document.createElement("span");
+    nom.className = "place-nom";
+    nom.textContent = session.identifiant;
+    const sous = document.createElement("span");
+    sous.className = "place-sous";
+    sous.textContent = coffre.code
+      ? `Connecté \u00b7 espace ${lisible(coffre.code)}`
+      : "Connecté";
+    texte.append(nom, sous);
+    const sortir = document.createElement("button");
+    sortir.type = "button";
+    sortir.className = "archive-action";
+    sortir.textContent = "Se déconnecter";
+    sortir.addEventListener("click", async () => {
+      const jeton = session.jeton;
+      ecrireJeton(null);
+      session.identifiant = "";
+      majCompte();
+      await appelCompte("sortir", { jeton }).catch(() => {});
+    });
+    ligne.append(texte, sortir);
+    zone.append(ligne);
+    zone.append(note("Tes montages suivent ce compte : connecte-toi sur un autre appareil et ils y seront. "
+      + "Les vidéos, elles, se retéléchargent depuis leur source — elles ne voyagent pas."));
+    return;
+  }
+
+  const formulaire = document.createElement("form");
+  formulaire.className = "form-compte";
+  formulaire.autocomplete = "on";
+
+  const bascules = document.createElement("div");
+  bascules.className = "reglages-nav";
+  const modes = [["entrer", "Se connecter"], ["creer", "Créer un compte"], ["oublie", "Mot de passe oublié"]];
+  let mode = "entrer";
+
+  const corps = document.createElement("div");
+  const message = document.createElement("p");
+  message.className = "note-reglage";
+
+  const identifiant = champCompte("Identifiant", "text", "identifiant", "username");
+  const motdepasse = champCompte("Mot de passe", "password", "motdepasse", "current-password");
+  const secours = champCompte("Code de secours", "text", "secours", "off");
+
+  const valider = document.createElement("button");
+  valider.type = "submit";
+  valider.className = "interrupteur on";
+
+  const peindre = () => {
+    for (const bouton of bascules.querySelectorAll(".reglages-onglet")) {
+      bouton.classList.toggle("actif", bouton.dataset.mode === mode);
+    }
+    corps.replaceChildren(identifiant.bloc,
+      ...(mode === "oublie" ? [secours.bloc] : []),
+      motdepasse.bloc);
+    motdepasse.bloc.querySelector("span").textContent = mode === "entrer" ? "Mot de passe" : "Nouveau mot de passe";
+    motdepasse.entree.autocomplete = mode === "entrer" ? "current-password" : "new-password";
+    valider.textContent = mode === "creer" ? "Créer mon compte"
+      : mode === "oublie" ? "Changer le mot de passe" : "Se connecter";
+    message.textContent = mode === "creer"
+      ? "Huit caractères au minimum. Un code de secours te sera donné : garde-le, c'est lui qui rouvrira ton compte si tu oublies ton mot de passe."
+      : mode === "oublie"
+        ? "Recopie le code de secours reçu à l'inscription. Il ne sert qu'une fois : un nouveau te sera donné."
+        : "";
+  };
+
+  for (const [cle, nom] of modes) {
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.className = "reglages-onglet";
+    bouton.dataset.mode = cle;
+    bouton.textContent = nom;
+    bouton.addEventListener("click", () => { mode = cle; peindre(); });
+    bascules.append(bouton);
+  }
+
+  formulaire.addEventListener("submit", async (evt) => {
+    evt.preventDefault();
+    valider.disabled = true;
+    const avant = valider.textContent;
+    valider.textContent = "\u2026";
+    try {
+      const charge = await appelCompte(mode, {
+        identifiant: identifiant.entree.value.trim(),
+        motdepasse: motdepasse.entree.value,
+        ...(mode === "oublie" ? { secours: secours.entree.value } : {}),
+      });
+      ecrireJeton(charge.jeton);
+      session.identifiant = charge.identifiant || "";
+      if (charge.code) adopterCode(charge.code);
+      majCompte();
+      if (charge.secours) montrerSecours(charge.secours);
+    } catch (erreur) {
+      message.textContent = String(erreur?.message || erreur);
+      valider.disabled = false;
+      valider.textContent = avant;
+    }
+  });
+
+  formulaire.append(bascules, corps, valider, message);
+  zone.append(formulaire);
+  zone.append(note("Un compte sert à retrouver ses montages sur un autre appareil, et à donner "
+    + "l'application à quelqu'un sans lui donner tes projets. Sans compte, tout reste ici et rien n'est perdu."));
+  peindre();
+}
+
+/* Le code de secours n'est montré qu'une fois : il n'est pas rangé en clair, et
+   personne — pas même le serveur — ne peut le redonner. */
+function montrerSecours(secours) {
+  const zone = $("zone-compte");
+  if (!zone) return;
+  const bloc = document.createElement("div");
+  bloc.className = "place-ligne secours";
+  const texte = document.createElement("span");
+  texte.className = "place-texte";
+  const nom = document.createElement("span");
+  nom.className = "place-nom";
+  nom.textContent = secours;
+  const sous = document.createElement("span");
+  sous.className = "place-sous";
+  sous.textContent = "Ton code de secours — note-le maintenant. Il ne sera plus jamais affiché.";
+  texte.append(nom, sous);
+  const copier = document.createElement("button");
+  copier.type = "button";
+  copier.className = "archive-action";
+  copier.textContent = "Copier";
+  copier.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(secours); copier.textContent = "Copié"; }
+    catch { copier.textContent = "à recopier à la main"; }
+  });
+  bloc.append(texte, copier);
+  zone.prepend(bloc);
+}
+
+/* --- les langues ------------------------------------------------------
+
+   Six langues, pas trente : celles qui couvrent le plus de monde sans que
+   personne n'ait à relire des traductions qu'il ne parle pas.
+
+   Ce qui est traduit ici, c'est la coque — les onglets, les boutons de tête, le
+   panneau des réglages. Les longues explications de l'aide restent en français
+   pour l'instant, et il vaut mieux le dire que de servir une traduction
+   automatique dont personne ne répond. */
+const LANGUES = [
+  ["fr", "Français"], ["en", "English"], ["es", "Español"],
+  ["pt", "Português"], ["de", "Deutsch"], ["ja", "日本語"],
+];
+
+const TRADUCTIONS = {
+  fr: {},
+  en: {
+    "onglet.explorer": "Browse", "onglet.projet": "Project", "onglet.histoire": "History", "onglet.infos": "Info",
+    "tete.export": "Export", "tete.reglages": "Settings",
+    "regl.general": "General", "regl.stockage": "Storage", "regl.compte": "Account", "regl.aide": "Help",
+    "regl.langue": "Language", "regl.notifs": "Notifications", "regl.tester": "Test",
+    "regl.economie": "Save space", "regl.liberer": "Free all", "regl.version": "Version",
+    "regl.appareil": "On this device", "regl.enligne": "Online",
+    "regl.notenuage": "Renders kept online count towards Cloudflare's free storage. Past that limit it costs money — the only limit here that does.",
+    "regl.notelangue": "The tabs, the buttons and this panel follow your choice. The help texts are still in French for now.",
+  },
+  es: {
+    "onglet.explorer": "Explorar", "onglet.projet": "Proyecto", "onglet.histoire": "Historial", "onglet.infos": "Info",
+    "tete.export": "Exportar", "tete.reglages": "Ajustes",
+    "regl.general": "General", "regl.stockage": "Almacenamiento", "regl.compte": "Cuenta", "regl.aide": "Ayuda",
+    "regl.langue": "Idioma", "regl.notifs": "Notificaciones", "regl.tester": "Probar",
+    "regl.economie": "Ahorrar espacio", "regl.liberer": "Liberar todo", "regl.version": "Versión",
+    "regl.appareil": "En este dispositivo", "regl.enligne": "En línea",
+    "regl.notenuage": "Los renders guardados en línea cuentan para el almacenamiento gratuito de Cloudflare. Más allá, se paga.",
+    "regl.notelangue": "Las pestañas, los botones y este panel siguen tu elección. Los textos de ayuda siguen en francés por ahora.",
+  },
+  pt: {
+    "onglet.explorer": "Explorar", "onglet.projet": "Projeto", "onglet.histoire": "Histórico", "onglet.infos": "Info",
+    "tete.export": "Exportar", "tete.reglages": "Ajustes",
+    "regl.general": "Geral", "regl.stockage": "Armazenamento", "regl.compte": "Conta", "regl.aide": "Ajuda",
+    "regl.langue": "Idioma", "regl.notifs": "Notificações", "regl.tester": "Testar",
+    "regl.economie": "Poupar espaço", "regl.liberer": "Libertar tudo", "regl.version": "Versão",
+    "regl.appareil": "Neste aparelho", "regl.enligne": "Online",
+    "regl.notenuage": "Os renders guardados online contam para o armazenamento gratuito da Cloudflare. Acima disso, é pago.",
+    "regl.notelangue": "Os separadores, os botões e este painel seguem a tua escolha. Os textos de ajuda continuam em francês por agora.",
+  },
+  de: {
+    "onglet.explorer": "Suchen", "onglet.projet": "Projekt", "onglet.histoire": "Verlauf", "onglet.infos": "Info",
+    "tete.export": "Export", "tete.reglages": "Einstellungen",
+    "regl.general": "Allgemein", "regl.stockage": "Speicher", "regl.compte": "Konto", "regl.aide": "Hilfe",
+    "regl.langue": "Sprache", "regl.notifs": "Mitteilungen", "regl.tester": "Testen",
+    "regl.economie": "Platz sparen", "regl.liberer": "Alles freigeben", "regl.version": "Version",
+    "regl.appareil": "Auf diesem Gerät", "regl.enligne": "Online",
+    "regl.notenuage": "Online abgelegte Renders zählen zum kostenlosen Cloudflare-Speicher. Darüber hinaus kostet er.",
+    "regl.notelangue": "Reiter, Schaltflächen und dieses Panel folgen deiner Wahl. Die Hilfetexte sind vorerst auf Französisch.",
+  },
+  ja: {
+    "onglet.explorer": "さがす", "onglet.projet": "プロジェクト", "onglet.histoire": "履歴", "onglet.infos": "情報",
+    "tete.export": "書き出し", "tete.reglages": "設定",
+    "regl.general": "一般", "regl.stockage": "ストレージ", "regl.compte": "アカウント", "regl.aide": "ヘルプ",
+    "regl.langue": "言語", "regl.notifs": "通知", "regl.tester": "テスト",
+    "regl.economie": "容量を節約", "regl.liberer": "すべて解放", "regl.version": "バージョン",
+    "regl.appareil": "この端末", "regl.enligne": "オンライン",
+    "regl.notenuage": "オンラインに置いた書き出しは Cloudflare の無料枠に含まれます。超えると有料になります。",
+    "regl.notelangue": "タブ・ボタン・この画面が選んだ言語になります。ヘルプ本文は今のところフランス語のままです。",
+  },
+};
+
+function langueParDefaut() {
+  const dit = String(navigator.language || "fr").slice(0, 2).toLowerCase();
+  return LANGUES.some(([code]) => code === dit) ? dit : "fr";
+}
+
+// Le français est la langue d'origine : ses libellés sont ceux du document.
+const t = (cle, defaut) => TRADUCTIONS[reglages.langue]?.[cle] || defaut;
+
+function majLangues() {
+  const choix = $("choix-langue");
+  if (!choix) return;
+  choix.replaceChildren(...LANGUES.map(([code, nom]) => {
+    const o = document.createElement("option");
+    o.value = code;
+    o.textContent = nom;
+    return o;
+  }));
+  choix.value = reglages.langue || "fr";
+  appliquerLangue();
+}
+
+function appliquerLangue() {
+  const code = reglages.langue || "fr";
+  document.documentElement.lang = code;
+  const etat = $("etat-langue");
+  if (etat) etat.textContent = LANGUES.find(([c]) => c === code)?.[1] || "Français";
+  const note = $("note-langue");
+  if (note) note.textContent = code === "fr" ? "" : t("regl.notelangue", "");
+
+  const poser = (selecteur, cle, defaut) => {
+    const cible = document.querySelector(selecteur);
+    if (cible) cible.textContent = t(cle, defaut);
+  };
+  for (const [tab, cle, defaut] of [
+    ["explorer", "onglet.explorer", "Explorer"], ["projet", "onglet.projet", "Projet"],
+    ["histoire", "onglet.histoire", "Historique"], ["apropos", "onglet.infos", "Infos"],
+  ]) {
+    const bouton = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+    if (bouton) { bouton.title = t(cle, defaut); bouton.setAttribute("aria-label", t(cle, defaut)); }
+  }
+  for (const [panneau, cle, defaut] of [
+    ["general", "regl.general", "Général"], ["stockage", "regl.stockage", "Stockage"],
+    ["compte", "regl.compte", "Compte"], ["aide", "regl.aide", "Aide"],
+  ]) {
+    poser(`.reglages-onglet[data-panneau="${panneau}"]`, cle, defaut);
+  }
+  poser("#btn-test-notif", "regl.tester", "Tester");
+  poser("#btn-liberer", "regl.liberer", "Tout libérer");
+}
+
 const CLE_REGLAGES = "amvauto-reglages";
 const reglages = lireReglages();
 
 function lireReglages() {
-  const base = { notifications: true, economie: true };
+  const base = { notifications: true, economie: true, langue: langueParDefaut() };
   try {
     return { ...base, ...JSON.parse(localStorage.getItem(CLE_REGLAGES) || "{}") };
   } catch { return { ...base }; }
@@ -9761,6 +10175,221 @@ function majReglageEspace() {
       + (octetsRendus.fichiers
         ? ` Cette séance a rendu ${(octetsRendus.total / 1e6).toFixed(0)} Mo (${octetsRendus.fichiers} fichiers).`
         : "");
+  }
+}
+
+/* --- le stockage, projet par projet ---------------------------------- */
+
+const poids = (octets) => (octets >= 1e9 ? `${(octets / 1e9).toFixed(2)} Go`
+  : octets >= 1e6 ? `${(octets / 1e6).toFixed(0)} Mo`
+    : `${Math.max(0, Math.round(octets / 1e3))} Ko`);
+
+/* Ce que chaque montage occupe sur l'appareil.
+
+   « Libérer » effaçait tout d'un coup, tous projets confondus : on ne pouvait
+   pas rendre la place d'un montage terminé en gardant celle d'un montage en
+   cours. Chaque clé rangée est donc rapportée au projet qui s'en sert — un rush
+   partagé par deux montages compte pour les deux, et n'est effacé que si les
+   deux le libèrent.
+
+   La taille d'un blob se lit sans lire ses octets : IndexedDB rend une poignée,
+   pas un tableau. Compter cent fichiers ne coûte donc rien. */
+async function placeParProjet() {
+  const base = await ouvrirBase();
+  if (!base) return { projets: [], total: 0, hors: 0 };
+  const cles = await new Promise((ok) => {
+    try {
+      const q = base.transaction(MAGASIN, "readonly").objectStore(MAGASIN).getAllKeys();
+      q.onsuccess = () => ok(q.result || []);
+      q.onerror = () => ok([]);
+    } catch { ok([]); }
+  });
+
+  const tailles = new Map();
+  for (const cle of cles) {
+    if (typeof cle !== "string") continue;
+    // eslint-disable-next-line no-await-in-loop
+    const garde = await lireBase(cle).catch(() => null);
+    if (garde instanceof Blob) tailles.set(cle, garde.size);
+  }
+
+  const vus = new Set();
+  const projets = [];
+  for (const projet of state.projets || []) {
+    let octets = 0;
+    let fichiers = 0;
+    const siennes = new Set();
+    for (const plan of projet.plans || []) {
+      const adresse = mediaDe(plan);
+      if (adresse) { siennes.add(adresse); siennes.add(cleParticelle(adresse)); }
+      const cle = cleSegment(plan);
+      if (cle) siennes.add(cle);
+    }
+    for (const cle of siennes) {
+      const taille = tailles.get(cle);
+      if (!taille) continue;
+      octets += taille;
+      fichiers += 1;
+      vus.add(cle);
+    }
+    projets.push({ projet, octets, fichiers });
+  }
+  let hors = 0;
+  for (const [cle, taille] of tailles) if (!vus.has(cle)) hors += taille;
+  const total = [...tailles.values()].reduce((somme, x) => somme + x, 0);
+  projets.sort((a, b) => b.octets - a.octets);
+  return { projets, total, hors };
+}
+
+/* Rendre la place d'un seul montage, sans toucher aux autres.
+
+   Une clé partagée avec un montage encore ouvert n'est pas effacée : c'est la
+   règle qui rend ce bouton sûr. */
+async function libererProjet(projet) {
+  if (!projet) return;
+  const gardees = new Set();
+  for (const autre of state.projets || []) {
+    if (autre.id === projet.id) continue;
+    for (const plan of autre.plans || []) {
+      const adresse = mediaDe(plan);
+      if (adresse) { gardees.add(adresse); gardees.add(cleParticelle(adresse)); }
+      const cle = cleSegment(plan);
+      if (cle) gardees.add(cle);
+    }
+  }
+  const aJeter = new Set();
+  for (const plan of projet.plans || []) {
+    const adresse = mediaDe(plan);
+    if (adresse) { aJeter.add(adresse); aJeter.add(cleParticelle(adresse)); }
+    const cle = cleSegment(plan);
+    if (cle) aJeter.add(cle);
+  }
+  let rendus = 0;
+  let fichiers = 0;
+  for (const cle of aJeter) {
+    if (gardees.has(cle)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const garde = await lireBase(cle).catch(() => null);
+    if (!(garde instanceof Blob)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await effacerBase(cle).catch(() => {});
+    rendus += garde.size;
+    fichiers += 1;
+    if (segments.has(cle)) {
+      try { URL.revokeObjectURL(segments.get(cle).url); } catch { /* déjà libéré */ }
+      segments.delete(cle);
+    }
+    locales.delete(cle);
+  }
+  octetsRendus.total += rendus;
+  octetsRendus.fichiers += fichiers;
+  await mesurerPlace();
+  majBarreCache();
+  await majStockage();
+  return { rendus, fichiers };
+}
+
+/* Le panneau Stockage : ce que prend chaque montage ici, et ce que le compte
+   Cloudflare occupe en ligne face à sa limite gratuite. */
+async function majStockage() {
+  const liste = $("place-projets");
+  if (!liste) return;
+  liste.replaceChildren(note("Calcul en cours\u2026"));
+
+  const { projets, total, hors } = await placeParProjet().catch(() => ({ projets: [], total: 0, hors: 0 }));
+  const morceaux = [];
+  const quota = place.total || 0;
+  for (const { projet, octets, fichiers } of projets) {
+    const ligne = document.createElement("div");
+    ligne.className = "place-ligne";
+    const texte = document.createElement("span");
+    texte.className = "place-texte";
+    const nom = document.createElement("span");
+    nom.className = "place-nom";
+    nom.textContent = projet.nom + (estArchive(projet) ? " (rangé)" : "");
+    const sous = document.createElement("span");
+    sous.className = "place-sous";
+    sous.textContent = `${poids(octets)} \u00b7 ${fichiers} fichier${fichiers > 1 ? "s" : ""} \u00b7 ${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""}`;
+    texte.append(nom, sous);
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.className = "archive-action";
+    bouton.textContent = "Libérer";
+    bouton.disabled = !octets;
+    bouton.addEventListener("click", async () => {
+      if (!confirm(`Rendre la place de « ${projet.nom} » (${poids(octets)}) ? Les fichiers partagés avec un autre montage sont conservés, et tout se retéléchargera au besoin.`)) return;
+      bouton.disabled = true;
+      bouton.textContent = "\u2026";
+      await libererProjet(projet);
+    });
+    ligne.append(texte, bouton);
+    morceaux.push(ligne);
+  }
+  if (hors > 0) morceaux.push(note(`${poids(hors)} ne se rattachent à aucun montage — musiques, rendus, morceaux à moitié reçus. Le bouton « Tout libérer » s'en occupe.`));
+  if (!projets.length) morceaux.push(note("Aucun montage pour l'instant."));
+  else morceaux.push(note(`En tout sur cet appareil\u00a0: ${poids(total)}${quota ? ` sur ${poids(quota)} disponibles` : ""}.`));
+  liste.replaceChildren(...morceaux);
+
+  await majNuage();
+}
+
+/* Ce que le compte occupe en ligne, et la limite à ne pas dépasser. */
+async function majNuage() {
+  const zone = $("place-nuage");
+  const limites = $("place-limites");
+  if (!zone) return;
+  if (!coffre.code) {
+    zone.replaceChildren(note("Aucun espace en ligne ouvert pour l'instant. Il se crée au premier partage ou au premier rendu déposé."));
+    if (limites) limites.replaceChildren();
+    return;
+  }
+  zone.replaceChildren(note("Lecture de l'espace en ligne\u2026"));
+  let etat = null;
+  try {
+    const reponse = await fetch(`/api/grenier?code=${encodeURIComponent(coffre.code)}&place=1`, { cache: "no-store" });
+    if (reponse.ok) etat = await reponse.json();
+  } catch { /* hors ligne : on le dira */ }
+  if (!etat) {
+    zone.replaceChildren(note("L'espace en ligne n'a pas répondu. Rien n'est perdu : réessaie plus tard."));
+    return;
+  }
+
+  const part = etat.plafond ? Math.min(1, etat.utilise / etat.plafond) : 0;
+  const bloc = document.createElement("div");
+  bloc.className = "place-ligne";
+  const texte = document.createElement("span");
+  texte.className = "place-texte";
+  const nom = document.createElement("span");
+  nom.className = "place-nom";
+  nom.textContent = `${poids(etat.utilise)} sur ${poids(etat.plafond)} gratuits`;
+  const sous = document.createElement("span");
+  sous.className = "place-sous";
+  sous.textContent = `${Math.round(part * 100)}\u00a0% \u00b7 ${etat.objets} fichier${etat.objets > 1 ? "s" : ""} en tout`
+    + `${etat.complet ? "" : " (compte partiel)"} \u00b7 tes rendus\u00a0: ${poids(etat.mien?.octets || 0)}`;
+  const jauge = document.createElement("span");
+  jauge.className = `place-jauge${part > 0.85 ? " pleine" : ""}`;
+  const barre = document.createElement("span");
+  barre.style.width = `${Math.max(2, Math.round(part * 100))}%`;
+  jauge.append(barre);
+  texte.append(nom, sous, jauge);
+  bloc.append(texte);
+  zone.replaceChildren(bloc);
+
+  if (limites) {
+    const dl = document.createElement("dl");
+    const ajouter = (quoi, valeur) => {
+      const dt = document.createElement("dt");
+      dt.textContent = quoi;
+      const dd = document.createElement("dd");
+      dd.textContent = valeur;
+      dl.append(dt, dd);
+    };
+    ajouter("Stockage gratuit par mois", poids(etat.plafond));
+    ajouter("Rendus gardés par espace", String(etat.gardesParCode));
+    ajouter("Poids maximum d'un rendu", poids(etat.poidsMax));
+    ajouter("Espace occupé par tes rendus", poids(etat.mien?.octets || 0));
+    ajouter("Il reste", poids(Math.max(0, etat.plafond - etat.utilise)));
+    limites.replaceChildren(dl);
   }
 }
 
@@ -9989,6 +10618,34 @@ $("btn-economie")?.addEventListener("click", () => {
   majReglageEspace();
 });
 $("btn-liberer")?.addEventListener("click", () => { libererEspace().catch(() => {}); });
+
+/* Les panneaux des réglages : un seul visible, et celui qu'on quitte n'est pas
+   détruit — on ne fait que le cacher, ce qui garde son état. */
+for (const onglet of document.querySelectorAll(".reglages-onglet")) {
+  onglet.addEventListener("click", () => {
+    const vise = onglet.dataset.panneau;
+    for (const autre of document.querySelectorAll(".reglages-onglet")) {
+      autre.classList.toggle("actif", autre === onglet);
+    }
+    for (const panneau of document.querySelectorAll(".reglages-panneau")) {
+      panneau.hidden = panneau.dataset.panneau !== vise;
+    }
+    if (vise === "stockage") majStockage().catch(() => {});
+    if (vise === "compte") majCompte();
+  });
+}
+
+majLangues();
+/* Après l'évaluation du module, pas pendant : « reprendreSession » touche le
+   coffre, qui est déclaré plus bas. Un « await » suffirait à l'en protéger, mais
+   se reposer sur l'ordre des instructions dans un fichier de douze mille lignes
+   n'est pas une garantie. */
+setTimeout(() => { reprendreSession().catch(() => {}); }, 0);
+$("choix-langue")?.addEventListener("change", (evt) => {
+  reglages.langue = evt.target.value;
+  ecrireReglages();
+  appliquerLangue();
+});
 majReglages();
 
 /* --- suspendre, reprendre, arrêter les transferts ---------------------
