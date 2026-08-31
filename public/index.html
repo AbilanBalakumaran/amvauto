@@ -953,6 +953,21 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   text-align: left;
 }
 .projet-carte.actif { border-color: var(--vert); background: linear-gradient(135deg, rgba(53,194,77,.22), rgba(193,18,31,.14)); }
+
+/* La carte et son bouton de fermeture forment un seul bloc dans la barre : le
+   bouton se pose dans le coin, sans réduire la surface cliquable de la carte. */
+.projet-case { position: relative; flex: none; display: flex; }
+.projet-fermer {
+  position: absolute; top: 3px; right: 3px;
+  width: 22px; height: 22px; display: grid; place-items: center;
+  padding: 0; border-radius: 6px;
+  border: 1px solid var(--trait); background: rgba(10,10,10,.82); color: var(--doux);
+  cursor: pointer; opacity: .75;
+}
+.projet-fermer:hover, .projet-fermer:focus-visible { opacity: 1; color: var(--texte); border-color: var(--doux); }
+.projet-fermer svg { width: 13px; height: 13px; }
+.archive-gestes { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.archive-action.danger { border-color: rgba(193,18,31,.5); color: #ff9aa2; }
 .projet-vignette {
   flex: none;
   display: grid;
@@ -1650,7 +1665,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-31 15:07";
+const VERSION_PAGE = "2026-08-31 15:10";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1810,6 +1825,7 @@ const TRAITS = {
   deplacer: '<path d="M7 9L4 12l3 3M17 9l3 3-3 3"/><path d="M4 12h16"/><path d="M12 5v14" stroke-dasharray="2 2.5"/>',
   entree: '<path d="M6 5v14h3"/><path d="M20 12H11"/><path d="M14 8l-3 4 3 4"/>',
   sortie: '<path d="M18 5v14h-3"/><path d="M4 12h9"/><path d="M10 8l3 4-3 4"/>',
+  croix: '<path d="M6 6l12 12M18 6L6 18" stroke-width="2.2"/>',
 };
 
 /* Chaque dessin est tracé dans une grille de 24 sur 24, et son encre doit tomber
@@ -3055,29 +3071,54 @@ function archiver(projet, oui = true) {
 const dateCourte = (instant) => new Date(instant).toLocaleDateString("fr-FR",
   { day: "numeric", month: "long", year: "numeric" });
 
+/* Renommer un projet, d'où qu'on le demande. */
+function renommerProjet(projet) {
+  if (!projet) return;
+  const nom = prompt("Nom du projet", projet.nom || "");
+  if (nom === null) return;
+  const propre = nom.trim().slice(0, 80);
+  if (!propre || propre === projet.nom) return;
+  projet.nom = propre;
+  sauver();
+  rendreProjet();
+  rendre();
+  rendreHistoire();
+}
+
+/* L'historique : tous les projets, ouverts comme rangés.
+
+   Il ne montrait que les archives. Or c'est là qu'on vient chercher « ce que
+   j'ai fait jusqu'ici » — y compris ce qui est encore ouvert. Chaque montage y
+   est donc listé, avec ce qu'il contient, quand il a été créé, et trois gestes :
+   l'ouvrir dans l'onglet Projet, le renommer, le ranger ou le ressortir. */
 function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
-  const archives = projetsArchives();
   const morceaux = [];
+  const tous = [...(state.projets || [])].sort((a, b) => {
+    const va = estArchive(a) ? 1 : 0;
+    const vb = estArchive(b) ? 1 : 0;
+    return va - vb || (b.cree || 0) - (a.cree || 0);
+  });
 
   const titre = document.createElement("div");
   titre.className = "lecteur-titre";
   titre.style.padding = "var(--e4) var(--e4) 0";
-  titre.textContent = "Archives";
+  titre.textContent = `Tous les montages (${tous.length})`;
   morceaux.push(titre);
 
-  if (!archives.length) {
-    morceaux.push(note("Aucun montage archivé. Depuis un projet, « Archiver » le range ici sans rien perdre : ses plans, ses coupes et sa musique l'attendent."));
+  if (!tous.length) {
+    morceaux.push(note("Aucun montage pour l'instant. Le premier que tu créeras apparaîtra ici, et il y restera."));
     vue.replaceChildren(...morceaux);
     return;
   }
 
   const liste = document.createElement("div");
   liste.className = "projets colonne";
-  archives.forEach((projet) => {
+  for (const projet of tous) {
+    const range = estArchive(projet);
     const carte = document.createElement("div");
-    carte.className = "projet-carte archive";
+    carte.className = `projet-carte archive${range ? "" : " actif"}`;
 
     const vignette = document.createElement("span");
     vignette.className = "projet-vignette";
@@ -3094,22 +3135,40 @@ function rendreHistoire() {
     sous.className = "projet-sous";
     sous.textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""} · ${horloge(total(projet))}`
       + `${projet.rythme?.bpm ? ` · ${Math.round(projet.rythme.bpm)} BPM` : ""}`
-      + ` · archivé le ${dateCourte(projet.archive)}`;
+      + (range ? ` · rangé le ${dateCourte(projet.archive)}`
+        : projet.id === state.actif ? " · ouvert en ce moment" : " · ouvert");
     texte.append(nom, sous);
 
-    const rouvrir = document.createElement("button");
-    rouvrir.type = "button";
-    rouvrir.className = "archive-action";
-    rouvrir.textContent = "Rouvrir";
-    rouvrir.addEventListener("click", () => {
-      archiver(projet, false);
+    const gestes = document.createElement("span");
+    gestes.className = "archive-gestes";
+
+    const ouvrir = document.createElement("button");
+    ouvrir.type = "button";
+    ouvrir.className = "archive-action";
+    ouvrir.textContent = "Ouvrir";
+    ouvrir.addEventListener("click", () => {
+      if (range) archiver(projet, false);
       changerProjet(projet.id);
-      document.querySelector('[data-tab="projet"]').click();
+      rendreProjet();
+      rendre();
+      document.querySelector('[data-tab="projet"]')?.click();
     });
+
+    const renommer = document.createElement("button");
+    renommer.type = "button";
+    renommer.className = "archive-action";
+    renommer.textContent = "Renommer";
+    renommer.addEventListener("click", () => renommerProjet(projet));
+
+    const ranger = document.createElement("button");
+    ranger.type = "button";
+    ranger.className = "archive-action";
+    ranger.textContent = range ? "Ressortir" : "Ranger";
+    ranger.addEventListener("click", () => { archiver(projet, !range); rendreHistoire(); });
 
     const jeter = document.createElement("button");
     jeter.type = "button";
-    jeter.className = "archive-action";
+    jeter.className = "archive-action danger";
     jeter.textContent = "Supprimer";
     jeter.addEventListener("click", () => {
       if (!confirm(`Supprimer « ${projet.nom} » définitivement ? Ses plans et ses coupes seront perdus, ici comme sur les autres appareils.`)) return;
@@ -3117,10 +3176,12 @@ function rendreHistoire() {
       rendreHistoire();
     });
 
-    carte.append(vignette, texte, rouvrir, jeter);
+    gestes.append(ouvrir, renommer, ranger, jeter);
+    carte.append(vignette, texte, gestes);
     liste.append(carte);
-  });
+  }
   morceaux.push(liste);
+  morceaux.push(note("« Ranger » retire un montage de la barre des projets sans rien perdre : ses plans, ses coupes et sa musique l'attendent. « Ouvrir » le remet en place."));
   vue.replaceChildren(...morceaux);
 }
 
@@ -3157,7 +3218,28 @@ function barreProjets() {
       rendreProjet();
       rendre();
     });
-    barre.append(carte);
+
+    /* Fermer un montage depuis sa carte, sans passer par un menu.
+
+       Ils s'accumulaient : chaque projet créé restait ouvert dans la barre, et
+       rien ne permettait de l'y retirer autrement qu'en le retrouvant ailleurs.
+       Le fermer ne perd rien — il reste dans l'historique, avec tout ce qu'il
+       contient, et « Ouvrir » l'y remet. */
+    const fermer = document.createElement("button");
+    fermer.type = "button";
+    fermer.className = "projet-fermer";
+    fermer.title = `Fermer « ${projet.nom} »`;
+    fermer.setAttribute("aria-label", `Fermer ${projet.nom}`);
+    fermer.innerHTML = icone("croix");
+    fermer.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      archiver(projet, true);
+    });
+
+    const enveloppe = document.createElement("div");
+    enveloppe.className = "projet-case";
+    enveloppe.append(carte, fermer);
+    barre.append(enveloppe);
   }
 
   const nouveau = document.createElement("button");
