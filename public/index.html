@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-08-31 15:21";
+const VERSION_PAGE = "2026-09-01 04:19";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4014,7 +4014,16 @@ function calculerCadre(projet) {
 // Le débit suit la surface du cadre : il est calculé au moment de la demande.
 
 // Combien de blocs de plus il faut avant de refaire le fichier recollé.
+/* Tous les huit blocs au début, puis de plus en plus rarement.
+
+   Recoller copie tout ce qui est déjà couvert : le vingtième recollage d'un
+   montage de cent onze plans recopie cent blocs pour en ajouter huit. À pas
+   fixe, le travail croît comme le carré du montage. Un pas qui suit ce qui est
+   déjà couvert — un quart de plus, au minimum huit — ramène quatorze
+   recollages à sept sur cent onze plans, et les plus chers sont ceux qu'on
+   évite. */
 const PAS_RECOLLAGE = 8;
+const pasRecollage = (couvert) => Math.max(PAS_RECOLLAGE, Math.round((couvert || 0) / 4));
 const SEGMENTS_GARDES = 400;       // de quoi tenir deux montages complets
 
 const segments = new Map();        // clé → { url, taille }
@@ -4064,8 +4073,23 @@ const surSegment = (plan) => Boolean(segmentDe(plan));
    continuent de parler du fichier d'origine, qui est la vérité. */
 /* Un plan se lit du fichier recollé s'il est dans la partie recollée. Au-delà,
    il se lit comme avant — la limite avance à chaque recollage. */
+/* Le premier plan d'une lecture ne part pas du fichier recollé.
+
+   Le fichier recollé fait des dizaines de mégaoctets. S'il n'est pas déjà ouvert
+   quand on appuie sur lecture, son ouverture — conteneur analysé, tampon rempli,
+   décodeur alloué — coûte une seconde et demie d'image figée, juste après le
+   clic, là où c'est le plus visible. Mesuré au banc, processeur bridé six fois.
+
+   Le premier plan se lit donc depuis son propre extrait, qui pèse cent fois
+   moins et que l'amorce a déjà ouvert. Le fichier recollé prend la suite dès le
+   plan d'après, et c'est lui qui donne l'enchaînement sans coupure sur tout le
+   reste. On paie une seule bascule, au deuxième plan, au lieu d'un gel au
+   premier. */
+let departHorsColle = null;
+
 const surColle = (plan) => {
   if (!montageColle() || rendu.encours || rendu.parImage || plan?.youtube) return false;
+  if (departHorsColle && plan?.id === departHorsColle) return false;
   const index = projetActif()?.plans.indexOf(plan);
   return index >= 0 && index < (colle.jusqua || 0);
 };
@@ -4196,7 +4220,24 @@ function changerProjet(id) {
 function adopterColle() {
   const neuf = colle.suivant;
   if (!neuf) return;
-  if (lecture.demande && colle.url && lecture.index < (colle.jusqua || 0)) return;
+  /* En marche, on ne remplace jamais un fichier par un autre.
+
+     La règle disait « pas tant que la tête est dans la partie recollée ». Elle
+     laissait donc passer le cas où la tête l'a dépassée — et c'est le pire :
+     changer d'adresse oblige CHAQUE lecteur du vivier à rouvrir un fichier de
+     quarante mégaoctets, à se replacer et à remplir son tampon. Mesuré sur un
+     montage de cent onze plans, processeur bridé six fois : dix-neuf
+     rechargements en vingt secondes de lecture, et neuf trous sur neuf tombant
+     dessus.
+
+     Les plans qui ne sont pas encore dans le fichier recollé se lisent depuis
+     leur propre extrait — de petits fichiers, déjà ouverts d'avance par
+     l'amorce. C'est très exactement ce pour quoi l'amorce existe.
+
+     Le premier fichier, lui, est pris tout de suite : il n'y a rien à
+     remplacer. Les suivants attendent la prochaine pause ou le retour au
+     début. */
+  if (lecture.demande && colle.url) return;
   colle.suivant = null;
   if (colle.url) URL.revokeObjectURL(colle.url);
   colle.url = neuf.url;
@@ -4210,6 +4251,26 @@ function adopterColle() {
   colle.duree = offsets(projetActif()?.plans || [])[neuf.jusqua]
     ?? total(projetActif() || { plans: [] });
   majBarreCache();
+
+  /* Ouvrir le fichier maintenant, pendant que rien ne joue.
+
+     Un fichier recollé de quarante mégaoctets met une seconde à s'ouvrir sur un
+     appareil bridé : conteneur analysé, tampon rempli, position retrouvée. Tant
+     qu'on ne le demandait qu'au moment d'appuyer sur lecture, cette seconde
+     était payée devant l'utilisateur — mesuré entre 1,1 et 1,6 seconde d'image
+     figée juste après le clic.
+
+     On repose donc le plan courant tout de suite : le lecteur ouvre le nouveau
+     fichier pendant que personne ne regarde, et l'appui suivant ne coûte plus
+     rien. Jamais en marche — « adopterColle » n'adopte pas en marche. */
+  if (!lecture.demande) {
+    const projet = projetActif();
+    const dans = projet ? Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)) : 0;
+    try { poserPlan(lecture.index, dans, false); } catch { /* rien de prêt */ }
+    /* Lancer puis arrêter le lecteur pour « réveiller » son décodeur a été
+       essayé ici : mesuré, le démarrage passait de 1,4 à 2,0 secondes. Le geste
+       ajoute son propre travail au lieu d'en retirer. Il n'est pas repris. */
+  }
 }
 
 /* Le numéro de version du montage.
@@ -4228,6 +4289,23 @@ function adopterColle() {
    pendant l'évaluation du module — les deux formes hissées, elles, le sont
    toujours. */
 var versionMontage = 0;              // eslint-disable-line no-var
+/* Un bloc de plus n'est pas un montage qui change.
+
+   « changerMontage » fait avancer le numéro de version, et ce numéro périme le
+   fichier recollé. Il était appelé à chaque bloc produit : le fichier était donc
+   jeté aussitôt construit. Sur un montage de cent onze plans, il n'a jamais été
+   utilisé une seule fois, et chaque plan se lisait depuis son propre extrait —
+   un rechargement à chaque coupe, et les trous qui vont avec. Mesuré, processeur
+   bridé six fois : vingt rechargements en vingt secondes de lecture, et tous les
+   trous tombant dessus.
+
+   Ce qui changeait à ces endroits, c'était ce qui est DISPONIBLE, pas le
+   montage. Le fichier recollé couvre un début qui reste juste ; qu'un bloc de
+   plus existe ne le rend pas faux. Le recollage suivant se déclenche de
+   lui-même, par la signature.
+
+   Il ne reste donc que deux appels : une vraie modification du montage, qui
+   passe par « sauver », et l'abandon de l'accélération, qui efface le fichier. */
 function changerMontage() { versionMontage += 1; }
 
 /* La signature du montage : la liste de ses segments, dans l'ordre. Elle est
@@ -4299,7 +4377,7 @@ async function recollerMontage() {
      sensiblement grandi — ou s'il est enfin complet, ce qui est le seul cas où
      un bloc de plus change vraiment quelque chose. */
   const complet = jusqua >= projet.plans.length;
-  if (!complet && jusqua - (colle.jusqua || 0) < PAS_RECOLLAGE) return;
+  if (!complet && jusqua - (colle.jusqua || 0) < pasRecollage(colle.jusqua)) return;
 
   colle.encours = true;
   const morceaux = cles.map((cle) => segments.get(cle));
@@ -4591,7 +4669,6 @@ function filFabrique() {
              zéro. */
           copie: !!copie, decalage: copie ? (decalage || 0) : 0,
         });
-        changerMontage();
         ecrireBase(attente.cle, mp4).catch(() => {});
         rangerSegments();
         majBarreCache();
@@ -5071,7 +5148,6 @@ async function fabriquerParLecteur(suite, cadre) {
     raisonsSegment.delete(cle);
     segments.set(cle, { url: URL.createObjectURL(mp4), taille: mp4.size,
       duree: piste.echantillons.length / cadence, verdict: null });
-    changerMontage();
     ecrireBase(cle, mp4).catch(() => {});
     rangerSegments();
     majBarreCache();
@@ -5313,7 +5389,6 @@ async function reprendreSegments(projet) {
     const garde = await lireBase(cle).catch(() => null);
     if (garde instanceof Blob && garde.size) {
       segments.set(cle, { url: URL.createObjectURL(garde), taille: garde.size });
-      changerMontage();
     }
   }
   majBarreCache();
@@ -8095,6 +8170,8 @@ function redessinerPiste() {
 function poserPlan(index, decalage = 0, enchainer = false) {
   const projet = projetActif();
   if (!projet || !projet.plans[index]) return;
+  // Le plan de départ est passé : le fichier recollé reprend la main.
+  if (departHorsColle && projet.plans[index]?.id !== departHorsColle) departHorsColle = null;
   lecture.index = index;
   if (!lecture.demande) lecture.position = (offsets(projet.plans)[index] || 0) + decalage;
   reveillerMoniteur(1500);
@@ -8241,6 +8318,7 @@ function poserPlan(index, decalage = 0, enchainer = false) {
      déplacement. Les traiter comme un changement de fichier jetait le tampon et
      relisait le conteneur à chaque coupe. */
   const changeFichier = video.dataset.source !== source;
+  const sourceAvant = video.dataset.source;
   const change = video.dataset.plan !== plan.id || changeFichier;
   /* Le fichier est en route par la réserve : on ne le redemande pas au lecteur.
      On laisse en place ce qu'il montrait — le moniteur tient la dernière image
@@ -8261,7 +8339,18 @@ function poserPlan(index, decalage = 0, enchainer = false) {
   if (change) {
     video.dataset.plan = plan.id;
     video.dataset.source = source;
-    if (changeFichier) { bascules.chargements += 1; video.src = source; }
+    if (changeFichier) {
+      bascules.chargements += 1;
+      /* Pourquoi rouvre-t-on un fichier ? Un rechargement coûte des centaines de
+         millisecondes sur un téléphone, et il ne devrait pas y en avoir un seul
+         quand le montage tient dans un fichier unique. Les dernières raisons
+         sont gardées : c'est ce qui manquait pour le voir du dehors. */
+      const court = (t) => { const x = String(t || ""); return `${x.length}:${x.slice(-14)}`; };
+      bascules.raisons = (bascules.raisons || []).slice(-9);
+      bascules.raisons.push(`${video.id || "?"} ${court(sourceAvant)} → ${court(source)}`
+        + ` | plan ${plan.id} | colle ${surColle(plan) ? "oui" : "non"} | jusqua ${colle.jusqua || 0}`);
+      video.src = source;
+    }
   }
   /* Un lecteur déjà lancé et arrivé au bon endroit n'est pas replacé.
 
@@ -8457,6 +8546,14 @@ function basculerLecture() {
   lecture.armee = false;
 
   lecture.demande = true;
+  /* Si le lecteur n'a pas déjà le fichier recollé sous la main, le premier plan
+     part de son extrait : ouvrir quarante mégaoctets dans le geste se voit. */
+  {
+    const actif = elementActif();
+    const premier = projet.plans[lecture.index];
+    departHorsColle = premier && colle.url && actif?.dataset.source !== colle.url
+      ? premier.id : null;
+  }
   /* La sonde à imagettes lâche son décodeur avant qu'on démarre : sur un
      téléphone, il n'y en a qu'une poignée, et les lecteurs du montage en
      ont besoin tout de suite. */
@@ -8523,6 +8620,7 @@ function basculerLecture() {
 }
 
 function arreter() {
+  departHorsColle = null;
   adopterColle();
   lecture.demande = false;
   lecture.jouant = false;
