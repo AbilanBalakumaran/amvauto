@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-01 04:19";
+const VERSION_PAGE = "2026-09-02 09:30";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3830,6 +3830,10 @@ function compterJouants() {
 }
 
 // La ligne d'avancement telle qu'elle s'affiche, pour le banc d'essai.
+/* Les verdicts de tous les blocs préparés : c'est là que se lit ce que la
+   fabrique a dû inventer faute d'images. */
+window.__colleUrl = () => colle.url || "";
+window.__segments = () => [...segments.values()].map((x) => x.verdict).filter(Boolean);
 window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } catch { return ""; } };
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
   /* La réserve, en chiffres : c'est elle que le moniteur montre au lancement et
@@ -4414,7 +4418,11 @@ async function recollerMontage() {
    correction déplace le travail de l'utilisateur ; elle doit être sûre. */
 const CORRECTIONS_MAX = 3;
 const corrections = new Map();          // identifiant de bloc → essais déjà faits
-const defauts = { noirs: 0, blancs: 0, figes: 0, corriges: 0, abandonnes: 0, derniers: [] };
+const defauts = { noirs: 0, blancs: 0, figes: 0, corriges: 0, abandonnes: 0, derniers: [],
+  /* Les gels en plein bloc : des cases de la grille remplies faute d'image
+     neuve, et des durées de rush qu'il a fallu corriger. Ces deux chiffres se
+     lisent depuis l'appareil de l'utilisateur, là où le banc ne va pas. */
+  gelees: 0, blocsGeles: 0, dureesCorrigees: 0 };
 /* Les blocs que la correction n'a pas su sauver : un rush trop court pour offrir
    une autre fenêtre, ou mort de bout en bout. On ne s'acharne pas — on le
    signale en rouge sur la barre, et l'utilisateur tranche. */
@@ -4491,6 +4499,16 @@ function corrigerBloc(plan, verdict) {
 }
 
 function jugerBloc(cle, verdict) {
+  /* Le gel en plein bloc, compté avant tout le reste.
+
+     Il n'a rien à voir avec un bloc « sans image » : celui-ci bouge, il montre
+     son plan, puis s'arrête net parce que la grille n'a plus reçu d'image
+     neuve. On le compte à part, et on l'affiche dans les infos — c'est le seul
+     endroit d'où l'utilisateur peut m'en donner la mesure. */
+  if (verdict?.manquantes > 0) {
+    defauts.gelees += verdict.manquantes;
+    defauts.blocsGeles += 1;
+  }
   const projetJuge = projetActif();
 
   /* Un bloc qui commence par du noir se décale, il ne se condamne pas.
@@ -4612,6 +4630,29 @@ function filFabrique() {
       const attente = fabrique.encours;
       if (!attente || attente.id !== id) return;
       fabrique.encours = null;
+
+      /* La fabrique a ouvert le fichier : c'est sa durée qui fait foi.
+
+         Le catalogue annonce parfois plus long que le fichier ne dure, et la
+         durée annoncée n'est jamais remesurée — « mesurerPlan » passe son tour
+         dès que « plan.duree » existe. Les plans taillés vers la fin du rush
+         réclament alors des images qui n'y sont pas : le bloc joue, puis tient
+         sa dernière image jusqu'à la coupe. C'est le gel signalé en plein bloc.
+
+         Le fil, lui, vient de démultiplexer le fichier ; il rend la durée vraie
+         sans rien coûter. On la retient, ce qui retaille les plans de ce rush,
+         et le bloc se refait aussitôt sur des bornes qui existent. Une fois par
+         fichier : au tour suivant, la durée est déjà juste. */
+      const vraie = verdict?.dureeRush;
+      if (attente.plan && vraie > 0.2 && vraie < dureeSource(attente.plan) - 0.15) {
+        raisonsSegment.set(attente.cle, `le rush ne dure que ${vraie.toFixed(2)} s : plans retaillés`);
+        defauts.dureesCorrigees += 1;
+        retenirDuree(attente.plan, Math.round(vraie * 100) / 100);
+        sauver();
+        redessinerPisteDifferee();
+        fabriquerSuivant();
+        return;
+      }
       if (echec || !mp4) {
         /* Un refus n'est pas une fin.
 
@@ -5243,7 +5284,7 @@ async function fabriquerSuivant() {
      essai est abîmé lui aussi, la panne n'est pas dans le point de départ et
      ce plan se lira depuis son rush. */
   const recule = repriseDecodage.get(suite.cle) || 0;
-  fabrique.encours = { id, cle: suite.cle, depart: performance.now(), recule };
+  fabrique.encours = { id, cle: suite.cle, plan: suite.plan, depart: performance.now(), recule };
   fil.postMessage({
     id, blob: garde, cle: mediaDe(suite.plan),
     entree: entreeDe(suite.plan), sortie: sortieDe(suite.plan),
@@ -13008,13 +13049,21 @@ $("btn-setting").addEventListener("click", () => {
     "Contrôle des blocs :",
     ...(() => {
       const vus = defauts.noirs + defauts.blancs + defauts.figes;
-      if (!vus && !defauts.corriges) return ["  aucun bloc sans image trouvé"];
+      if (!vus && !defauts.corriges && !defauts.blocsGeles && !defauts.dureesCorrigees) {
+        return ["  aucun bloc sans image trouvé"];
+      }
       const l = [
         `  sans image : ${defauts.figes} figé(s), ${defauts.noirs} noir(s), ${defauts.blancs} blanc(s)`,
         `  déplacés dans leur rush : ${defauts.corriges}`,
       ];
       if (defauts.abandonnes) {
         l.push(`  restés mauvais : ${defauts.abandonnes} — en rouge sur la barre`);
+      }
+      if (defauts.blocsGeles) {
+        l.push(`  figés en cours de route : ${defauts.blocsGeles} bloc(s), ${defauts.gelees} image(s)`);
+      }
+      if (defauts.dureesCorrigees) {
+        l.push(`  rushs plus courts qu'annoncé, retaillés : ${defauts.dureesCorrigees}`);
       }
       for (const ligne of defauts.derniers) l.push(`    ${ligne}`);
       l.push("  la durée de chaque bloc est inchangée : la musique reste calée");

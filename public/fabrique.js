@@ -527,6 +527,41 @@ self.onmessage = async (evt) => {
     const combien = Math.max(1, Math.round((sortie - entree) * cadence));
     let prochaine = 0;          // index de la prochaine image à produire
 
+    /* Ce que le rush couvre vraiment de la fenêtre demandée.
+
+       La grille de sortie est remplie en cherchant, pour chaque case, la
+       dernière image décodée qui lui revient. Cela suppose que le rush couvre
+       la fenêtre du plan. Quand il ne la couvre pas — des bornes prises sur une
+       durée annoncée plus longue que le fichier, un rush tronqué au
+       téléchargement — les cases qui restent reçoivent toutes la même image :
+       le bloc joue normalement, puis se fige jusqu'à la coupe. C'est exactement
+       le gel signalé en plein bloc.
+
+       On mesure donc la couverture avant de décoder. Si elle est plus courte
+       que la fenêtre, on étale sur toute la grille les images dont on dispose :
+       un bloc à peine ralenti garde sa durée et son mouvement, là où l'image
+       tenue s'arrête net. Le facteur est borné, mais large : un ralenti franc
+       se regarde, une image arrêtée non — mesuré, le plafond à trois laissait
+       encore neuf images gelées sur les blocs les plus mal taillés. */
+    let finRush = 0;
+    for (const e of ech) finRush = Math.max(finRush, instant(e) + e.duree / carte.echelle);
+    const voulue = Math.max(1 / cadence, sortie - entree);
+    const couverte = Math.max(1 / cadence, Math.min(sortie, finRush) - entree);
+    const etirement = couverte < voulue - 0.5 / cadence ? Math.min(8, voulue / couverte) : 1;
+
+    /* Et combien d'images le rush promet sur cette fenêtre.
+
+       Un rush trop court se rattrape en étirant. Un décodeur qui saute des
+       images au milieu, non : les images existent dans le fichier, elles ont
+       été données au décodeur, et il n'en est rien sorti. Comparer ce qui est
+       promis à ce qui est reçu est la seule façon de distinguer les deux. */
+    let promises = 0;
+    for (const e of ech) {
+      const t = instant(e);
+      if (t >= entree - 0.001 && t <= sortie + 0.001) promises += 1;
+    }
+    let recues = 0;
+
     /* Produire les images du segment à cadence fixe.
 
        On ne recopie plus les images du rush une par une : on avance sur une
@@ -534,8 +569,25 @@ self.onmessage = async (evt) => {
        qui lui appartient. Un rush plus lent voit ses images répétées, un rush
        plus rapide en perd — et le segment fait exactement le nombre d'images
        que le montage attend. */
+    /* Combien d'images de sortie viennent d'une image source répétée.
+
+       La grille de sortie est remplie en prenant, pour chaque case, la dernière
+       image décodée qui lui appartient. Quand le décodeur n'a plus rien à
+       donner — un rush plus court que la fenêtre du plan, une fin de fichier
+       atteinte avant la fin du bloc — la dernière image sert pour toutes les
+       cases qui restent. Le bloc joue alors normalement puis se fige en plein
+       milieu, ce qui est exactement ce qui a été signalé.
+
+       On compte donc les répétitions, et la plus longue série d'affilée. Sans
+       ce compte, un bloc figé aux trois quarts ressemble à un bloc sain. */
+    let repetees = 0;
+    let serie = 0;
+    let pireSerie = 0;
+    let imageVue = null;
     const produire = (image, jusqua) => {
       while (prochaine < combien && prochaine / cadence <= jusqua + 1e-6) {
+        if (image === imageVue) { repetees += 1; serie += 1; if (serie > pireSerie) pireSerie = serie; }
+        else { serie = 0; imageVue = image; }
         poser(image);
         const sortie2 = new VideoFrame(cadre, {
           timestamp: Math.round((prochaine / cadence) * 1e6),
@@ -560,8 +612,9 @@ self.onmessage = async (evt) => {
         // Juger l'image du rush, entière et à sa taille : c'est la seule où la
         // grille du décodeur existe encore.
         juger(image);
+        recues += 1;
         // Les cases jusqu'à cette image reviennent à la précédente.
-        if (derniere) { produire(derniere.image, t - entree - 1e-6); derniere.image.close(); }
+        if (derniere) { produire(derniere.image, (t - entree) * etirement - 1e-6); derniere.image.close(); }
         derniere = { image, t };
       },
       error: () => { casse = true; },
@@ -595,6 +648,8 @@ self.onmessage = async (evt) => {
       }
     }
     await decodeur.flush().catch(() => { casse = true; });
+    // Ce que le décodeur n'aura pas donné : les cases encore vides à la fin.
+    const manquantes = Math.max(0, combien - prochaine - 1);
     // La dernière image remplit les cases qui restent jusqu'au bout du bloc.
     if (derniere) { produire(derniere.image, (sortie - entree) + 1); derniere.image.close(); derniere = null; }
     await encodeur.flush().catch(() => { casse = true; });
@@ -666,6 +721,25 @@ self.onmessage = async (evt) => {
          de décodage, elle, ne touche jamais une image isolée — elle dure
          jusqu'à l'image-clé suivante, donc bien au-delà de deux prises. */
       abime: juges.length >= 2 ? { quoi: juges[0].quoi, valeur: juges[0].valeur, combien: juges.length } : null,
+      /* Ce que la grille a dû inventer : des images répétées faute d'en avoir
+         reçu de neuves. « pireSerie » est la plus longue immobilité d'affilée,
+         en images ; c'est elle qu'on voit comme un gel en plein bloc. */
+      repetees, pireSerie, attendues: combien,
+      /* Et pourquoi elles ont été répétées : le rush ne couvrait pas la fenêtre
+         (« etirement » corrige alors la cadence), ou le décodeur a rendu moins
+         d'images que le fichier n'en contenait sur cette fenêtre. */
+      manquantes,
+      etirement: Math.round(etirement * 100) / 100,
+      /* La durée que le fichier contient réellement.
+
+         L'application prend la durée annoncée par le catalogue et ne la mesure
+         que si elle manque : une durée annoncée trop longue n'est donc jamais
+         corrigée, et tous les plans taillés vers la fin du rush demandent des
+         images qui n'existent pas. La fabrique, elle, a le fichier ouvert sous
+         les yeux — elle rend donc la vraie durée, gratuitement. */
+      dureeRush: Math.round(finRush * 1000) / 1000,
+      promises,
+      recues,
     };
 
     const mp4 = ecrireMp4([piste]);
@@ -696,6 +770,23 @@ self.onmessage = async (evt) => {
        l'application qui le redemande, une fois, avec « recule ». */
     if (verdict.abime) {
       return repondre({ echec: `images mal décodées (${verdict.abime.quoi})`, abime: verdict.abime, verdict });
+    }
+
+    /* Des images promises que le décodeur n'a pas rendues.
+
+       C'est la même panne que la bouillie — un point de départ qui ne donne pas
+       ses références — et elle se corrige de la même façon : reculer d'une
+       image-clé. On ne la déclare que sur un manque franc, un sixième du bloc,
+       pour ne pas refaire un bloc à cause d'une image de bordure.
+
+       Une seule reprise, et au second essai on livre quand même. Un bloc rendu
+       n'est pas parfait ; un bloc refusé retire son plan du montage recollé, et
+       le recollage les veut tous. Un ralenti d'un demi-bloc coûte moins cher
+       qu'une coupe rendue au lecteur vidéo sur tout le montage. */
+    const perdues = promises >= 8 && recues < promises * 0.84;
+    if (perdues && !recule) {
+      return repondre({ echec: `images perdues au décodage (${recues}/${promises})`,
+        abime: { quoi: "perdues", valeur: recues, combien: promises }, verdict });
     }
 
     repondre({ mp4, images: piste.echantillons.length, largeur: l, hauteur: h,
