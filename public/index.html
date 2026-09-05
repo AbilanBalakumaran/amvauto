@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-02 09:30";
+const VERSION_PAGE = "2026-09-05 07:05";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3860,7 +3860,8 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
   // Quel projet est à l'écran, et à quel projet appartient le fichier recollé.
   projet: { id: state.actif, colle: colle.projet },
   colle: { pret: Boolean(colle.url), utilise: Boolean(montageColle()), octets: colle.octets,
-    jusqua: colle.jusqua, entier: montageEntier(),
+    debut: colle.debut, jusqua: colle.jusqua, entier: montageEntier(), prises: colle.prises || 0,
+    suivant: colle.suivant ? { debut: colle.suivant.debut, jusqua: colle.suivant.jusqua } : null,
     images: colle.images, encours: colle.encours, echec: colle.echec,
     version: colle.version, versionMontage },
   segments: { prets: bilanApercu(projetActif()).faits,
@@ -4026,8 +4027,24 @@ function calculerCadre(projet) {
    déjà couvert — un quart de plus, au minimum huit — ramène quatorze
    recollages à sept sur cent onze plans, et les plus chers sont ceux qu'on
    évite. */
+// Entre deux prises du fichier recollé en pleine lecture : le temps qu'un
+// rechargement soit amorti avant d'en payer un autre.
+const REPRISE_COLLE = 6000;
+// Et le nombre de plans qu'un fichier neuf doit apporter pour mériter qu'on
+// rouvre tout : moins que cela, on attend le suivant.
+const GAIN_COLLE = 4;
 const PAS_RECOLLAGE = 8;
-const pasRecollage = (couvert) => Math.max(PAS_RECOLLAGE, Math.round((couvert || 0) / 4));
+/* Le tout premier fichier ne se fait pas attendre.
+
+   Le pas de huit valait aussi pour lui : il fallait huit blocs prêts avant
+   d'avoir le moindre fichier recollé, c'est-à-dire une demi-minute sur un
+   téléphone — pendant laquelle chaque coupe rouvre un fichier. Recoller trois
+   petits blocs coûte quelques dizaines de millisecondes ; c'est le prix le
+   mieux placé de toute la chaîne. */
+const PREMIER_RECOLLAGE = 3;
+const pasRecollage = (couvert) => (couvert
+  ? Math.max(PAS_RECOLLAGE, Math.round(couvert / 4))
+  : PREMIER_RECOLLAGE);
 const SEGMENTS_GARDES = 400;       // de quoi tenir deux montages complets
 
 const segments = new Map();        // clé → { url, taille }
@@ -4095,7 +4112,7 @@ const surColle = (plan) => {
   if (!montageColle() || rendu.encours || rendu.parImage || plan?.youtube) return false;
   if (departHorsColle && plan?.id === departHorsColle) return false;
   const index = projetActif()?.plans.indexOf(plan);
-  return index >= 0 && index < (colle.jusqua || 0);
+  return index >= (colle.debut || 0) && index < (colle.jusqua || 0);
 };
 const entreeLue = (plan) => {
   if (surColle(plan)) return departMontage(plan);
@@ -4161,7 +4178,7 @@ function majBarreCache() {
    lecteur tient déjà le bon fichier au bon endroit — et ne fait rien. La coupe
    cesse d'exister au lieu d'être mieux traitée. */
 const colle = { url: "", cle: "", duree: 0, octets: 0, images: 0, encours: false, echec: "",
-  version: -1, jusqua: 0, suivant: null, projet: "" };
+  version: -1, debut: 0, jusqua: 0, suivant: null, projet: "" };
 
 /* Le fichier recollé appartient au projet qui l'a produit.
 
@@ -4182,6 +4199,7 @@ function oublierColle() {
   colle.duree = 0;
   colle.octets = 0;
   colle.images = 0;
+  colle.debut = 0;
   colle.jusqua = 0;
   colle.version = -1;
   colle.echec = "";
@@ -4221,9 +4239,16 @@ function changerProjet(id) {
    fichier-là ? ». Quand la tête est au-delà de ce que le fichier couvre, elle
    lit un lecteur ordinaire : le remplacer ne coûte rien, et la coupe suivante
    tombera sur le fichier neuf. */
-function adopterColle() {
+function adopterColle(surUneCoupe = false) {
   const neuf = colle.suivant;
   if (!neuf) return;
+  /* En marche, on ne prend le fichier neuf que sur une coupe.
+
+     Une prise coûte un rechargement à chaque lecteur du vivier. Sur une coupe,
+     ce rechargement a lieu de toute façon — c'est le moment où le montage
+     change de plan. En plein milieu d'un plan, il s'ajoute à ce qui joue déjà,
+     et c'est un gel d'une seconde en plein écran. */
+  if (lecture.demande && colle.url && !surUneCoupe) return;
   /* En marche, on ne remplace jamais un fichier par un autre.
 
      La règle disait « pas tant que la tête est dans la partie recollée ». Elle
@@ -4240,20 +4265,64 @@ function adopterColle() {
 
      Le premier fichier, lui, est pris tout de suite : il n'y a rien à
      remplacer. Les suivants attendent la prochaine pause ou le retour au
-     début. */
-  if (lecture.demande && colle.url) return;
+     début.
+
+     Sauf quand il ne sert plus. La règle n'est pas « joue-t-on ? » mais « la
+     tête lit-elle ce fichier-là ? ». Dès qu'elle est en dehors de ce qu'il
+     couvre — avant son premier plan, ou sur son dernier — la coupe suivante
+     rouvre un fichier de toute façon : c'est un lecteur ordinaire qui prend la
+     suite. À cet instant précis, prendre le fichier neuf ne coûte rien de plus,
+     et il évite tous les rechargements d'après.
+
+     Le cas « avant son premier plan » manquait, et il arrive à chaque tour de
+     boucle : le fichier couvrait les plans 15 à 30, la lecture rebouclait au
+     plan 0, et le fichier neuf — celui qui couvrait tout — restait en attente
+     pour le reste de la séance. */
+  const tete = lecture.index || 0;
+  const sert = tete >= (colle.debut || 0) && tete < (colle.jusqua || 0) - 1;
+  if (lecture.demande && colle.url && sert) return;
+  /* Et le fichier neuf doit servir la tête, sinon la prise ne rapporte rien
+     tout de suite et coûte un rechargement à chaque lecteur. */
+  if (lecture.demande && colle.url
+      && !((neuf.debut || 0) <= tete && (neuf.jusqua || 0) > tete)) return;
+  /* Et jamais deux fois coup sur coup.
+
+     Prendre un fichier oblige chaque lecteur du vivier à rouvrir le sien. Le
+     faire à chaque agrandissement, c'est passer la lecture à recharger : mesuré,
+     vingt-cinq bascules de couverture en vingt secondes, et la fluidité tombée
+     de vingt-deux à dix-neuf images par seconde. On laisse donc respirer entre
+     deux prises — sauf quand il n'y a aucun fichier, où il n'y a rien à
+     remplacer. */
+  const maintenant = performance.now();
+  if (lecture.demande && colle.url && maintenant - (colle.prisA || 0) < REPRISE_COLLE) return;
+  /* Et le gain doit valoir le rechargement.
+
+     Prendre un fichier qui ne couvre que deux plans de plus, c'est payer une
+     ouverture pour deux coupes. On attend qu'il en apporte quatre, ou qu'il
+     couvre le montage entier — là, il n'y aura plus jamais rien à rouvrir. */
+  const gagne = (neuf.jusqua || 0) - (neuf.debut || 0)
+    - ((colle.jusqua || 0) - (colle.debut || 0));
+  const tout = (neuf.debut || 0) === 0
+    && (neuf.jusqua || 0) >= (projetActif()?.plans.length || 0);
+  if (lecture.demande && colle.url && !tout && gagne < GAIN_COLLE) return;
+  colle.prisA = maintenant;
+  colle.prises = (colle.prises || 0) + 1;
   colle.suivant = null;
   if (colle.url) URL.revokeObjectURL(colle.url);
   colle.url = neuf.url;
   colle.cle = neuf.cle;
+  colle.debut = neuf.debut || 0;
   colle.jusqua = neuf.jusqua;
   colle.octets = neuf.octets;
   colle.images = neuf.images;
   colle.version = neuf.version;
   colle.projet = neuf.projet || state.actif;
   colle.echec = "";
-  colle.duree = offsets(projetActif()?.plans || [])[neuf.jusqua]
-    ?? total(projetActif() || { plans: [] });
+  {
+    const places = offsets(projetActif()?.plans || []);
+    const fin = places[neuf.jusqua] ?? total(projetActif() || { plans: [] });
+    colle.duree = Math.max(0, fin - (places[colle.debut] || 0));
+  }
   majBarreCache();
 
   /* Ouvrir le fichier maintenant, pendant que rien ne joue.
@@ -4326,33 +4395,61 @@ function changerMontage() { versionMontage += 1; }
    comme avant, et rejoignent le fichier à mesure qu'ils sont prêts. La lecture
    devient fluide depuis le premier bloc préparé, au lieu de l'être d'un coup à
    la fin — ou jamais. */
-function prefixeMontage(projet) {
+/* La tranche recollable : une suite de plans prêts, pas forcément le début.
+
+   Elle partait du premier plan du montage, et c'était la panne. La préparation,
+   elle, avance DEVANT la tête de lecture : dès qu'on appuie sur lecture sans
+   attendre, les premiers plans passent à l'écran avant d'avoir été préparés, la
+   fabrique file en avant, et le préfixe depuis le plan zéro ne se referme
+   jamais. Mesuré : quarante secondes de lecture, quatorze blocs sur trente
+   prêts, et un fichier recollé qui couvre zéro plan — donc un rechargement de
+   fichier par coupe, sur tout le montage.
+
+   On recolle donc la suite prête qui contient la tête de lecture. C'est
+   exactement l'ordre dans lequel les blocs se font, et c'est la partie du
+   montage qu'on est en train de regarder.
+
+   L'ancrage, une fois posé, ne bouge plus tant que la tête est dedans : le
+   fichier ne fait que s'allonger vers l'avant, et les positions déjà connues
+   des lecteurs restent valables. */
+function runMontage(projet) {
   const plans = projet?.plans || [];
-  let jusqua = 0;
-  const cles = [];
-  for (const plan of plans) {
-    if (plan.youtube) break;
+  const pret = (i) => {
+    const plan = plans[i];
+    if (!plan || plan.youtube) return false;
     const cle = cleSegment(plan);
-    if (!cle || !segments.has(cle)) break;
-    cles.push(cle);
-    jusqua += 1;
-  }
-  return { jusqua, cles };
+    return Boolean(cle && segments.has(cle));
+  };
+  const ancre = Math.min(Math.max(0, lecture.index || 0), Math.max(0, plans.length - 1));
+  let debut = -1;
+  for (let i = ancre; i < plans.length; i += 1) if (pret(i)) { debut = i; break; }
+  if (debut < 0) for (let i = ancre - 1; i >= 0; i -= 1) if (pret(i)) { debut = i; break; }
+  if (debut < 0) return { debut: 0, jusqua: 0, cles: [] };
+  while (debut > 0 && pret(debut - 1)) debut -= 1;
+  let jusqua = debut;
+  while (jusqua < plans.length && pret(jusqua)) jusqua += 1;
+  // On garde l'ancrage du fichier en place tant qu'il reste valable : allonger
+  // par l'avant ne déplace rien, ré-ancrer oblige tous les lecteurs à rouvrir.
+  const tenu = colle.debut || 0;
+  if (colle.url && tenu >= debut && tenu < jusqua && ancre >= tenu) debut = tenu;
+  const cles = [];
+  for (let i = debut; i < jusqua; i += 1) cles.push(cleSegment(plans[i]));
+  return { debut, jusqua, cles };
 }
 
 function signatureMontage(projet) {
   const plans = projet?.plans || [];
   if (plans.length < 2) return "";
-  const { jusqua, cles } = prefixeMontage(projet);
+  const { debut, cles } = runMontage(projet);
   // Moins de deux plans recollés, ce n'est pas un montage : c'est un fichier
   // de plus à fabriquer pour rien.
-  if (jusqua < 2) return "";
-  return empreinte(cles.join(";"));
+  if (cles.length < 2) return "";
+  return empreinte(`${debut}|${cles.join(";")}`);
 }
 
 /* Vrai quand le fichier recollé couvre le montage entier : c'est le seul cas
    où le vivier de lecteurs n'a plus rien à faire. */
-const montageEntier = () => Boolean(montageColle())
+const montageEntier = () => Boolean(montageColle()) && (colle.debut || 0) === 0
   && colle.jusqua >= (projetActif()?.plans.length || 0);
 
 const montageColle = () =>
@@ -4365,7 +4462,10 @@ function departMontage(plan) {
   if (!projet) return 0;
   const index = projet.plans.indexOf(plan);
   if (index < 0) return 0;
-  return offsets(projet.plans)[index] || 0;
+  const places = offsets(projet.plans);
+  // Le fichier ne commence plus forcément au premier plan du montage : la
+  // position d'un plan dedans se compte à partir du premier plan qu'il contient.
+  return (places[index] || 0) - (places[colle.debut || 0] || 0);
 }
 
 async function recollerMontage() {
@@ -4374,14 +4474,22 @@ async function recollerMontage() {
   if (!signature || signature === colle.cle || colle.encours) return;
   const fil = filFabrique();
   if (!fil) return;
-  const { jusqua, cles } = prefixeMontage(projet);
-  /* Recoller coûte : il faut relire tous les segments du préfixe et réécrire un
-     fichier. Le refaire à chaque bloc de plus, ce serait passer son temps à
-     recoller au lieu de préparer. On ne repart donc que si le préfixe a
-     sensiblement grandi — ou s'il est enfin complet, ce qui est le seul cas où
-     un bloc de plus change vraiment quelque chose. */
-  const complet = jusqua >= projet.plans.length;
-  if (!complet && jusqua - (colle.jusqua || 0) < pasRecollage(colle.jusqua)) return;
+  const { debut, jusqua, cles } = runMontage(projet);
+  /* Recoller coûte : il faut relire tous les segments de la tranche et réécrire
+     un fichier. Le refaire à chaque bloc de plus, ce serait passer son temps à
+     recoller au lieu de préparer. On ne repart donc que si la tranche a
+     sensiblement grandi — ou si elle couvre enfin tout le montage, ce qui est le
+     seul cas où un bloc de plus change vraiment quelque chose.
+
+     Deux exceptions, qui sont les moments où le fichier sert le plus : quand il
+     n'y en a aucun, et quand la tête est sur le point de sortir de celui qu'on a
+     — au-delà, chaque coupe redevient un rechargement. */
+  const complet = debut === 0 && jusqua >= projet.plans.length;
+  const couvert = colle.url ? Math.max(0, (colle.jusqua || 0) - (colle.debut || 0)) : 0;
+  const auBord = colle.url && (lecture.index || 0) >= (colle.jusqua || 0) - 1;
+  const ancrageChange = debut !== (colle.debut || 0);
+  if (!complet && !auBord && !ancrageChange
+      && jusqua - (colle.jusqua || 0) < pasRecollage(couvert)) return;
 
   colle.encours = true;
   const morceaux = cles.map((cle) => segments.get(cle));
@@ -4396,7 +4504,7 @@ async function recollerMontage() {
   const id = (fabrique.numero = (fabrique.numero || 0) + 1);
   // La version est prise maintenant : si le montage change pendant l'assemblage,
   // le résultat sera périmé en arrivant, et refusé.
-  colle.attente = { id, signature, version: versionMontage, jusqua };
+  colle.attente = { id, signature, version: versionMontage, debut, jusqua };
   fil.postMessage({ id, morceaux: blobs });
 }
 
@@ -4601,29 +4709,12 @@ function filFabrique() {
 
            Le nouveau fichier attend donc son tour : la prochaine pause, ou le
            prochain retour au début. */
-        if (lecture.demande && colle.url) {
-          if (colle.suivant?.url) URL.revokeObjectURL(colle.suivant.url);
-          colle.suivant = { url: URL.createObjectURL(mp4), cle: vise.signature,
-            jusqua: vise.jusqua, octets: octets || mp4.size, images: images || 0,
-            version: vise.version, projet: state.actif };
-          majBarreCache();
-          return;
-        }
-        if (colle.url) URL.revokeObjectURL(colle.url);
-        colle.url = URL.createObjectURL(mp4);
-        colle.cle = vise.signature;
-        colle.projet = state.actif;
-        colle.jusqua = vise.jusqua;
-        colle.octets = octets || mp4.size;
-        colle.images = images || 0;
-        // La durée du fichier, c'est celle des plans qu'il contient — pas
-        // celle du montage, dont il ne couvre encore qu'un début.
-        colle.duree = offsets(projetActif()?.plans || [])[vise.jusqua]
-          ?? total(projetActif() || { plans: [] });
-        colle.version = vise.version;
-        colle.echec = "";
-        // Les lecteurs tiennent encore les segments : ils prendront le fichier
-        // recollé au prochain plan posé, sans rien interrompre.
+        if (colle.suivant?.url) URL.revokeObjectURL(colle.suivant.url);
+        colle.suivant = { url: URL.createObjectURL(mp4), cle: vise.signature,
+          debut: vise.debut || 0, jusqua: vise.jusqua, octets: octets || mp4.size,
+          images: images || 0, version: vise.version, projet: state.actif };
+        // Une seule règle décide de la prise en main, et elle est là-bas.
+        adopterColle();
         majBarreCache();
         return;
       }
@@ -5001,7 +5092,7 @@ function renoncerAcceleration(pourquoi) {
   segments.clear();
   if (colle.url) { try { URL.revokeObjectURL(colle.url); } catch { /* déjà libéré */ } }
   if (colle.suivant?.url) { try { URL.revokeObjectURL(colle.suivant.url); } catch { /* déjà libéré */ } }
-  colle.url = ""; colle.cle = ""; colle.jusqua = 0; colle.suivant = null;
+  colle.url = ""; colle.cle = ""; colle.debut = 0; colle.jusqua = 0; colle.suivant = null;
   colle.echec = fabrique.pourquoi;
   changerMontage();
   majBarreCache();
@@ -5221,7 +5312,26 @@ async function fabriquerSuivant() {
      Un doigt sur la piste l'arrête aussi : à ce moment-là tout le processeur
      doit aller à l'image sous le doigt. */
   if (lecture.scrub) return;
-  if (lecture.demande && !alAise()) return;
+  /* Ralentir, jamais s'arrêter.
+
+     La règle était « pas de fabrication tant que la lecture accroche ». Elle
+     ferme un cercle vicieux : un appareil qui accroche n'a pas de blocs prêts,
+     et sans blocs prêts chaque coupe rouvre un fichier — donc il accroche
+     encore. Mesuré sur un montage de trente plans, processeur bridé six fois :
+     quarante secondes de lecture, dix blocs préparés sur trente, et un fichier
+     recollé qui ne couvre presque rien. La lecture ne devenait jamais fluide,
+     jamais.
+
+     Le recul reste, mais il espace au lieu d'interdire : un bloc toutes les
+     secondes et demie quand l'appareil peine, autant qu'il veut quand il est à
+     l'aise. La fabrique travaille dans son propre fil ; ce qu'elle prend au fil
+     de l'écran, elle le rend au premier plan qui n'a plus à ouvrir de
+     fichier. */
+  if (lecture.demande && !alAise()) {
+    const maintenant = performance.now();
+    if (maintenant - (fabrique.ralentie || 0) < FABRIQUE_RALENTIE) return;
+    fabrique.ralentie = maintenant;
+  }
   const fil = filFabrique();
   if (!fil) return;
   const suite = prochainAFabriquer();
@@ -7063,6 +7173,10 @@ const allure = {
    fabrique, tout de suite, pour trois secondes. Réagir vite et revenir
    lentement : c'est la lecture qui a la priorité, pas le cache. */
 const RECUL_FABRIQUE = 3000;
+// Quand l'appareil peine, la fabrique n'attend plus qu'il aille mieux : elle
+// espace ses blocs. C'est le seul réglage qui décide si un montage finit par
+// devenir fluide ou reste lent jusqu'au bout.
+const FABRIQUE_RALENTIE = 3000;
 
 const TROU_ALLURE = 120;      // ms entre deux images : au-delà, ça se voit
 const FENETRE_ALLURE = 2000;  // on juge sur deux secondes, pas sur un accident
@@ -8232,6 +8346,14 @@ function poserPlan(index, decalage = 0, enchainer = false) {
     if (enchainer) planSuivant();
     return;
   }
+
+  /* Le fichier recollé neuf se prend ici, juste avant de choisir la source.
+
+     La tête arrive sur un plan que le fichier courant ne couvre pas : sans lui,
+     ce plan se lit depuis son propre extrait et il faut rouvrir un fichier. Si
+     un fichier plus long attend, c'est le moment — le rechargement a lieu de
+     toute façon, autant qu'il serve les coupes suivantes. */
+  if (colle.suivant && lecture.demande) adopterColle(true);
 
   vide.hidden = true;
   const source = sourceDe(plan);
