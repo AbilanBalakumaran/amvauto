@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-05 11:55";
+const VERSION_PAGE = "2026-09-05 14:30";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5535,7 +5535,21 @@ function sourceUnique(projet) {
   return vues.size === 1;
 }
 
-/* Version 9 : le niveau H.264 suit enfin la taille de l'image.
+/* Version 10 : les blocs étaient découpés au mauvais endroit du rush.
+
+   La liste d'édition d'un MP4 se lit « durée, instant du média, vitesse ». On
+   lisait la vitesse à la place de l'instant : 0x00010000 en virgule fixe, soit
+   65536. Tous les instants d'un rush s'en trouvaient décalés d'autant.
+
+   Sur un rush à 24000 unités par seconde, cela fait 2,7 secondes : les blocs
+   sortaient, mais pris ailleurs que là où le montage les demandait. Sur un rush
+   à 1000 unités, cela fait 65 secondes : le fichier entier passait avant zéro,
+   plus une image ne tombait dans la fenêtre d'un plan, et le bloc n'était pas
+   fabriqué du tout. Deux rushs de Sakugabooru sur quatre sont dans ce cas.
+
+   Les blocs de la version 9 sont donc faux ou absents. On les refait tous.
+
+   Version 9 : le niveau H.264 suit enfin la taille de l'image.
 
    Les blocs de la version 8 ont été encodés en annonçant un niveau 3.0 — 720×576
    au maximum — pour un cadre de 960×540. Ceux qui sont sortis sont hors
@@ -5547,7 +5561,7 @@ function sourceUnique(projet) {
    différents ; ceux-ci le font. Et le débit monte, parce que la raison d'avoir
    réduit la définition et le débit — « ça pixellise » — n'était pas l'encodage
    mais le démultiplexeur, corrigé depuis. */
-const VERSION_SEGMENT = 9;
+const VERSION_SEGMENT = 10;
 /* Le débit, relevé de 0,35 à 0,55 bit par pixel.
 
    Zéro trente-cinq avait été choisi quand les images données à l'encodeur
@@ -9793,7 +9807,16 @@ const partiels = new Set();
 // pas, on les prend en entier.
 const tranchesRefusees = new Set();
 
-const TETE_MP4 = 4096;
+/* La tête doit être assez grande pour contenir « moov » quand il est devant.
+
+   Les rushs de Sakugabooru se présentent des deux façons : la moitié range
+   « moov » à la fin — huit à quatorze kilo-octets —, l'autre le met en tête,
+   juste après « ftyp », et il y pèse huit à douze kilo-octets. Une tête de
+   quatre kilo-octets ne le contenait donc pas dans le second cas : on savait où
+   il commençait, on demandait « de là jusqu'à la fin », et l'on retéléchargeait
+   le fichier entier en croyant l'économiser. Trente-deux kilo-octets couvrent
+   les deux cas d'un seul coup. */
+const TETE_MP4 = 32768;
 // En deçà de ce gain, une récupération par tranches ne vaut pas ses trois
 // requêtes — et un fichier entier a l'avantage d'être lisible tel quel.
 const GAIN_TRANCHES = 0.6;
@@ -9841,8 +9864,14 @@ async function rapatrierParTranches(plan, adresse, signal) {
   const troue = new Uint8Array(tete.total);
   troue.set(tete.octets, 0);
   if (!ou.present) {
-    const moov = await plageDe(adresse, ou.ou, undefined, signal);
-    if (!moov.octets.length) return false;
+    /* Et quand on connaît sa taille, on demande exactement sa taille.
+
+       « De là jusqu'à la fin » était juste pour un « moov » rangé en dernier, et
+       catastrophique pour un « moov » rangé en tête : cela réclamait tout le
+       fichier. */
+    const fin = ou.taille ? ou.ou + ou.taille : undefined;
+    const moov = await plageDe(adresse, ou.ou, fin, signal);
+    if (!moov.partielle || !moov.octets.length) return false;
     troue.set(moov.octets.subarray(0, tete.total - ou.ou), ou.ou);
   }
 
@@ -9870,7 +9899,9 @@ async function rapatrierParTranches(plan, adresse, signal) {
   for (const t of tranches) {
     // eslint-disable-next-line no-await-in-loop
     const morceau = await plageDe(adresse, t.debut, t.fin, signal);
-    if (!morceau.octets.length) return false;
+    /* Une réponse entière là où l'on demandait une tranche rendrait le tampon
+       faux sans rien dire : on abandonne et l'on prend le fichier normalement. */
+    if (!morceau.partielle || !morceau.octets.length) return false;
     troue.set(morceau.octets.subarray(0, tete.total - t.debut), t.debut);
     recu += morceau.octets.length;
     enImport.set(adresse, Math.min(0.99, recu / poids));

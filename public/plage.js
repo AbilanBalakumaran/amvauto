@@ -107,11 +107,33 @@ export function depuisPourFenetre(carte, entree, recul = 1) {
 export function tranchePourFenetre(carte, depuis, entree, sortie) {
   const ech = carte.echantillons;
   if (!ech?.length || depuis < 0 || depuis >= ech.length) return null;
+  /* La fin de la tranche couvre une fenêtre de plus que demandé.
+
+     La recopie ne prend pas exactement la fenêtre : elle la cale sur l'image-clé
+     la plus proche, et cette image-clé peut être APRÈS l'entrée. Le bloc part
+     alors plus tard et se termine plus tard — jusqu'à une durée de plan au-delà
+     de la sortie. Sans cette marge, les dernières images du bloc tombaient dans
+     les octets qu'on n'avait pas demandés : mesuré sur un vrai rush, un bloc de
+     vingt-neuf images dont les derniers octets manquaient, pour un fichier qui
+     paraissait pourtant complet. */
+  const large = Math.max(0, sortie - entree);
+  let bout = sortie + large;
+  /* Et si une image-clé tombe juste après l'entrée, c'est probablement là que la
+     recopie se calera : on couvre alors une fenêtre entière à partir d'elle.
+     Deviner la marge « d'une fenêtre après la sortie » ne suffisait pas — sur un
+     rush dont l'image-clé suivante est à plus d'une seconde de l'entrée, les
+     dernières images du bloc tombaient encore hors des octets demandés. */
+  for (let i = depuis; i < ech.length; i += 1) {
+    const t = ech[i].instant / carte.echelle;
+    if (!ech[i].cle || t <= entree + 1e-6) continue;
+    bout = Math.max(bout, t + large);
+    break;
+  }
   let debut = Infinity;
   let fin = 0;
   for (let i = depuis; i < ech.length; i += 1) {
     const e = ech[i];
-    if (e.decodage / carte.echelle > sortie + MARGE_REORDRE) break;
+    if (e.decodage / carte.echelle > bout + MARGE_REORDRE) break;
     debut = Math.min(debut, e.ou);
     fin = Math.max(fin, e.ou + e.taille);
   }

@@ -163,9 +163,23 @@ function lireVraiment(donnees) {
       for (let k = 0; k < combien; k += 1) {
         const o = elst.corps + 8 + k * taille;
         if (o + taille > elst.bout) break;
+        /* Une entrée « elst » : durée, puis instant du média, puis vitesse.
+
+           En version 0 la durée tient sur quatre octets et l'instant vient
+           juste après ; en version 1 les deux font huit octets chacun. On
+           lisait, en version 0, quatre octets trop loin — c'est-à-dire la
+           VITESSE, qui vaut 0x00010000 en virgule fixe pour une lecture
+           normale, soit 65536.
+
+           Tous les instants du fichier se trouvaient donc décalés de 65536
+           unités. Sur un rush à mille unités par seconde, cela place le fichier
+           entier soixante-cinq secondes AVANT zéro : plus une seule image ne
+           tombe dans la fenêtre d'un plan, le fil ne rend rien, et le bloc part
+           au lecteur vidéo qui le refuse à son tour. C'était « 115 sans
+           segment » sur 175 plans — deux rushs de Sakugabooru sur quatre. */
         const depart = version === 1
           ? Number(vue.getBigInt64(o + 8))
-          : vue.getInt32(o + 4 + 4);
+          : vue.getInt32(o + 4);
         // Une entrée vide vaut -1 : elle ne coupe rien, elle décale l'affichage.
         if (depart > 0) { coupeDebut = depart; break; }
       }
