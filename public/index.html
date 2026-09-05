@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-05 07:38";
+const VERSION_PAGE = "2026-09-05 11:55";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4791,6 +4791,29 @@ function filFabrique() {
            refait donc le bloc par ce chemin-là. */
         raisonsSegment.set(attente.cle, echec || "le fil n'a rien rendu");
 
+        /* Un bloc raté sur un rush récupéré par tranches : on reprend tout.
+
+           Le chemin de secours passe par un lecteur vidéo, et un lecteur vidéo
+           ne sait pas lire un fichier troué. Plutôt que d'abandonner le bloc —
+           ce qui casserait le montage recollé pour tout le reste — on redemande
+           le fichier entier, une fois, et le bloc repassera par le chemin
+           ordinaire. */
+        /* Sauf quand le fichier entier n'y changerait rien : un codec que
+           l'appareil ne sait ni décoder ni encoder reste refusé, complet ou
+           non. Le retélécharger coûterait le double pour le même échec. */
+        const sansEspoir = /codec refusé|aucun codec/.test(String(echec));
+        const planRate = attente.plan;
+        const adresseRatee = planRate && mediaDe(planRate);
+        if (adresseRatee && partiels.has(adresseRatee) && !sansEspoir) {
+          tranchesEnMemoire.delete(adresseRatee);
+          partiels.delete(adresseRatee);
+          tranchesRefusees.add(adresseRatee);
+          raisonsSegment.set(attente.cle, `${echec || "bloc refusé"} — on reprend le rush en entier`);
+          planifierImport(planRate);
+          setTimeout(() => fabriquerSuivant(), 0);
+          return;
+        }
+
         /* Des images mal décodées : ce bloc-là se refait, il ne se jette pas.
 
            C'est la seule panne dont on connaisse la cause probable — le point
@@ -4934,7 +4957,9 @@ function prochainAFabriquer() {
     if (!plan || plan.youtube || !mediaDe(plan)) continue;
     const cle = cleSegment(plan);
     if (!cle || segments.has(cle) || segmentsRates.has(cle)) continue;
-    if (!estLocal(plan)) continue;         // le rush n'est pas encore là
+    // Le rush est là — rangé sur l'appareil, ou en mémoire sous forme de
+    // tranches, ce qui suffit amplement à la fabrique.
+    if (!estLocal(plan) && !tranchesEnMemoire.has(mediaDe(plan))) continue;
     return { plan, cle };
   }
   return null;
@@ -4978,7 +5003,7 @@ function demarrerQuandPret() {
   if (!lecture.armee || lecture.demande) return;
   const projet = projetActif();
   if (!projet?.plans.length) return;
-  const dispo = projet.plans.some((autre) => autre.youtube || !mediaDe(autre) || estLocal(autre));
+  const dispo = projet.plans.some(pretAJouer);
   if (!dispo) return;                      // rien n'est encore là : on repassera
   if (!lecture.limiteArmee) lecture.limiteArmee = performance.now() + ATTENTE_PREMIER_BLOC;
   const premier = projet.plans[lecture.index] || projet.plans[0];
@@ -5032,12 +5057,11 @@ function surveillerFabrique() {
 const octetsRendus = { total: 0, fichiers: 0 };
 
 async function libererRush(cleFaite) {
-  if (!reglages.economie) return;
   const projet = projetActif();
   if (!projet) return;
   const fait = (projet.plans || []).find((p) => cleSegment(p) === cleFaite);
   const adresse = fait && mediaDe(fait);
-  if (!adresse || !locales.has(adresse)) return;
+  if (!adresse) return;
 
   // Tous les blocs de tous les projets qui tirent de ce rush doivent être prêts.
   for (const autre of state.projets || []) {
@@ -5046,6 +5070,14 @@ async function libererRush(cleFaite) {
       if (!surSegment(plan)) return;
     }
   }
+
+  /* Le rush récupéré par tranches n'a plus aucune raison d'occuper la mémoire :
+     ses blocs sont faits, et c'est tout ce qu'on voulait de lui. Cette
+     libération-là ne dépend d'aucun réglage — le fichier n'est de toute façon
+     pas rangé sur l'appareil. */
+  if (tranchesEnMemoire.delete(adresse)) partiels.delete(adresse);
+
+  if (!reglages.economie || !locales.has(adresse)) return;
 
   const garde = await lireBase(adresse).catch(() => null);
   if (!(garde instanceof Blob)) return;
@@ -5423,7 +5455,10 @@ async function fabriquerSuivant() {
     return;
   }
 
-  const garde = await lireBase(mediaDe(suite.plan)).catch(() => null);
+  /* Le rush récupéré par tranches vit en mémoire, pas sur le disque : c'est là
+     qu'on le cherche d'abord. */
+  const garde = tranchesEnMemoire.get(mediaDe(suite.plan))
+    || await lireBase(mediaDe(suite.plan)).catch(() => null);
   if (!(garde instanceof Blob) || !garde.size) {
     /* Pas de fichier rangé, et pourtant le plan se lit à l'écran : c'est un
        fichier reçu que l'appareil n'a pas pu écrire, faute de place. Le fil de
@@ -6648,6 +6683,21 @@ function servirImagettes() {
     bande.demandes.delete(identifiant);
     return;
   }
+  /* Et une imagette n'ouvre pas une seconde connexion sur un rush qui arrive.
+
+     Mesuré sur un lien de métro — 1,5 Mb/s, 300 ms — chaque rush traversait le
+     réseau deux fois : une fois par la file d'import, qui le range sur
+     l'appareil, une fois ici pour dessiner des vignettes de cent soixante
+     points. Six rushs de 1,6 Mo faisaient 19 Mo, et cinquante-deux secondes
+     avant que le montage soit prêt.
+
+     La pellicule attend donc la copie locale — elle arrive de toute façon, et
+     alors la vignette ne coûte plus rien. Le réseau ne sert plus qu'aux rushs
+     que l'import n'a pas su rapatrier : là, il n'y a pas d'autre chemin. */
+  if (!local && laisserAuReseau(plan)) {
+    bande.demandes.delete(identifiant);
+    return;
+  }
   const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(mediaDe(plan))}`;
   const exact = identifiant.startsWith("exact:");
 
@@ -7566,7 +7616,7 @@ function bilanProjet(projet) {
   const manquantes = projet.plans.length - bilan.mesures;
   // La version est affichée ici en clair : trop de doutes sur « est-ce bien la
   // dernière ? » se sont réglés en la cherchant dans un onglet.
-  const importes = projet.plans.filter((plan) => estLocal(plan) || plan.youtube).length;
+  const importes = projet.plans.filter(pretAJouer).length;
   const reste = projet.plans.length - importes;
   return (
     `${projet.plans.length} plans · ${bilan.mb.toFixed(0)} Mo` +
@@ -8731,7 +8781,7 @@ function basculerLecture() {
      une tête qui avance sur un écran noir : le montage semblait cassé, alors
      qu'il n'était simplement pas encore arrivé. On refuse donc de commencer, et
      l'on dit pourquoi — le bandeau donne déjà le compte et l'attente. */
-  const dispo = projet.plans.some((autre) => autre.youtube || !mediaDe(autre) || estLocal(autre));
+  const dispo = projet.plans.some(pretAJouer);
   if (!dispo) {
     /* On garde l'intention au lieu de la jeter.
 
@@ -9546,6 +9596,17 @@ function sourceDe(plan) {
 
 const estLocal = (plan) => Boolean(mediaDe(plan) && locales.get(mediaDe(plan)));
 
+/* « Ce plan peut-il être montré ? » — question distincte de « son rush est-il
+   rangé sur l'appareil ? ».
+
+   Les deux se confondaient tant qu'un rush arrivait forcément en entier.
+   Maintenant qu'on ne télécharge que les tranches utiles, un plan peut être
+   parfaitement jouable — son bloc est fait — sans que son rush soit là ; et un
+   rush peut être là en tranches, ce qu'un lecteur vidéo ne sait pas lire mais
+   qui suffit à la fabrique. C'est donc le bloc qui décide, ou le rush entier. */
+const pretAJouer = (plan) =>
+  Boolean(plan) && (plan.youtube || !mediaDe(plan) || estLocal(plan) || surSegment(plan));
+
 /* Faut-il laisser le lecteur tirer ce plan du réseau ?
 
    Non, quand la réserve s'en occupe déjà. C'était le vrai coût de l'aperçu :
@@ -9562,13 +9623,37 @@ const estLocal = (plan) => Boolean(mediaDe(plan) && locales.get(mediaDe(plan)));
    laisse donc faire : le plan s'affiche dès sa copie locale prête. Si l'import
    a échoué — le fichier ne viendra jamais de l'appareil — le lecteur reprend
    la main et tire du réseau, c'est mieux que rien. */
+/* Un rush ne traverse le réseau qu'une seule fois.
+
+   Mesuré sur un lien de métro — 1,5 Mb/s, 300 ms — chaque rush arrivait DEUX
+   fois : une fois tiré par un lecteur vidéo, une fois par la file d'import qui
+   le range sur l'appareil. Six rushs de 1,6 Mo faisaient 19 Mo de réseau, et
+   cinquante-deux secondes avant que le montage soit prêt.
+
+   La règle existait déjà — « ce fichier arrive, ne le redemande pas » — mais
+   elle ne valait que si l'import était DÉJÀ en file. Entre le moment où l'on
+   constate que le fichier n'est pas sur l'appareil et celui où il entre en
+   file, il y a une lecture de base de données : le lecteur passait dans cet
+   intervalle et ouvrait sa propre connexion.
+
+   On renverse donc la règle. Un rush qui n'est pas sur l'appareil et dont
+   l'import n'a pas échoué sera rapatrié : le lecteur attend, sans exception. Et
+   pour qu'attendre ne soit jamais attendre pour rien, on s'assure au passage
+   que quelqu'un s'en occupe.
+
+   Rien à attendre, en revanche, quand le bloc est déjà fabriqué : il se lit
+   sans son rush, et c'est tout l'intérêt du cache. */
 const laisserAuReseau = (plan) => {
   const adresse = mediaDe(plan);
   if (!adresse || estLocal(plan)) return false;
+  if (surColle(plan) || segmentDe(plan)) return false;
+  // Le rush est là en tranches : ce qui manque, c'est le bloc, pas le réseau.
+  if (tranchesEnMemoire.has(adresse)) return true;
   if (importsRates.has(adresse)) return false;
   // On ne sait pas encore si la réserve l'a : la question est posée.
   if (enFouille.has(adresse)) return true;
-  return importPrevu(plan);
+  if (!importPrevu(plan)) preparerLocal(plan).catch(() => {});
+  return true;
 };
 const avancement = (plan) => enImport.get(mediaDe(plan));
 
@@ -9585,9 +9670,23 @@ const enFouille = new Set();
 
 async function preparerLocal(plan) {
   const adresse = mediaDe(plan);
-  if (!adresse || plan.youtube || locales.has(adresse)) return;
+  if (!adresse || plan.youtube || locales.has(adresse) || tranchesEnMemoire.has(adresse)) return;
+  /* La fouille couvre tout le trajet, pas seulement la lecture de la base.
+
+     Elle s'arrêtait à la première étape, et le chemin d'économie ajoute ensuite
+     une seconde lecture de base avant de mettre le fichier en file. Un lecteur
+     qui passait entre les deux ne voyait ni fouille ni import : il ouvrait sa
+     propre connexion. */
   enFouille.add(adresse);
-  const garde = await lireBase(adresse).finally(() => enFouille.delete(adresse));
+  try {
+    await preparerLocalVraiment(plan, adresse);
+  } finally {
+    enFouille.delete(adresse);
+  }
+}
+
+async function preparerLocalVraiment(plan, adresse) {
+  const garde = await lireBase(adresse).catch(() => null);
   if (garde instanceof Blob) {
     locales.set(adresse, URL.createObjectURL(garde));
     /* Un fichier retrouvé dans la réserve ne déclenche aucun import, donc rien
@@ -9643,6 +9742,9 @@ function interrompreImport(plan) {
 function planifierImport(plan) {
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube || locales.has(adresse) || enImport.has(adresse)) return;
+  // Déjà là sous forme de tranches : la fabrique a tout ce qu'il lui faut, et
+  // redemander le fichier reviendrait à le télécharger en boucle.
+  if (tranchesEnMemoire.has(adresse)) return;
   /* Le point de passage unique : quatre endroits mettent des plans en file, et
      aucun n'a de raison de connaître le réglage d'économie. La règle est ici :
      un bloc dont l'extrait existe n'a pas besoin de son rush. */
@@ -9678,6 +9780,113 @@ async function lancerImport() {
   }
 }
 
+/* Les rushs dont on n'a téléchargé que les tranches utiles.
+
+   Ils ne sont pas rangés sur l'appareil : un fichier troué ne se lit pas dans un
+   lecteur vidéo, et il pèserait sa taille entière sur le disque pour des octets
+   qui sont des zéros. Ils vivent en mémoire le temps que la fabrique en tire les
+   blocs, puis ils s'effacent. Ce qui reste, ce sont les blocs — dix fois plus
+   petits que le rush, et les seuls dont l'aperçu ait besoin. */
+const tranchesEnMemoire = new Map();
+const partiels = new Set();
+// Les rushs dont la récupération par tranches n'a rien donné : on ne réessaie
+// pas, on les prend en entier.
+const tranchesRefusees = new Set();
+
+const TETE_MP4 = 4096;
+// En deçà de ce gain, une récupération par tranches ne vaut pas ses trois
+// requêtes — et un fichier entier a l'avantage d'être lisible tel quel.
+const GAIN_TRANCHES = 0.6;
+/* Et un fichier trop petit ne vaut pas trois allers-retours.
+
+   Découper coûte deux requêtes de reconnaissance avant la première tranche. Sur
+   un lien à trois cents millisecondes, cela fait une seconde — le temps de
+   télécharger un mégaoctet et demi. En dessous, on prend le fichier entier : il
+   arrive aussi vite et il est lisible tel quel. */
+const SEUIL_TRANCHES = 3e6;
+
+async function plageDe(adresse, debut, fin, signal) {
+  const entetes = { Range: fin === undefined ? `bytes=${debut}-` : `bytes=${debut}-${fin - 1}` };
+  const reponse = await fetch(`/api/media?u=${encodeURIComponent(adresse)}`, { signal, headers: entetes });
+  if (reponse.status !== 206 && !reponse.ok) throw new Error(String(reponse.status));
+  const total = Number((reponse.headers.get("content-range") || "").split("/")[1]) || 0;
+  return { octets: new Uint8Array(await reponse.arrayBuffer()), total, partielle: reponse.status === 206 };
+}
+
+/* Ne demander que les octets que le montage utilise.
+
+   Un rush de Sakugabooru pèse dix mégaoctets et dure une demi-minute ; un plan
+   en prend une seconde. Le fichier dit lui-même où sont ses octets — la boîte
+   « moov », huit à dix-huit kilo-octets, rangée à la fin par ces fichiers-là.
+   Deux petites requêtes pour l'obtenir, puis une par tranche utile.
+
+   Mesuré sur un vrai rush de 10,4 Mo, trois plans pris dedans : 3,9 Mo demandés
+   au lieu de 10,4, et les trois blocs sortent identiques octet pour octet à ceux
+   fabriqués depuis le fichier entier. Un montage ne prend souvent qu'un plan par
+   rush : le gain y est plus grand encore.
+
+   En cas de doute — pas de « moov », tranches presque aussi grosses que le
+   fichier, requête par plage refusée — on rend « false » et le fichier est
+   rapatrié en entier, comme avant. */
+async function rapatrierParTranches(plan, adresse, signal) {
+  if (tranchesRefusees.has(adresse)) return false;
+  if ((plan.mb || 0) * 1e6 < SEUIL_TRANCHES) return false;
+  const [{ lireMp4 }, plage] = await Promise.all([import("./demux.js"), import("./plage.js")]);
+
+  const tete = await plageDe(adresse, 0, TETE_MP4, signal);
+  if (!tete.partielle || !tete.total) return false;
+  const ou = plage.trouverMoov(tete.octets);
+  if (ou.ou < 0 || ou.ou >= tete.total) return false;
+
+  const troue = new Uint8Array(tete.total);
+  troue.set(tete.octets, 0);
+  if (!ou.present) {
+    const moov = await plageDe(adresse, ou.ou, undefined, signal);
+    if (!moov.octets.length) return false;
+    troue.set(moov.octets.subarray(0, tete.total - ou.ou), ou.ou);
+  }
+
+  const carte = lireMp4(troue);
+  if (carte.echec || !carte.echantillons?.length) return false;
+
+  // Toutes les fenêtres que ce rush sert, dans tous les montages : le fichier
+  // n'est demandé qu'une fois, et il sert tout le monde.
+  const fenetres = [];
+  for (const projet of state.projets || []) {
+    for (const autre of projet.plans || []) {
+      if (mediaDe(autre) !== adresse || autre.youtube) continue;
+      fenetres.push({ entree: entreeDe(autre), sortie: sortieDe(autre) });
+    }
+  }
+  if (!fenetres.length) return false;
+
+  const tranches = plage.fondreTranches(fenetres.map((f) =>
+    plage.tranchePourFenetre(carte, plage.depuisPourFenetre(carte, f.entree), f.entree, f.sortie)));
+  if (!tranches.length) return false;
+  const poids = plage.poidsTranches(tranches);
+  if (poids > tete.total * GAIN_TRANCHES) return false;
+
+  let recu = 0;
+  for (const t of tranches) {
+    // eslint-disable-next-line no-await-in-loop
+    const morceau = await plageDe(adresse, t.debut, t.fin, signal);
+    if (!morceau.octets.length) return false;
+    troue.set(morceau.octets.subarray(0, tete.total - t.debut), t.debut);
+    recu += morceau.octets.length;
+    enImport.set(adresse, Math.min(0.99, recu / poids));
+    majImports();
+  }
+
+  tranchesEnMemoire.set(adresse, new Blob([troue], { type: "video/mp4" }));
+  partiels.add(adresse);
+  economies.tranches += 1;
+  economies.octets += tete.total - poids;
+  return true;
+}
+
+// Ce que la récupération par tranches a épargné, pour le dire dans les infos.
+const economies = { tranches: 0, octets: 0 };
+
 async function rapatrier(plan) {
   // La sonde à imagettes lâche sa source distante : une fois chargée, elle
   // continue de remplir son tampon toute seule, connexion ouverte, et vole la
@@ -9697,6 +9906,25 @@ async function rapatrier(plan) {
   let recus = [];
   let deja = 0;
   try {
+    /* D'abord les seules tranches utiles : c'est ce qui décide si un montage
+       est prêt en une minute ou en dix sur un lien de métro. Si le fichier ne
+       s'y prête pas, on le prend en entier, comme avant. */
+    let parTranches = false;
+    try {
+      parTranches = await rapatrierParTranches(plan, adresse, abandon.signal);
+    } catch (erreur) {
+      if (erreur?.name === "AbortError") throw erreur;
+      parTranches = false;
+    }
+    if (!parTranches) tranchesRefusees.add(adresse);
+    if (parTranches) {
+      essaisImport.delete(adresse);
+      majImports();
+      const projetVu = projetActif();
+      if (projetVu) majPreparation(projetVu);
+      fabriquerSuivant().catch(() => {});
+      return;
+    }
     // Ce qu'un passage précédent avait déjà rapporté.
     const partiel = await lireBase(cleParticelle(adresse));
     if (partiel instanceof Blob && partiel.size) {
@@ -13312,6 +13540,10 @@ $("btn-setting").addEventListener("click", () => {
           + ` · ${Math.round(fabrique.duree / fabrique.faits)} ms par bloc`);
       }
       if (fabrique.rates) l.push(`  refusés : ${fabrique.rates}`);
+      if (economies.tranches) {
+        l.push(`  rushs pris par tranches : ${economies.tranches}`
+          + ` · ${(economies.octets / 1e6).toFixed(0)} Mo qui n'ont pas traversé le réseau`);
+      }
       if (fabrique.encours) l.push("  un bloc est en cours de fabrication");
       if (prets && prets === total) l.push("  → tout le montage se lit sans déplacement de fichier");
       return l;
