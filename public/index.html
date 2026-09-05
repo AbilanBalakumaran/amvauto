@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-05 07:05";
+const VERSION_PAGE = "2026-09-05 07:38";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4066,6 +4066,39 @@ function empreinteNombre(texte) {
 
 const empreinte = (texte) => empreinteNombre(texte).toString(36);
 
+/* Recopier ou réencoder : le choix appartient au montage, pas au bloc.
+
+   Un montage qui ne tire que d'une source recopie les octets de son rush ; tout
+   autre montage réencode ses blocs dans un cadre commun. Les deux produisent des
+   fichiers parfaitement lisibles — mais pas avec les mêmes paramètres d'image, et
+   le recollage exige que tous les blocs partagent exactement les mêmes. Un seul
+   bloc de l'autre sorte, et l'assemblage est refusé : ce montage-là perd le
+   fichier unique, c'est-à-dire tout ce qui rend la lecture fluide, pendant qu'un
+   autre montage du même projet va très bien.
+
+   Trois façons de mélanger, et toutes arrivent :
+   — un bloc qu'on n'a pas su recopier (pas d'image-clé utilisable au bon endroit)
+     retombe sur le réencodage tout seul, dans le fil ;
+   — un bloc refait après un décodage raté est toujours réencodé ;
+   — la clé du cache ne disait pas de quelle sorte était un bloc, si bien qu'un
+     bloc recopié pour un montage à une source ressortait tel quel dans un montage
+     à plusieurs, où tous les autres sont réencodés.
+
+   La sorte fait donc partie de la clé, et le premier refus de recopie fait passer
+   tout le montage au réencodage — une fois, définitivement pour la séance. */
+const copieRefusee = new Set();
+let modeCopieVu = { version: -1, projet: "", valeur: false };
+function modeCopie(projet) {
+  if (!projet) return false;
+  if (copieRefusee.has(projet.id)) return false;
+  if (modeCopieVu.version === versionMontage && modeCopieVu.projet === projet.id) {
+    return modeCopieVu.valeur;
+  }
+  const valeur = sourceUnique(projet);
+  modeCopieVu = { version: versionMontage, projet: projet.id, valeur };
+  return valeur;
+}
+
 function cleSegment(plan) {
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return "";
@@ -4076,7 +4109,8 @@ function cleSegment(plan) {
      correction serait ressorti du cache tel quel, avec ses blocs, et l'on aurait
      conclu que rien n'avait changé. Changer ce numéro refait tout. */
   return `seg:${empreinte(adresse)}:${entreeDe(plan).toFixed(3)}-${sortieDe(plan).toFixed(3)}`
-    + `:${cadre.large}x${cadre.haut}@${IMAGES_PAR_SECONDE}v${VERSION_SEGMENT}`;
+    + `:${cadre.large}x${cadre.haut}@${IMAGES_PAR_SECONDE}v${VERSION_SEGMENT}`
+    + (modeCopie(projetActif()) ? "c1" : "c0");
 }
 
 const segmentDe = (plan) => {
@@ -4790,6 +4824,27 @@ function filFabrique() {
         }
         parLecteur.add(attente.cle);
       } else {
+        /* Un bloc réencodé dans un montage qui recopie : tout le montage bascule.
+
+           Le fil n'a pas su recopier celui-là — pas d'image-clé utilisable au bon
+           endroit, ou c'est une reprise après un décodage raté — et il l'a
+           réencodé. Ses paramètres d'image ne sont plus ceux des autres, et le
+           recollage refuse d'assembler des blocs qui ne se ressemblent pas : ce
+           montage perdrait son fichier unique pour un seul bloc.
+
+           On passe donc tout le montage au réencodage. La clé des blocs change,
+           les blocs recopiés sortent du cache, et tout se refait de la même
+           sorte. Une fois, au premier refus. */
+        const projetDuBloc = projetActif();
+        if (projetDuBloc && !copie && modeCopie(projetDuBloc)) {
+          copieRefusee.add(projetDuBloc.id);
+          raisonsSegment.set(attente.cle,
+            "un bloc n'a pas pu être recopié : tout le montage passe au réencodage");
+          changerMontage();
+          majBarreCache();
+          setTimeout(() => fabriquerSuivant(), 0);
+          return;
+        }
         fabrique.faits += 1;
         fabrique.octets += octets || mp4.size;
         fabrique.duree += performance.now() - attente.depart;
@@ -5406,7 +5461,7 @@ async function fabriquerSuivant() {
     /* On ne recopie que si le montage entier tire d'une seule source : sinon
        les blocs ne se recolleraient plus, et le fichier unique est ce qui fait
        l'enchaînement. */
-    copie: sourceUnique(projetActif()),
+    copie: modeCopie(projetActif()),
   });
 }
 
@@ -13194,13 +13249,55 @@ $("btn-setting").addEventListener("click", () => {
     "",
     "Montage recollé :",
     ...(() => {
-      if (colle.echec) return [`  impossible : ${colle.echec}`];
+      /* Ce panneau est le seul endroit d'où l'utilisateur peut me dire pourquoi
+         un montage se lit mal et un autre non. Il montre donc toujours la
+         couverture, la sorte des blocs, et le dernier refus d'assemblage —
+         même quand un fichier existe déjà. */
+      const l = [];
+      const total = projetActif()?.plans.length || 0;
+      const sorte = modeCopie(projetActif()) ? "recopiés du rush" : "réencodés";
       if (colle.url) {
-        return [`  oui — un seul fichier de ${(colle.octets / 1e6).toFixed(1)} Mo, ${colle.images} images`,
-          "  la lecture n'a plus aucune coupe à encaisser"];
+        l.push(`  oui — un seul fichier de ${(colle.octets / 1e6).toFixed(1)} Mo, ${colle.images} images`);
+        l.push(`  couvre les plans ${(colle.debut || 0) + 1} à ${colle.jusqua} sur ${total}`);
+        if (montageEntier()) l.push("  la lecture n'a plus aucune coupe à encaisser");
+        else l.push("  hors de cette tranche, chaque coupe rouvre un fichier");
+      } else if (colle.encours) {
+        l.push("  en cours d'assemblage");
+      } else {
+        l.push("  pas encore : il faut au moins trois blocs prêts qui se suivent");
       }
-      if (colle.encours) return ["  en cours d'assemblage"];
-      return ["  pas encore : tous les blocs doivent d'abord être préparés"];
+      l.push(`  blocs ${sorte}`);
+      /* Et surtout : qui empêche la tranche de s'étendre.
+
+         Le recollage veut des blocs qui se suivent. Un seul plan sans bloc
+         arrête la tranche, et c'est lui qu'il faut nommer — pas le nombre de
+         blocs prêts, qui peut être élevé pendant que le montage n'en recolle
+         aucun. C'est la ligne à me lire quand un montage se lit mal et qu'un
+         autre va bien. */
+      if (!montageEntier()) {
+        const plans = projetActif()?.plans || [];
+        let bloquant = -1;
+        for (let i = colle.url ? colle.jusqua : 0; i < plans.length; i += 1) {
+          const cle = cleSegment(plans[i]);
+          if (!cle || !segments.has(cle)) { bloquant = i; break; }
+        }
+        if (bloquant >= 0) {
+          const plan = plans[bloquant];
+          const cle = cleSegment(plan);
+          const pourquoi = plan.youtube ? "bande-annonce YouTube, non lisible"
+            : !cle ? "pas de fichier vidéo"
+            : segmentsRates.has(cle) ? "bloc abandonné"
+            : parLecteur.has(cle) ? "à refaire par le lecteur — seulement à l'arrêt"
+            : laisserAuReseau(plan) ? "le rush est encore en route"
+            : raisonsSegment.get(cle) || "pas encore préparé";
+          l.push(`  bloqué au plan ${bloquant + 1} (${plan.name || plan.id}) : ${pourquoi}`);
+        }
+      }
+      if (colle.echec) l.push(`  dernier refus d'assemblage : ${colle.echec}`);
+      if (copieRefusee.has(state.actif)) {
+        l.push("  un bloc n'a pas pu être recopié : tout le montage a été réencodé");
+      }
+      return l;
     })(),
     "",
     "Cache de segments :",
