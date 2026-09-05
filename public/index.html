@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-05 14:30";
+const VERSION_PAGE = "2026-09-05 17:16";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3869,6 +3869,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     refuses: bilanApercu(projetActif()).refuses,
     parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
+    servis: { ...servis }, fileExtraits: fileExtraits.length,
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
     verifies: fabrique.verifies || 0, ecartLecteur: fabrique.ecartLecteur,
     faits: fabrique.faits, rates: fabrique.rates,
@@ -4859,7 +4860,7 @@ function filFabrique() {
            les blocs recopiés sortent du cache, et tout se refait de la même
            sorte. Une fois, au premier refus. */
         const projetDuBloc = projetActif();
-        if (projetDuBloc && !copie && modeCopie(projetDuBloc)) {
+        if (projetDuBloc && !copie && modeCopie(projetDuBloc) && !extraitsServeur.has(attente.cle)) {
           copieRefusee.add(projetDuBloc.id);
           raisonsSegment.set(attente.cle,
             "un bloc n'a pas pu être recopié : tout le montage passe au réencodage");
@@ -9663,6 +9664,9 @@ const laisserAuReseau = (plan) => {
   if (surColle(plan) || segmentDe(plan)) return false;
   // Le rush est là en tranches : ce qui manque, c'est le bloc, pas le réseau.
   if (tranchesEnMemoire.has(adresse)) return true;
+  // Et l'extrait du serveur est en route : il arrivera avant que le rush n'ait
+  // fini de se télécharger, et il rend le rush inutile.
+  if (extraitPrevu(plan)) return true;
   if (importsRates.has(adresse)) return false;
   // On ne sait pas encore si la réserve l'a : la question est posée.
   if (enFouille.has(adresse)) return true;
@@ -9681,6 +9685,191 @@ const avancement = (plan) => enImport.get(mediaDe(plan));
    soixante-quinze, une dizaine. On les évite en disant simplement : « attends,
    je regarde ». */
 const enFouille = new Set();
+
+/* Les extraits calculés par le serveur.
+
+   Un extrait ne dépend que du fichier d'origine et des deux bornes du plan : le
+   même rush coupé au même endroit donne toujours les mêmes octets. Le serveur
+   les calcule une fois et les range ; l'appareil n'a plus qu'à les prendre.
+
+   Ce que cela retire du téléphone, plan par plan : le téléchargement du rush —
+   dix mégaoctets contre moins d'un pour l'extrait —, le démultiplexage, et le
+   découpage. Il ne lui reste rien à faire d'autre qu'afficher.
+
+   Trois de front : ce sont de petits fichiers, et le serveur les sert depuis son
+   rangement. La file d'import des rushs, elle, reste à un seul — mais elle ne
+   sert plus que ce que le serveur n'a pas su découper. */
+const EXTRAITS_PARALLELES = 3;
+const fileExtraits = [];
+const extraitsEnCours = new Set();
+// Les plans dont le serveur n'a pas su faire l'extrait : l'appareil s'en occupe.
+const extraitsRefuses = new Set();
+// Ce qui est arrivé tout fait, pour le dire dans les infos.
+const servis = { extraits: 0, octets: 0 };
+
+const extraitPrevu = (plan) => {
+  const cle = cleSegment(plan);
+  return Boolean(cle) && (extraitsEnCours.has(cle)
+    || fileExtraits.some((autre) => cleSegment(autre) === cle));
+};
+
+function planifierExtrait(plan) {
+  if (serveurPossible === false) return false;
+  const cle = cleSegment(plan);
+  if (!cle || plan.youtube || segments.has(cle) || extraitsRefuses.has(cle)) return false;
+  if (extraitPrevu(plan)) return true;
+  fileExtraits.push(plan);
+  servirExtraits();
+  return true;
+}
+
+async function servirExtraits() {
+  while (extraitsEnCours.size < EXTRAITS_PARALLELES && fileExtraits.length) {
+    const plan = fileExtraits.shift();
+    const cle = cleSegment(plan);
+    if (!cle || segments.has(cle)) continue;
+    extraitsEnCours.add(cle);
+    prendreExtrait(plan, cle).finally(() => {
+      extraitsEnCours.delete(cle);
+      if (fileExtraits.length) servirExtraits();
+    });
+  }
+}
+
+/* Le premier extrait est mis à l'épreuve, les autres sont crus sur parole.
+
+   Les extraits sont des recopies : ils portent le codec du rush, et un appareil
+   qui ne sait pas le lire ne saura lire aucun d'eux. Le vérifier à chaque fois
+   coûterait un lecteur vidéo par plan ; le vérifier une fois suffit à savoir.
+
+   S'il ne passe pas, on cesse de demander au serveur pour la séance et tout
+   repasse par le chemin d'avant — rush, démultiplexage, réencodage. Plus lent,
+   mais c'est ce qui fait qu'un appareil qui ne lit pas le H.264 voit quand même
+   son montage. */
+let serveurPossible = null;
+let epreuveServeur = null;
+
+function lisibleParLecteur(url) {
+  return new Promise((rendre) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.preload = "auto";
+    video.style.cssText = "position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
+    document.body.append(video);
+    let fini = false;
+    const finir = (bon) => {
+      if (fini) return;
+      fini = true;
+      try { video.pause(); video.removeAttribute("src"); video.load(); } catch { /* déjà parti */ }
+      video.remove();
+      rendre(bon);
+    };
+    /* La preuve, c'est une image présentée — pas un « loadeddata ».
+
+       Un navigateur qui sait démultiplexer un MP4 sans savoir le décoder lève
+       « loadeddata » et annonce même des dimensions : la vérification passait,
+       et l'écran restait noir. « requestVideoFrameCallback » ne se déclenche,
+       lui, que lorsqu'une image a été présentée. */
+    try { video.requestVideoFrameCallback?.(() => finir(true)); } catch { /* pas partout */ }
+    if (typeof video.requestVideoFrameCallback !== "function") {
+      video.addEventListener("loadeddata", () => finir(video.readyState >= 2 && !!video.videoWidth), { once: true });
+    }
+    video.addEventListener("error", () => finir(false), { once: true });
+    setTimeout(() => finir(false), 6000);
+    video.src = url;
+    // iPhone ne charge rien tant qu'on ne demande pas à jouer.
+    video.play().then(() => video.pause()).catch(() => { /* le chargement suffira */ });
+  });
+}
+
+async function prendreExtrait(plan, cle) {
+  const adresse = mediaDe(plan);
+  if (!adresse) return;
+  const a = entreeDe(plan).toFixed(3);
+  const b = sortieDe(plan).toFixed(3);
+  try {
+    const reponse = await fetch(`/api/extrait?u=${encodeURIComponent(adresse)}&a=${a}&b=${b}`);
+    if (!reponse.ok) {
+      /* Le serveur ne sait pas tout découper — un rush qui ne sert pas de
+         plages, un codec qu'il ne recopie pas. Ce n'est pas une panne : ce
+         plan-là repasse par le chemin d'avant, rush compris.
+
+         Une seule exception : une panne de réseau ou un serveur momentanément
+         indisponible n'est pas un refus. On réessaie une fois avant de faire
+         descendre dix mégaoctets pour rien. */
+      if (reponse.status >= 500 && !secondEssai.has(cle)) {
+        secondEssai.add(cle);
+        fileExtraits.push(plan);
+        return;
+      }
+      extraitsRefuses.add(cle);
+      raisonsSegment.set(cle, `le serveur n'a pas su le découper (${reponse.status})`);
+      planifierImport(plan);
+      return;
+    }
+    const blob = await reponse.blob();
+    if (!blob.size) { extraitsRefuses.add(cle); planifierImport(plan); return; }
+    const decalage = Number(reponse.headers.get("x-amvauto-decalage")) || 0;
+    if (segments.has(cle)) return;
+    const adresseBlob = URL.createObjectURL(blob);
+    /* Une seule épreuve pour tout le monde : trois extraits arrivent de front, et
+       trois lecteurs vidéo ouverts en même temps sur un téléphone donnent des
+       réponses au hasard. Les suivants attendent la réponse du premier. */
+    if (serveurPossible === null) {
+      if (!epreuveServeur) epreuveServeur = lisibleParLecteur(adresseBlob);
+      serveurPossible = await epreuveServeur;
+      if (!serveurPossible) {
+        try { URL.revokeObjectURL(adresseBlob); } catch { /* déjà libéré */ }
+        fileExtraits.length = 0;
+        raisonsSegment.set(cle, "cet appareil ne lit pas les extraits du serveur");
+        extraitsRefuses.add(cle);
+        planifierImport(plan);
+        return;
+      }
+    }
+    segments.set(cle, { url: adresseBlob, taille: blob.size,
+      duree: duree(plan), verdict: null, copie: true, decalage, serveur: true });
+    extraitsServeur.add(cle);
+    servis.extraits += 1;
+    servis.octets += blob.size;
+    ecrireBase(cle, blob).catch(() => {});
+    fabrique.faits = (fabrique.faits || 0) + 1;
+    majBarreCache();
+    const projetVu = projetActif();
+    if (projetVu) majPreparation(projetVu);
+    retrouveSegment(plan);
+  } catch {
+    if (!secondEssai.has(cle)) { secondEssai.add(cle); fileExtraits.push(plan); return; }
+    extraitsRefuses.add(cle);
+    planifierImport(plan);
+  }
+}
+
+// Les extraits qu'on a déjà redemandés une fois après une panne passagère.
+const secondEssai = new Set();
+
+// Les blocs qui viennent du serveur : ils sont recopiés, et cela ne dit rien du
+// mode de fabrication du montage.
+const extraitsServeur = new Set();
+
+/* Un plan dont l'extrait vient d'arriver : c'est le moment de le montrer.
+
+   Sans cela, le plan à l'écran reste sur son image tenue jusqu'à la prochaine
+   coupe, alors que son bloc est là. */
+function retrouveSegment(plan) {
+  const projet = projetActif();
+  if (!projet || lecture.demande) return;
+  if (plan.id !== projet.plans[lecture.index]?.id) return;
+  const video = elementActif();
+  if (!video) return;
+  video.dataset.plan = "";
+  try {
+    poserPlan(lecture.index, Math.max(0, lecture.position - (offsets(projet.plans)[lecture.index] || 0)));
+  } catch { /* rien de prêt */ }
+}
 
 async function preparerLocal(plan) {
   const adresse = mediaDe(plan);
@@ -9732,10 +9921,19 @@ async function preparerLocalVraiment(plan, adresse) {
      pour des blocs parfaitement prêts, et l'on relançait le téléchargement de
      leurs rushs — c'est-à-dire tout ce qu'on venait d'économiser. On regarde
      donc aussi ce qui est rangé, sans en lire les octets. */
-  if (reglages.economie) {
+  {
     const cle = cleSegment(plan);
     if (cle && (segments.has(cle) || await existeBase(cle))) return;
   }
+  /* Le serveur d'abord, le rush ensuite.
+
+     L'extrait pèse moins d'un mégaoctet et arrive tout découpé ; le rush en pèse
+     dix et demande ensuite d'être démultiplexé et recoupé sur place. Tant que le
+     serveur sait faire, l'appareil n'a aucune raison de s'en charger.
+
+     S'il ne sait pas — rush qui ne sert pas de plages, codec qu'il ne recopie
+     pas — « prendreExtrait » remet le rush en file lui-même. */
+  if (planifierExtrait(plan)) return;
   planifierImport(plan);
 }
 
@@ -11816,10 +12014,23 @@ function prioriserImports(index) {
     .forEach((entree, position) => { fileImport[position] = entree.plan; });
 }
 
-// Tous les plans du projet sont importés, le plan courant d'abord.
+/* Tous les plans du projet, le plan courant d'abord.
+
+   L'extrait se demande par PLAN, le rush par FICHIER : un rush qui sert à trois
+   plans donne trois extraits, mais ne se télécharge qu'une fois. Les deux
+   passaient par « preparerLocal », qui se garde par adresse — les plans deux et
+   trois d'un même rush n'atteignaient donc jamais la demande d'extrait, et
+   repartaient chercher le rush entier. Mesuré : trois extraits demandés pour
+   douze plans, et neuf blocs fabriqués sur place pour rien.
+
+   On demande donc l'extrait pour chaque plan ; le rush n'est mis en file que
+   pour les plans dont le serveur n'a pas voulu. */
 function importerProjet(projet) {
   const ordre = [projet.plans[lecture.index], ...projet.plans].filter(Boolean);
-  for (const plan of ordre) preparerLocal(plan);
+  for (const plan of ordre) {
+    if (planifierExtrait(plan)) continue;
+    preparerLocal(plan);
+  }
 }
 
 // Un banc de montage n'attend pas son lecteur : une horloge avance, et l'image
@@ -13571,6 +13782,10 @@ $("btn-setting").addEventListener("click", () => {
           + ` · ${Math.round(fabrique.duree / fabrique.faits)} ms par bloc`);
       }
       if (fabrique.rates) l.push(`  refusés : ${fabrique.rates}`);
+      if (servis.extraits) {
+        l.push(`  ${servis.extraits} bloc(s) reçus tout faits du serveur`
+          + ` · ${(servis.octets / 1e6).toFixed(0)} Mo, sans rien décoder ici`);
+      }
       if (economies.tranches) {
         l.push(`  rushs pris par tranches : ${economies.tranches}`
           + ` · ${(economies.octets / 1e6).toFixed(0)} Mo qui n'ont pas traversé le réseau`);

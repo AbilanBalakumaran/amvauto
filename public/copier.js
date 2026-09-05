@@ -122,6 +122,7 @@ export function copierMorceau(donnees, carte, entree, sortie, caler = true) {
 
      On décale donc tous les instants d'affichage pour que le premier tombe à
      zéro. Le lecteur n'a plus rien à chercher : il joue. */
+  let premierInstant = debut;
   {
     let minimum = Infinity;
     let horloge = 0;
@@ -129,8 +130,10 @@ export function copierMorceau(donnees, carte, entree, sortie, caler = true) {
       minimum = Math.min(minimum, horloge + e.composition);
       horloge += e.duree;
     }
-    if (Number.isFinite(minimum) && minimum !== 0) {
-      for (const e of echantillons) e.composition -= minimum;
+    if (Number.isFinite(minimum)) {
+      // L'instant du rush qui se retrouve à zéro dans le fichier produit.
+      premierInstant = debut + minimum;
+      if (minimum !== 0) for (const e of echantillons) e.composition -= minimum;
     }
   }
 
@@ -152,11 +155,15 @@ export function copierMorceau(donnees, carte, entree, sortie, caler = true) {
     images: echantillons.length,
     largeur: carte.largeur,
     hauteur: carte.hauteur,
-    /* Plus rien à avancer : le premier instant du fichier est le bon. Le champ
-       reste, parce qu'un fichier dont les instants ne se ramèneraient pas à zéro
-       devrait encore être positionné, et que l'application n'a pas à le
-       supposer. */
-    decalage: 0,
+    /* De combien il faut avancer dans ce fichier pour voir l'image demandée.
+
+       Calé sur une image-clé, c'est zéro : le fichier commence exactement là où
+       le plan commence. Non calé, le fichier commence à l'image-clé qui précède
+       — il le faut, un décodeur ne sait pas partir d'ailleurs — et le plan
+       commence plus loin dedans. C'est ce qui permet de garder l'instant que
+       l'utilisateur a choisi : sur ces rushs-là, l'image-clé la plus proche est
+       parfois à trois secondes, et se caler dessus montre une autre scène. */
+    decalage: caler ? 0 : Math.max(0, entree - premierInstant / carte.echelle),
     // Où, dans le rush, ce morceau commence réellement — l'app en a besoin
     // pour rester d'accord avec elle-même sur ce que montre ce plan.
     entree: debutVise,
