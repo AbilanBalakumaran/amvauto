@@ -1741,7 +1741,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-05 17:16";
+const VERSION_PAGE = "2026-09-05 17:49";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3869,7 +3869,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     refuses: bilanApercu(projetActif()).refuses,
     parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
-    servis: { ...servis }, fileExtraits: fileExtraits.length,
+    servis: { ...servis }, fileExtraits: fileExtraits.length, compte: { ...compteExtraits },
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
     verifies: fabrique.verifies || 0, ecartLecteur: fabrique.ecartLecteur,
     faits: fabrique.faits, rates: fabrique.rates,
@@ -9700,12 +9700,17 @@ const enFouille = new Set();
    rangement. La file d'import des rushs, elle, reste à un seul — mais elle ne
    sert plus que ce que le serveur n'a pas su découper. */
 const EXTRAITS_PARALLELES = 3;
+/* Au bout de combien de temps on cesse d'attendre un extrait et l'on reprend le
+   chemin d'avant. Assez long pour qu'un extrait à calculer ait le temps
+   d'arriver, assez court pour qu'un montage ne reste jamais vide. */
+const ATTENTE_EXTRAIT = 25000;
 const fileExtraits = [];
 const extraitsEnCours = new Set();
 // Les plans dont le serveur n'a pas su faire l'extrait : l'appareil s'en occupe.
 const extraitsRefuses = new Set();
 // Ce qui est arrivé tout fait, pour le dire dans les infos.
 const servis = { extraits: 0, octets: 0 };
+const compteExtraits = { appels: 0, impossible: 0, inutile: 0, dejaEnFile: 0, mis: 0 };
 
 const extraitPrevu = (plan) => {
   const cle = cleSegment(plan);
@@ -9714,10 +9719,15 @@ const extraitPrevu = (plan) => {
 };
 
 function planifierExtrait(plan) {
-  if (serveurPossible === false) return false;
+  compteExtraits.appels += 1;
+  if (serveurPossible === false) { compteExtraits.impossible += 1; return false; }
   const cle = cleSegment(plan);
-  if (!cle || plan.youtube || segments.has(cle) || extraitsRefuses.has(cle)) return false;
-  if (extraitPrevu(plan)) return true;
+  if (!cle || plan.youtube || segments.has(cle) || extraitsRefuses.has(cle)) {
+    compteExtraits.inutile += 1;
+    return false;
+  }
+  if (extraitPrevu(plan)) { compteExtraits.dejaEnFile += 1; return true; }
+  compteExtraits.mis += 1;
   fileExtraits.push(plan);
   servirExtraits();
   return true;
@@ -9725,6 +9735,21 @@ function planifierExtrait(plan) {
 
 async function servirExtraits() {
   while (extraitsEnCours.size < EXTRAITS_PARALLELES && fileExtraits.length) {
+    /* Le plus proche de la tête d'abord.
+
+       Cent soixante-quinze extraits à trois de front, servis dans l'ordre du
+       montage, c'est le dernier plan qui décide du moment où l'on peut
+       regarder. Ce qui compte, c'est que les premiers plans arrivent — le reste
+       peut continuer pendant qu'on regarde. */
+    if (fileExtraits.length > 1) {
+      const plans = projetActif()?.plans || [];
+      const tete = lecture.index || 0;
+      const rang = (autre) => {
+        const i = plans.indexOf(autre);
+        return i < 0 ? Infinity : (i - tete + plans.length) % plans.length;
+      };
+      fileExtraits.sort((a, b) => rang(a) - rang(b));
+    }
     const plan = fileExtraits.shift();
     const cle = cleSegment(plan);
     if (!cle || segments.has(cle)) continue;
@@ -9925,15 +9950,36 @@ async function preparerLocalVraiment(plan, adresse) {
     const cle = cleSegment(plan);
     if (cle && (segments.has(cle) || await existeBase(cle))) return;
   }
-  /* Le serveur d'abord, le rush ensuite.
+  /* Le serveur d'abord, le rush ensuite — et seulement pour ce qui manque.
+
+     On arrive ici après avoir cherché le fichier sur l'appareil et ne pas l'y
+     avoir trouvé. C'est le seul cas où demander quoi que ce soit au réseau a un
+     sens : un rush déjà rangé se découpe sur place, gratuitement, sans un octet.
 
      L'extrait pèse moins d'un mégaoctet et arrive tout découpé ; le rush en pèse
-     dix et demande ensuite d'être démultiplexé et recoupé sur place. Tant que le
-     serveur sait faire, l'appareil n'a aucune raison de s'en charger.
+     dix et demande ensuite d'être démultiplexé et recoupé. On demande donc un
+     extrait pour CHAQUE plan que ce fichier sert — la demande est par plan, le
+     fichier par adresse — et le rush n'est mis en file que si aucun extrait
+     n'est en route.
 
-     S'il ne sait pas — rush qui ne sert pas de plages, codec qu'il ne recopie
-     pas — « prendreExtrait » remet le rush en file lui-même. */
-  if (planifierExtrait(plan)) return;
+     Jamais indéfiniment : une file qui n'avance plus laisserait le montage vide.
+     Passé le délai, on redemande le rush comme avant. */
+  let attendus = 0;
+  for (const projet of state.projets || []) {
+    for (const autre of projet.plans || []) {
+      if (mediaDe(autre) !== adresse || autre.youtube) continue;
+      if (planifierExtrait(autre)) attendus += 1;
+    }
+  }
+  if (attendus) {
+    setTimeout(() => {
+      if (locales.has(adresse) || tranchesEnMemoire.has(adresse)) return;
+      if (extraitPrevu(plan)) return;
+      if (segments.has(cleSegment(plan))) return;
+      planifierImport(plan);
+    }, ATTENTE_EXTRAIT);
+    return;
+  }
   planifierImport(plan);
 }
 
@@ -12028,7 +12074,17 @@ function prioriserImports(index) {
 function importerProjet(projet) {
   const ordre = [projet.plans[lecture.index], ...projet.plans].filter(Boolean);
   for (const plan of ordre) {
-    if (planifierExtrait(plan)) continue;
+    /* Les deux, toujours, et dans cet ordre.
+
+       « preparerLocal » ne se contente pas de mettre un rush en file : c'est lui
+       qui RETROUVE les fichiers déjà rangés sur l'appareil et les rend à
+       l'écran. L'avoir sauté quand un extrait était demandé a coûté cher — plus
+       aucun rush n'était retrouvé, le compteur annonçait « 175 à importer » sur
+       un projet entièrement rapatrié, et l'écran restait noir.
+
+       La demande d'extrait, elle, se fait par plan ; le rush par fichier. Les
+       deux cohabitent : « preparerLocal » ne met le rush en file que si aucun
+       extrait n'est en route pour ce plan-là. */
     preparerLocal(plan);
   }
 }
