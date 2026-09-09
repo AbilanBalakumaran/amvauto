@@ -29,7 +29,24 @@
 import { controle } from "./coffre.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const TOURS = 200_000;
+/* Le nombre de tours de PBKDF2, et pourquoi il vaut exactement cela.
+
+   Deux cent mille était le bon chiffre du point de vue de la cryptographie. Il
+   était surtout le chiffre qui rendait la création de compte IMPOSSIBLE : la
+   plateforme refuse au-delà de cent mille — « iteration counts above 100000 are
+   not supported » — et chaque inscription échouait avec cette erreur. Personne
+   n'a donc jamais pu créer de compte, donc jamais se connecter, donc jamais
+   retrouver ses montages sur un autre appareil.
+
+   Le banc d'essai ne l'avait pas vu : il tourne sur l'implémentation locale de
+   wrangler, qui n'a pas ce plafond. C'est la leçon de cette panne — un compte
+   se vérifie sur le vrai serveur, pas sur son imitation.
+
+   Cent mille tours restent solides : c'est ce que recommande l'OWASP pour
+   PBKDF2-SHA-256, et le mot de passe n'est de toute façon jamais écrit. Le
+   nombre de tours est désormais rangé avec chaque fiche : le jour où la
+   plateforme en permettra davantage, les anciennes se vérifieront encore. */
+const TOURS = 100_000;
 const VIE_JETON = 60 * 60 * 24 * 30;      // trente jours
 const ESSAIS_MAX = 8;                     // par quart d'heure et par identifiant
 const VIE_ESSAIS = 60 * 15;
@@ -67,12 +84,12 @@ function secoursNeuf() {
 const nettoyerSecours = (brut) =>
   String(brut || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 
-async function empreinte(secret, sel) {
+async function empreinte(secret, sel, tours = TOURS) {
   const graine = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(secret), "PBKDF2", false, ["deriveBits"],
   );
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: new TextEncoder().encode(sel), iterations: TOURS },
+    { name: "PBKDF2", hash: "SHA-256", salt: new TextEncoder().encode(sel), iterations: tours },
     graine, 256,
   );
   return hexa(bits);
@@ -161,6 +178,7 @@ export async function compte(request, url, env) {
     const fiche = {
       affiche: identifiant,
       sel,
+      tours: TOURS,
       empreinte: await empreinte(corps.motdepasse, sel),
       selSecours,
       empreinteSecours: await empreinte(nettoyerSecours(secours), selSecours),
@@ -185,7 +203,7 @@ export async function compte(request, url, env) {
       return refus("Identifiant ou mot de passe incorrect.", 401);
     }
     const fiche = JSON.parse(brut);
-    const essai = await empreinte(corps.motdepasse, fiche.sel);
+    const essai = await empreinte(corps.motdepasse, fiche.sel, fiche.tours || TOURS);
     if (!memeEmpreinte(essai, fiche.empreinte)) {
       await noterEchec(env, garde.cle, garde.compte);
       return refus("Identifiant ou mot de passe incorrect.", 401);
@@ -205,7 +223,7 @@ export async function compte(request, url, env) {
       return refus("Identifiant ou code de secours incorrect.", 401);
     }
     const fiche = JSON.parse(brut);
-    const essai = await empreinte(nettoyerSecours(corps.secours), fiche.selSecours);
+    const essai = await empreinte(nettoyerSecours(corps.secours), fiche.selSecours, fiche.tours || TOURS);
     if (!memeEmpreinte(essai, fiche.empreinteSecours)) {
       await noterEchec(env, garde.cle, garde.compte);
       return refus("Identifiant ou code de secours incorrect.", 401);
@@ -214,6 +232,7 @@ export async function compte(request, url, env) {
        ne vaut plus rien. Sinon un code recopié une fois vaudrait pour toujours. */
     const secours = secoursNeuf();
     fiche.sel = tirer(16);
+    fiche.tours = TOURS;
     fiche.empreinte = await empreinte(corps.motdepasse, fiche.sel);
     fiche.selSecours = tirer(16);
     fiche.empreinteSecours = await empreinte(nettoyerSecours(secours), fiche.selSecours);

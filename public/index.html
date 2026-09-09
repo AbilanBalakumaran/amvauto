@@ -1571,8 +1571,10 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
       <span class="app-logo"><img src="icon.svg" alt=""></span>
       <span class="app-title">AMVAUTO</span>
       <span class="app-count" id="compteur"></span>
-      <span class="app-actions" id="app-actions" hidden>
-        <button type="button" id="btn-export" class="tete-btn accent">Export</button>
+      <!-- Jamais caché au départ : « Setting » est le seul chemin vers la
+           connexion, et un appareil neuf n'a ni projet ni onglet actif. -->
+      <span class="app-actions" id="app-actions">
+        <button type="button" id="btn-export" class="tete-btn accent" hidden>Export</button>
         <button type="button" id="btn-setting" class="tete-btn">Setting</button>
       </span>
     </div>
@@ -1741,7 +1743,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-05 17:49";
+const VERSION_PAGE = "2026-09-09 17:43";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1950,7 +1952,17 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     document.querySelector("main").classList.toggle("montage", onglet === "projet");
     $("barre-outils").hidden = onglet !== "projet";
     $("compteur").hidden = onglet === "projet";
-    if (onglet !== "projet") $("app-actions").hidden = true;
+    /* « Setting » reste atteignable de partout.
+
+       Il n'apparaissait que sur l'onglet Projet, et seulement s'il existait un
+       projet. Sur un appareil neuf — celui, précisément, où l'on veut se
+       connecter pour retrouver ses montages — il n'y a ni l'un ni l'autre : le
+       bouton était invisible, et le formulaire de connexion inatteignable.
+       C'était cela, « la connexion ne marche pas ».
+
+       « Export », lui, garde sa règle : sans montage il n'aurait rien à écrire. */
+    $("app-actions").hidden = false;
+    $("btn-export").hidden = onglet !== "projet" || !projetActif();
     if (onglet === "projet") rendreProjet();
     else arreter();
     if (onglet === "histoire") rendreHistoire();
@@ -3022,10 +3034,11 @@ function rendreProjet() {
   const vue = $("vue-projet");
   const projet = projetActif();
   const morceaux = [barreProjets()];
-  /* Les réglages s'ouvrent dès qu'un projet existe, même vide : c'est là que
-     vit la sauvegarde en ligne, et un projet vide est justement celui d'où l'on
-     part. L'export, lui, n'aurait rien à écrire — il se grise. */
-  $("app-actions").hidden = !projet;
+  /* Les réglages s'ouvrent toujours : c'est là que vit la connexion, et c'est
+     sur un appareil sans le moindre montage qu'on en a le plus besoin. L'export,
+     lui, n'aurait rien à écrire sans projet. */
+  $("app-actions").hidden = false;
+  $("btn-export").hidden = !projet;
   /* L'ordre compte : trois lignes plus bas, on sait traiter l'absence de projet
      — mais celle-ci lisait « projet.plans » avant d'y arriver. Sur un appareil
      vierge, où il n'y a par définition aucun projet, l'onglet Projet levait donc
@@ -10565,19 +10578,53 @@ async function reprendreSession() {
     if (!reponse.ok) { ecrireJeton(null); return; }
     const charge = await reponse.json();
     session.identifiant = charge.identifiant || "";
-    if (charge.code) adopterCode(charge.code);
+    if (charge.code) await adopterCode(charge.code);
   } catch { /* hors ligne : on réessaiera à l'ouverture des réglages */ }
   majCompte();
 }
 
-/* Le code du compte devient celui de l'appareil : c'est par lui que les
-   montages voyagent. */
-function adopterCode(code) {
+/* Le code du compte devient celui de l'appareil, ET l'on va chercher ce qu'il
+   contient.
+
+   C'est ici que la connexion se terminait sans rien faire. Elle posait le code,
+   puis appelait « chargerCoffre » — qui relit le réglage dans le stockage local,
+   et ne va pas sur le réseau. Les montages de l'autre appareil n'étaient donc
+   jamais demandés : on se connectait, et il ne se passait rien. Il fallait
+   recharger la page à la main pour que le coffre soit consulté, parce que la
+   seule demande existante était celle du démarrage.
+
+   Pire : dix secondes plus tard, le dépôt différé montait l'état LOCAL — vide,
+   puisqu'on venait d'arriver sur cet appareil — et écrasait le coffre. Se
+   connecter pouvait donc effacer ses propres montages.
+
+   On récupère donc tout de suite, et l'on ne dépose plus rien tant qu'on n'a
+   pas lu. */
+async function adopterCode(code) {
   if (!code || coffre.code === code) return;
   coffre.code = code;
   coffre.actif = true;
+  coffre.lu = false;
   noterCoffre();
-  chargerCoffre();
+  try {
+    const bilan = await recuperer(code);
+    coffre.lu = true;
+    if (!bilan.vide && (bilan.ajoutes || bilan.remplaces || bilan.effaces)) {
+      rendreProjet();
+      rendre();
+    }
+    /* Et ce qui était déjà ici monte à son tour.
+
+       Le dépôt n'était déclenché que par « sauver », c'est-à-dire par une
+       modification. Quelqu'un qui se connecte pour mettre ses montages à l'abri
+       et n'y touche plus ensuite ne déposait donc rien du tout : le coffre
+       restait vide, et l'autre appareil ne recevait rien. Se connecter est en
+       soi la demande. */
+    if ((state.projets || []).length) planifierDepot();
+    majPanneauCoffre();
+  } catch (erreur) {
+    coffre.etat = `coffre injoignable (${erreur?.message || erreur})`;
+    majPanneauCoffre();
+  }
 }
 
 function champCompte(nom, type, marque, aide) {
@@ -10693,7 +10740,10 @@ function majCompte() {
       });
       ecrireJeton(charge.jeton);
       session.identifiant = charge.identifiant || "";
-      if (charge.code) adopterCode(charge.code);
+      // On attend d'avoir rapatrié : le panneau qui se referme sur un projet
+      // vide alors que le coffre en contient est exactement ce qui donnait
+      // « la connexion ne marche pas ».
+      if (charge.code) await adopterCode(charge.code);
       majCompte();
       if (charge.secours) montrerSecours(charge.secours);
     } catch (erreur) {
@@ -13683,8 +13733,19 @@ function lienGrenier(rendu) {
 }
 
 $("btn-setting").addEventListener("click", () => {
-  const projet = projetActif();
-  if (!projet) return;
+  /* Les réglages s'ouvrent même sans montage ouvert.
+
+     Ils sortaient tout de suite quand aucun projet n'était actif : sur un
+     appareil neuf — c'est-à-dire exactement celui où l'on veut se connecter
+     pour retrouver ses montages — le bouton ne faisait rien du tout, et le
+     formulaire de connexion était inatteignable. « La partie connexion ne
+     marche pas » : elle n'était pas accessible.
+
+     Un montage vide sert de doublure : tout ce qui le compte compte zéro, et
+     les deux gestes qui le modifient — renommer, supprimer — sont écartés plus
+     bas. */
+  const projetVrai = projetActif();
+  const projet = projetVrai || { id: "", nom: "Réglages", cree: 0, plans: [] };
   const fond = $("feuille");
   const boite = document.createElement("div");
   boite.className = "lecteur-boite";
@@ -13959,6 +14020,7 @@ $("btn-setting").addEventListener("click", () => {
   renommer.type = "button";
   renommer.textContent = "Renommer le projet";
   renommer.addEventListener("click", () => {
+    if (!projetVrai) return;
     const nom = prompt("Nom du projet", projet.nom);
     if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); enregistrer(projet); }
     fermerFeuille();
@@ -13977,6 +14039,7 @@ $("btn-setting").addEventListener("click", () => {
   jeter.type = "button";
   jeter.textContent = "Supprimer le projet";
   jeter.addEventListener("click", () => {
+    if (!projetVrai) return;
     if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
     supprimerProjet(projet);
     fermerFeuille();
@@ -16479,7 +16542,9 @@ function codeValide(code) {
   return controleCode(code.slice(0, 18)) === code.slice(18);
 }
 
-const coffre = { code: null, actif: false, depot: null, dernier: null, etat: "", echecs: 0, envoi: 0, depuis: 0, enAttente: false };
+/* « lu » : le coffre a-t-il été consulté depuis l'ouverture ? Tant qu'il ne
+   l'est pas, on ne monte rien qui puisse l'écraser. */
+const coffre = { code: null, actif: false, depot: null, dernier: null, etat: "", echecs: 0, envoi: 0, depuis: 0, enAttente: false, lu: false };
 
 /* Deux limites du plan gratuit gouvernent l'espacement des envois : mille
    écritures par jour, et pas plus d'une par seconde sur la même clé — et nos
@@ -16534,6 +16599,16 @@ function planifierDepot() {
 
 async function deposer() {
   if (!coffre.actif || !coffre.code) return;
+  /* On ne monte jamais du vide sur un coffre qu'on n'a pas encore lu.
+
+     Un appareil qui vient de se connecter n'a rien en local. Déposer à cet
+     instant remplace les montages de l'autre appareil par une liste vide — et
+     c'est irrattrapable. Tant que la lecture n'a pas eu lieu, on attend ; elle
+     est demandée à l'adoption du code et au démarrage. */
+  if (!coffre.lu && !(state.projets || []).length) {
+    coffre.enAttente = true;
+    return;
+  }
   coffre.enAttente = false;
   coffre.envoi = performance.now();
   try {
@@ -17049,6 +17124,7 @@ chargerCoffre();
 if (coffre.actif && coffre.code) {
   recuperer(coffre.code)
     .then((bilan) => {
+      coffre.lu = true;
       if (bilan.vide || (!bilan.ajoutes && !bilan.remplaces)) return;
       rendreProjet();
       rendre();
