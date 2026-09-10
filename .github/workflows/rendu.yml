@@ -1,0 +1,59 @@
+# Le rendu final, fait ailleurs.
+#
+# Le téléphone n'envoie qu'une feuille de route : quelques kilo-octets de JSON —
+# les adresses des rushs, les bornes de chaque plan, la musique. Le runner, lui,
+# a la fibre, un processeur qui ne chauffe pas dans une poche, et FFmpeg.
+#
+# Deux minutes de runner Linux par rendu, sur les deux mille offertes chaque
+# mois : de quoi rendre plusieurs centaines d'AMV sans rien payer.
+#
+# Déclenchement : POST sur l'API GitHub avec un jeton personnel de portée
+# « actions:write », ou depuis l'onglet Actions du dépôt.
+name: Rendu AMV
+
+on:
+  workflow_dispatch:
+    inputs:
+      montage:
+        description: "La feuille de route du montage, en JSON"
+        required: true
+        type: string
+      nom:
+        description: "Nom du fichier rendu"
+        required: false
+        default: amv
+        type: string
+
+# Le job n'a besoin que d'écrire son artefact : rien d'autre du dépôt.
+permissions:
+  contents: read
+
+jobs:
+  rendre:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Récupérer le script de rendu
+        uses: actions/checkout@v4
+
+      - name: Installer FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Écrire la feuille de route
+        env:
+          MONTAGE: ${{ inputs.montage }}
+        run: printf '%s' "$MONTAGE" > montage.json
+
+      - name: Rendre
+        run: python3 tools/rendu.py montage.json sortie.mp4
+
+      - name: Publier le fichier
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.nom }}
+          path: sortie.mp4
+          retention-days: 7
+          if-no-files-found: error

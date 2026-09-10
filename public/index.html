@@ -1743,7 +1743,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-09 17:43";
+const VERSION_PAGE = "2026-09-10 17:19";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1786,15 +1786,22 @@ if ("serviceWorker" in navigator) {
       // Au tout premier lancement, le worker prend la main sur une page qui
       // n'en avait pas : recharger n'apporterait rien et ferait clignoter
       // l'application. On ne recharge que sur une vraie mise à jour.
+      /* Une mise à jour ne recharge plus la page toute seule.
+
+         Recharger réinitialise le contexte : les tampons des lecteurs vidéo
+         sont perdus, les fichiers rangés doivent être relus, la préparation
+         repart de zéro. Sur un montage de cent soixante-quinze plans, cela
+         coûte tout ce qui avait été préparé — et cela tombait au pire moment,
+         puisque le nouveau worker prend la main pendant qu'on travaille.
+
+         Le nouveau code est installé et attendra la prochaine ouverture. On le
+         signale, discrètement, et c'est l'utilisateur qui décide. */
       const premiereInstallation = !navigator.serviceWorker.controller;
-      let recharge = false;
+      let signale = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (recharge || premiereInstallation) return;
-        recharge = true;
-        // L'écran de démarrage se rallume d'abord : l'utilisateur voit un seul
-        // écran noir continu au lieu de deux démarrages successifs.
-        montrerDemarrage();
-        location.reload();
+        if (signale || premiereInstallation) return;
+        signale = true;
+        signalerVersion("Une nouvelle version est installée.");
       });
     } catch {
       // Sans service worker l'application marche, elle ne s'installe pas.
@@ -1832,32 +1839,46 @@ function verifierVersion(reste = 2) {
          n'était plus jamais rechargée toute seule. Elle n'obtenait qu'un
          bandeau. On compare donc la version, ce qui laisse une tentative
          automatique à chacune, sans jamais boucler sur la même. */
-      if (sessionStorage.getItem("amvauto-maj") !== version) {
-        sessionStorage.setItem("amvauto-maj", version);
-        const maj = navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null);
-        Promise.resolve(maj)
-          .then((enregistrement) => enregistrement?.update())
-          .catch(() => {})
-          .finally(() => {
-            montrerDemarrage();
-            location.replace(`${location.pathname}?v=${Date.now()}`);
-          });
-        return;
-      }
+      /* On installe en silence, et on propose. Jamais de saut d'écran.
 
-    const bandeau = document.createElement("div");
-    bandeau.className = "bandeau-version";
-    bandeau.innerHTML = `<span>Nouvelle version disponible (${version}) — celle-ci date du ${VERSION_PAGE}.</span>`;
-    const recharger = document.createElement("button");
-    recharger.type = "button";
-    recharger.textContent = "Recharger";
-    recharger.addEventListener("click", () => location.replace(`${location.pathname}?v=${Date.now()}`));
-    bandeau.append(recharger);
-    document.body.prepend(bandeau);
+         Le rechargement automatique était la cause d'un défaut qu'on mettait
+         sur le compte du chargement : l'application repartait de zéro au milieu
+         d'une séance, perdait ses tampons et relisait tout son rangement. Le
+         nouveau code est prêt ; il prendra la main à la prochaine ouverture, ou
+         tout de suite si on le demande. */
+      navigator.serviceWorker?.getRegistration?.()
+        ?.then((enregistrement) => enregistrement?.update())
+        .catch(() => {});
+      signalerVersion(`Nouvelle version disponible (${version}) — celle-ci date du ${VERSION_PAGE}.`);
     })
     /* Une réponse manquée n'est pas une version identique : sur un lien mobile,
        un appel qui échoue laissait croire que tout était à jour. On retente. */
     .catch(() => { if (reste > 0) setTimeout(() => verifierVersion(reste - 1), 5000); });
+}
+
+/* Le bandeau de mise à jour : discret, et c'est l'utilisateur qui décide.
+
+   Un seul à la fois — le worker et le contrôle de version peuvent le demander
+   tous les deux, et deux bandeaux empilés ne disent rien de plus. */
+function signalerVersion(texte) {
+  if (document.querySelector(".bandeau-version")) return;
+  const bandeau = document.createElement("div");
+  bandeau.className = "bandeau-version";
+  const mot = document.createElement("span");
+  mot.textContent = `${texte} Elle s'appliquera à la prochaine ouverture.`;
+  const recharger = document.createElement("button");
+  recharger.type = "button";
+  recharger.textContent = "Recharger maintenant";
+  recharger.addEventListener("click", () => {
+    montrerDemarrage();
+    location.replace(`${location.pathname}?v=${Date.now()}`);
+  });
+  const plusTard = document.createElement("button");
+  plusTard.type = "button";
+  plusTard.textContent = "Plus tard";
+  plusTard.addEventListener("click", () => bandeau.remove());
+  bandeau.append(mot, recharger, plusTard);
+  document.body.prepend(bandeau);
 }
 verifierVersion();
 const PAR_PAGE = 100;
@@ -3883,6 +3904,8 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
     servis: { ...servis }, fileExtraits: fileExtraits.length, compte: { ...compteExtraits },
+    reserve: { ...reserve, octets: poidsReserve(), plafond: PLAFOND_RESERVE,
+      lecteurs: NOMS_LECTEURS.length, webkit: SUR_WEBKIT },
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
     verifies: fabrique.verifies || 0, ecartLecteur: fabrique.ecartLecteur,
     faits: fabrique.faits, rates: fabrique.rates,
@@ -4266,6 +4289,10 @@ function changerProjet(id) {
   if (!id || state.actif === id) return;
   state.actif = id;
   oublierColle();
+  /* Le montage qu'on quitte cesse d'être protégé : c'est le seul moment où une
+     grande quantité de place redevient disponible d'un coup. La purge ne se
+     déclenchait qu'à l'écriture suivante, donc trop tard et par miettes. */
+  setTimeout(() => { faireDeLaPlace(0).catch(() => {}); }, 1500);
   // La file se rend au nouveau projet ; ce qui est déjà en vol va à son terme,
   // et ce qui n'a pas commencé sera replanifié par l'affichage.
   fileImport.length = 0;
@@ -5724,7 +5751,33 @@ function amorcerAvance(index) {
    et il reste un lecteur pour le plan sortant pendant son relais. Un plan
    dispose donc de deux plans de temps pour se préparer au lieu d'un, et rien
    n'a plus à être chargé au moment de la coupe. */
-const NOMS_LECTEURS = ["a", "b", "c", "d"];
+/* Le nombre de lecteurs vidéo suit le budget de décodeurs de l'appareil.
+
+   Quatre lecteurs, plus la sonde à imagettes, font cinq sessions de décodage
+   ouvertes en même temps. Sur WebKit — donc sur tout iPhone, quel que soit le
+   navigateur — le nombre de décodeurs matériels simultanés est petit : au-delà,
+   le système bascule en décodage logiciel (l'image tombe à quelques images par
+   seconde et l'appareil chauffe) ou refuse purement l'allocation (image noire,
+   horloge qui décroche).
+
+   Trois suffisent à tout ce que fait l'application : celui qu'on regarde, le
+   sortant qui couvre la coupe, et un préparé d'avance. Le quatrième ne servait
+   qu'à préparer un plan de plus — un confort qui coûte une session de décodage
+   permanente. La sonde à imagettes, elle, rend la sienne au bout de trois
+   secondes d'inactivité et se tait pendant la lecture.
+
+   Ailleurs — Chrome sur Android, un ordinateur — la contrainte n'existe pas et
+   l'on garde les quatre. */
+const SUR_WEBKIT = (() => {
+  try {
+    const ua = navigator.userAgent || "";
+    // Tout navigateur sur iOS est WebKit, Chrome et Firefox compris.
+    if (/iPad|iPhone|iPod/.test(ua)) return true;
+    if (navigator.maxTouchPoints > 1 && /Macintosh/.test(ua)) return true;   // iPad récent
+    return /Safari/.test(ua) && !/Chrom|Android/.test(ua);
+  } catch { return false; }
+})();
+const NOMS_LECTEURS = SUR_WEBKIT ? ["a", "b", "c"] : ["a", "b", "c", "d"];
 const AVANCE_PLANS = 2;
 
 const lecteurDe = (nom) => document.getElementById(`lecteur-${nom}`);
@@ -9484,7 +9537,11 @@ async function lireBase(adresse) {
   if (!base) return null;
   return new Promise((ok) => {
     const requete = base.transaction(MAGASIN, "readonly").objectStore(MAGASIN).get(adresse);
-    requete.onsuccess = () => ok(requete.result || null);
+    requete.onsuccess = () => {
+      // Lire, c'est se servir : l'ancienneté se compte depuis le dernier usage.
+      if (requete.result) noterUsage(adresse, requete.result.size);
+      ok(requete.result || null);
+    };
     requete.onerror = () => ok(null);
   });
 }
@@ -9527,9 +9584,121 @@ const cleParticelle = (adresse) => `partiel:${adresse}`;
    enchaînait comme si de rien n'était : le fichier était compté comme rapatrié,
    alors que rien n'avait été écrit. À la réouverture il manquait, sans que rien
    n'ait jamais signalé que la place manquait. Un stockage plein doit se dire. */
+/* --- le cache circulaire : un plafond dur, et le plus ancien s'en va -------
+
+   Le rangement grossissait sans limite. Un montage de cent soixante-quinze
+   plans tirés de trois mille six cents mégaoctets de rushs remplissait le
+   téléphone, et l'écriture finissait par être refusée — « mémoire de l'appareil
+   pleine » — sans que rien n'ait jamais fait de place.
+
+   On tient donc un plafond franc et on purge par ancienneté d'usage. Deux
+   choses seulement sont purgeables, et c'est la règle qui décide de tout :
+   ce qui se retrouve. Un extrait se recalcule au serveur, un rush se
+   retélécharge — ils peuvent partir. La musique que l'utilisateur a fournie et
+   les rendus qu'il a produits ne se retrouvent nulle part : ils ne partent
+   jamais, quel que soit le plafond.
+
+   L'index des usages tient dans le stockage local : quelques dizaines d'octets
+   par entrée, relu instantanément, et reconstruit tout seul s'il se perd. On
+   évite ainsi de changer la structure de la base, et donc toute migration. */
+const PLAFOND_RESERVE = 150 * 1024 * 1024;
+const CLE_USAGES = "amvauto-usages";
+const PURGEABLE = (cle) => typeof cle === "string"
+  && (cle.startsWith("seg:") || cle.startsWith("partiel:") || /^https?:/.test(cle));
+
+let usages = null;
+
+function lireUsages() {
+  if (usages) return usages;
+  try { usages = JSON.parse(localStorage.getItem(CLE_USAGES) || "{}"); }
+  catch { usages = {}; }
+  if (!usages || typeof usages !== "object") usages = {};
+  return usages;
+}
+
+let ecritureUsages = null;
+function noterUsages() {
+  clearTimeout(ecritureUsages);
+  // Grouper : une écriture par salve, pas une par fichier rangé.
+  ecritureUsages = setTimeout(() => {
+    try { localStorage.setItem(CLE_USAGES, JSON.stringify(usages || {})); }
+    catch { /* le journal des usages est un confort, pas une donnée */ }
+  }, 1500);
+}
+
+function noterUsage(cle, octets) {
+  if (!PURGEABLE(cle)) return;
+  const carnet = lireUsages();
+  const avant = carnet[cle];
+  carnet[cle] = { t: Date.now(), o: octets ?? avant?.o ?? 0 };
+  noterUsages();
+}
+
+const poidsReserve = () => Object.values(lireUsages())
+  .reduce((somme, x) => somme + (x?.o || 0), 0);
+
+/* Faire de la place avant d'écrire, jamais après.
+
+   Écrire puis nettoyer laisse le pic de remplissage se produire : c'est
+   exactement lui qui déclenche le refus du système. On libère donc d'abord. */
+async function faireDeLaPlace(besoin) {
+  const carnet = lireUsages();
+  let total = poidsReserve();
+  if (total + besoin <= PLAFOND_RESERVE) return 0;
+  const parAge = Object.entries(carnet)
+    .filter(([cle]) => PURGEABLE(cle))
+    .sort((a, b) => (a[1]?.t || 0) - (b[1]?.t || 0));
+  const vivantes = clesVivantes();
+  let partis = 0;
+  for (const [cle, quoi] of parAge) {
+    if (total + besoin <= PLAFOND_RESERVE) break;
+    // Ce dont le montage OUVERT a besoin ne part pas : le purger reviendrait à
+    // le retélécharger dans la seconde. Tout le reste est purgeable, y compris
+    // les blocs des autres montages — ils se refont.
+    if (vivantes.has(cle)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await effacerBase(cle).catch(() => {});
+    delete carnet[cle];
+    total -= quoi?.o || 0;
+    partis += 1;
+  }
+  if (partis) { noterUsages(); mesurerPlace(); }
+  reserve.purges += partis;
+  /* Quand le montage ouvert pèse à lui seul plus que le plafond, il n'y a rien
+     à purger et le plafond est dépassé. Ce n'est pas une panne — on ne va pas
+     effacer ce qu'on est en train de lire — mais cela doit se dire. */
+  reserve.serre = total + besoin > PLAFOND_RESERVE;
+  return partis;
+}
+
+/* Ce dont le montage ouvert a besoin : ses blocs et ses rushs. */
+function clesVivantes() {
+  const vives = new Set();
+  for (const plan of projetActif()?.plans || []) {
+    const cle = cleSegment(plan);
+    if (cle) vives.add(cle);
+    const adresse = mediaDe(plan);
+    if (adresse) { vives.add(adresse); vives.add(cleParticelle(adresse)); }
+  }
+  return vives;
+}
+
+// Ce que la purge a fait, pour le dire dans les infos.
+const reserve = { purges: 0, serre: false };
+
+/* Le rangement est verrouillé : sans cela, iOS se sert dans nos fichiers dès
+   que la place manque ailleurs, et un montage préparé la veille est à refaire.
+   La demande ne coûte rien et ne s'affiche que si le système le décide. */
+(async () => {
+  try { if (navigator.storage?.persist) await navigator.storage.persist(); }
+  catch { /* le navigateur ne le propose pas */ }
+})();
+
 async function ecrireBase(adresse, blob) {
   const base = await ouvrirBase();
   if (!base) return false;
+  const octets = blob?.size || 0;
+  if (PURGEABLE(adresse)) await faireDeLaPlace(octets);
   return new Promise((ok) => {
     let transaction;
     try {
@@ -9539,7 +9708,7 @@ async function ecrireBase(adresse, blob) {
       noterPlaceRefusee(erreur);
       return ok(false);
     }
-    transaction.oncomplete = () => ok(true);
+    transaction.oncomplete = () => { noterUsage(adresse, octets); ok(true); };
     transaction.onerror = () => { noterPlaceRefusee(transaction.error); ok(false); };
     transaction.onabort = () => { noterPlaceRefusee(transaction.error); ok(false); };
   });
@@ -13899,6 +14068,15 @@ $("btn-setting").addEventListener("click", () => {
           + ` · ${Math.round(fabrique.duree / fabrique.faits)} ms par bloc`);
       }
       if (fabrique.rates) l.push(`  refusés : ${fabrique.rates}`);
+      {
+        const pris = poidsReserve();
+        l.push(`  réserve : ${(pris / 1e6).toFixed(0)} Mo sur ${(PLAFOND_RESERVE / 1e6).toFixed(0)} Mo`
+          + (reserve.purges ? ` · ${reserve.purges} fichier(s) rendus à l'appareil` : ""));
+        if (reserve.serre) {
+          l.push("  ce montage à lui seul dépasse le plafond : rien d'autre n'est gardé");
+        }
+        l.push(`  lecteurs vidéo : ${NOMS_LECTEURS.length}${SUR_WEBKIT ? " (budget WebKit)" : ""}`);
+      }
       if (servis.extraits) {
         l.push(`  ${servis.extraits} bloc(s) reçus tout faits du serveur`
           + ` · ${(servis.octets / 1e6).toFixed(0)} Mo, sans rien décoder ici`);
