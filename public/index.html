@@ -1163,16 +1163,26 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   height: 100%;
   min-height: 56px;
   border-radius: 4px;
-  background: #202020 center/cover no-repeat;
+  /* Le fond du bloc est peint par la toile de la piste, qui passe dessous :
+     un bloc transparent laisse voir sa pellicule sans la porter lui-même. */
+  background: transparent;
   box-shadow: inset -1px 0 0 rgba(0, 0, 0, .75);
   cursor: grab;
   overflow: hidden;
   touch-action: none;
 }
-/* Seule la partie visible du bloc est peinte : la position et la largeur sont
-   posées par le script à chaque défilement. */
-.clip canvas.bande { position: absolute; top: 0; bottom: 0; height: 100%; display: block; }
-.clip canvas.bande[hidden] { display: none; }
+/* La pellicule de toute la piste, sur une seule toile.
+
+   Elle est posée en absolu pour rester hors du flux : la piste est une rangée
+   souple, et une toile qui y entrerait comme élément décalerait tous les blocs.
+   Elle ne reçoit aucun geste — ce sont les blocs, au-dessus, qui les portent. */
+.rail canvas.rail-bande {
+  position: absolute;
+  z-index: 0;
+  display: block;
+  pointer-events: none;
+}
+.clip > * { position: relative; z-index: 1; }
 .clip::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.10), rgba(0,0,0,.68)); }
 /* Chaque bloc porte son propre liseré, dessiné à l'intérieur de sa largeur :
    deux blocs voisins se distinguent alors nettement, sans décaler d'un pixel la
@@ -1743,7 +1753,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-10 17:19";
+const VERSION_PAGE = "2026-09-10 18:13";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3904,6 +3914,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
     servis: { ...servis }, fileExtraits: fileExtraits.length, compte: { ...compteExtraits },
+    pellicule: { ...pellicule },
     reserve: { ...reserve, octets: poidsReserve(), plafond: PLAFOND_RESERVE,
       lecteurs: NOMS_LECTEURS.length, webkit: SUR_WEBKIT },
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
@@ -6692,6 +6703,10 @@ function reveillerSonde(sonde) {
 }
 
 const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" };
+// Au-delà, une capture est considérée perdue et la sonde repart : c'est plus
+// long que le délai interne de la capture, qui doit avoir sa chance d'abord.
+const GARDE_SONDE = 12000;
+let gardeSonde = null;
 
 function servirImagettes() {
   if (sondeOccupee) return;
@@ -6743,6 +6758,27 @@ function servirImagettes() {
   if (bande.images.has(identifiant)) { bande.demandes.delete(identifiant); return servirImagettes(); }
   sondeOccupee = true;
   pellicule.lancees += 1;
+  /* Un chien de garde sur la sonde elle-même.
+
+     Mesuré sur quarante blocs : quatre-vingts imagettes demandées, UNE seule
+     capture lancée, aucune prise et aucun échec. La capture n'était donc ni
+     réussie ni abandonnée — elle ne rendait simplement jamais la main, et
+     « sondeOccupee » restait vrai pour toute la séance. La pellicule était
+     morte dès la première image, sans un mot.
+
+     Le délai interne de la capture ne suffit pas : il est posé APRÈS le début
+     du travail, et tout ce qui échoue avant lui échappe à sa surveillance. On
+     surveille donc depuis l'extérieur, et l'on rend la sonde quoi qu'il arrive.
+     Une pellicule lente vaut infiniment mieux qu'une pellicule morte. */
+  clearTimeout(gardeSonde);
+  gardeSonde = setTimeout(() => {
+    if (!sondeOccupee) return;
+    sondeOccupee = false;
+    bandeDe(plan).demandes.delete(identifiant);
+    pellicule.ratees += 1;
+    pellicule.dernier = "la sonde n'a pas rendu la main";
+    servirImagettes();
+  }, GARDE_SONDE);
 
   if (!sondeBande) sondeBande = creerSondeBande();
   const sonde = sondeBande;
@@ -6752,7 +6788,20 @@ function servirImagettes() {
      « teinte » définitivement toute toile où on la dessine — la pellicule, puis
      le moniteur — et interdit d'en relire quoi que ce soit. Sur une copie
      locale, la question ne se pose pas : elle vient de la page elle-même. */
-  const local = estLocal(plan);
+  /* Le bloc déjà fabriqué fait une source de vignettes idéale.
+
+     La pellicule ne savait tirer ses images que du rush : soit la copie locale,
+     soit le relais. Depuis que les blocs viennent découpés du serveur, le rush
+     n'arrive plus jamais sur l'appareil — et la règle « attends la copie locale
+     plutôt que d'ouvrir une seconde connexion » vidait donc la pellicule pour
+     de bon. Mesuré : quarante blocs, une seule teinte, aucune image.
+
+     Or l'extrait est là, il est local, il pèse mille fois moins que le rush et
+     il contient exactement les images du plan. C'est de lui qu'on tire la
+     pellicule. Ses instants ne sont pas ceux du rush : « versSource » fait la
+     conversion, et c'est la seule chose qui change. */
+  const extrait = segmentDe(plan);
+  const local = estLocal(plan) || Boolean(extrait);
   /* Une imagette ne vaut pas dix mégaoctets.
 
      Quand le rush a été rendu au téléphone — son extrait est fait, il ne sert
@@ -6780,6 +6829,12 @@ function servirImagettes() {
     return;
   }
   const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(mediaDe(plan))}`;
+  /* D'un instant du rush à l'instant correspondant dans la source qu'on ouvre.
+     Sur le rush lui-même, c'est l'identité ; sur un extrait, on retranche le
+     début du plan et l'on ajoute l'avance que l'extrait porte devant lui. */
+  const versSource = (instant) => (extrait
+    ? Math.max(0, (extrait.decalage || 0) + (instant - entreeDe(plan)))
+    : instant);
   const exact = identifiant.startsWith("exact:");
 
   let fini = false;
@@ -6822,6 +6877,7 @@ function servirImagettes() {
         ` (état ${sonde.readyState}/4${sonde.error ? `, erreur ${sonde.error.code}` : ""})`;
     }
     sondeOccupee = false;
+    clearTimeout(gardeSonde);
     setTimeout(servirImagettes, 0);
     /* File vide : la sonde garde sinon un fichier décodé ouvert, prêt à servir,
        pour rien. Sur une copie locale, la rouvrir ne coûte presque rien ; sur le
@@ -6836,7 +6892,7 @@ function servirImagettes() {
     if (sonde.readyState < 2 || !sonde.videoWidth) { reveillerSonde(sonde); return; }
     // Une image d'entrée doit tomber juste ; ailleurs, quelques centièmes
     // d'écart ne se voient pas.
-    if (Math.abs(sonde.currentTime - temps) > (exact ? 0.12 : 0.35)) return;
+    if (Math.abs(sonde.currentTime - versSource(temps)) > (exact ? 0.12 : 0.35)) return;
     const toile = document.createElement("canvas");
     toile.width = 160;
     toile.height = Math.round((160 * sonde.videoHeight) / sonde.videoWidth) || 90;
@@ -6857,8 +6913,9 @@ function servirImagettes() {
 
   const viser = () => {
     if (sonde.readyState < 1) { reveillerSonde(sonde); return; }
-    if (Math.abs(sonde.currentTime - temps) < 0.001) capter();
-    else sonde.currentTime = Math.min(temps, sonde.duration || temps);
+    const vise = versSource(temps);
+    if (Math.abs(sonde.currentTime - vise) < 0.001) capter();
+    else sonde.currentTime = Math.min(vise, sonde.duration || vise);
   };
 
   if (sonde.dataset.source !== source) {
@@ -7054,33 +7111,64 @@ function peindreBandes() {
   const droiteVue = cadre.scrollLeft + cadre.clientWidth + MARGE_BANDE;
   const pas = pasGrille();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  let x = 0;
 
-  [...rail.children].forEach((bloc, index) => {
+  /* Une seule toile pour toute la piste, et non plus une par bloc.
+
+     Une toile par bloc paraissait naturelle — chacun peint la sienne. Mais
+     dézoomé, un montage de cent soixante-quinze plans les met TOUS à l'écran,
+     larges de deux ou trois points : cent soixante-quinze contextes graphiques
+     ouverts, chacun avec sa mémoire réservée chez le compositeur. C'est cette
+     mémoire-là qui est comptée sur Safari mobile, et c'est elle qui fait tomber
+     l'application sur les longues pistes.
+
+     La toile unique ne couvre que la partie visible de la piste, marge
+     comprise : sa taille ne dépend donc plus de la longueur du montage. Les
+     blocs restent des éléments à part entière — ce sont eux qui portent le nom,
+     la durée, la sélection, le rognage et le déplacement — mais ils ne peignent
+     plus rien. Un div ne coûte pas de contexte graphique.
+
+     Le tracé lui-même ne change pas : on déplace l'origine au bord gauche de
+     chaque bloc, et le code des colonnes s'écrit exactement comme avant. */
+  const largeVue = Math.max(1, Math.round(droiteVue - gaucheVue));
+  const premierBloc = rail.querySelector(".clip");
+  const hautVue = Math.max(1, premierBloc?.clientHeight || 56);
+  let toile = rail.querySelector("canvas.rail-bande");
+  if (!toile) {
+    toile = document.createElement("canvas");
+    toile.className = "rail-bande";
+    rail.prepend(toile);
+  }
+  const largeurVuePx = Math.round(largeVue * dpr);
+  const hauteurPx = Math.round(hautVue * dpr);
+  if (toile.width !== largeurVuePx || toile.height !== hauteurPx) {
+    toile.width = largeurVuePx;
+    toile.height = hauteurPx;
+  }
+  toile.style.left = `${gaucheVue}px`;
+  toile.style.width = `${largeVue}px`;
+  toile.style.height = `${hautVue}px`;
+  toile.style.top = `${premierBloc?.offsetTop || 0}px`;
+  const ctx = toile.getContext("2d");
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, largeurVuePx, hauteurPx);
+
+  let x = 0;
+  [...rail.querySelectorAll(".clip")].forEach((bloc, index) => {
     const plan = projet.plans[index];
-    const toile = bloc.querySelector("canvas.bande");
     const large = largeurClip(plan);
-    if (!plan || !toile) { x += large; return; }
+    if (!plan) { x += large; return; }
 
     const gauche = Math.max(x, gaucheVue);
     const droite = Math.min(x + large, droiteVue);
-    if (droite - gauche < 1) {
-      toile.hidden = true;
-      x += large;
-      return;
-    }
-    toile.hidden = false;
-    toile.style.left = `${gauche - x}px`;
-    toile.style.width = `${droite - gauche}px`;
+    if (droite - gauche < 1) { x += large; return; }
 
     const largeurPx = Math.max(1, Math.round((droite - gauche) * dpr));
-    const hauteurPx = Math.max(1, Math.round(bloc.clientHeight * dpr));
-    if (toile.width !== largeurPx || toile.height !== hauteurPx) {
-      toile.width = largeurPx;
-      toile.height = hauteurPx;
-    }
-    const ctx = toile.getContext("2d");
-    ctx.clearRect(0, 0, largeurPx, hauteurPx);
+    // L'origine se pose au bord gauche visible du bloc : tout ce qui suit se
+    // dessine comme si le bloc avait sa propre toile.
+    ctx.setTransform(1, 0, 0, 1, Math.round((gauche - gaucheVue) * dpr), 0);
+    // Le fond du bloc, que le CSS ne pose plus : c'est la toile qui le porte.
+    ctx.fillStyle = "#202020";
+    ctx.fillRect(0, 0, largeurPx, hauteurPx);
 
     /* Deux régimes.
 
@@ -7179,6 +7267,7 @@ function peindreBandes() {
     }
     x += large;
   });
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 /* Prépare les plans à venir sur les lecteurs disponibles.
@@ -7725,16 +7814,24 @@ function blocPlan(projet, plan, index) {
   if (plan.youtube) clip.classList.add("hors-lecture");
   if (estLocal(plan)) clip.classList.add("local");
 
-  const pellicule = document.createElement("canvas");
-  pellicule.className = "bande";
+  /* Le bloc naît sans pellicule.
 
+     Une toile par bloc, c'est cent soixante-quinze contextes graphiques ouverts
+     pour un montage de cent soixante-quinze plans — dont une vingtaine sont à
+     l'écran. Chacun réserve de la mémoire au compositeur, et sur Safari mobile
+     cette mémoire-là est comptée : c'est elle qui fait tomber l'application
+     quand la piste est longue.
+
+     La toile est donc posée quand le bloc entre dans le champ, et retirée quand
+     il en sort. Le bloc, lui, reste : c'est lui qui porte le nom, la durée, la
+     sélection et les gestes — et un div ne coûte pas de contexte graphique. */
   const etiquette = document.createElement("span");
   etiquette.className = "clip-nom";
   etiquette.textContent = plan.name;
   const chiffre = document.createElement("span");
   chiffre.className = "clip-duree";
   chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${duree(plan).toFixed(1)}s` : "…";
-  clip.append(pellicule, etiquette, chiffre);
+  clip.append(etiquette, chiffre);
 
   brancherGlisse(clip, projet, index);
 
