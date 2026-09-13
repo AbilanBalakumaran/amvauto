@@ -1777,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-13 12:28";
+const VERSION_PAGE = "2026-09-13 12:47";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3509,20 +3509,26 @@ function creerLecteur(nom) {
      Le bloc est donc condamné ici, au plus tôt : à l'avance, c'est-à-dire avant
      que la coupe arrive, et la fabrique a le temps d'en refaire un lisible. */
   video.addEventListener("error", () => {
-    const jete = condamnerBloc(video.currentSrc || video.src,
+    const suite = condamnerBloc(video.currentSrc || video.src,
       `erreur ${video.error?.code ?? "?"}`);
     if (video !== elementActif()) return;
     const plan = projetActif()?.plans[lecture.index];
     const vide = $("ecran-vide");
     if (!plan || !vide) return;
-    vide.textContent = jete
-      ? `${plan.name} — bloc illisible, on le refait`
-      : `${plan.name} — fichier injoignable`;
+    /* Trois issues, et elles n'appellent pas la même chose : le bloc est
+       repris tel quel, le bloc est jeté et refait, ou ce n'était pas un bloc du
+       tout. Sauter un plan ne se justifie que dans le dernier cas — dans les
+       deux autres, le fichier revient. */
+    if (suite) {
+      vide.textContent = suite === "repris"
+        ? `${plan.name} — on rouvre le bloc`
+        : `${plan.name} — bloc illisible, on le refait`;
+      vide.hidden = false;
+      poserPlan(lecture.index, 0, lecture.demande);
+      return;
+    }
+    vide.textContent = `${plan.name} — fichier injoignable`;
     vide.hidden = false;
-    /* Un bloc jeté n'est pas un plan à sauter : sa source vient de changer, et
-       le replacer sur le rush suffit à le montrer. Sauter ferait perdre un plan
-       du montage pour un fichier qu'on est en train de remplacer. */
-    if (jete) { poserPlan(lecture.index, 0, lecture.demande); return; }
     if (lecture.jouant) planSuivant();
   });
 
@@ -3967,6 +3973,10 @@ window.__banc = {
   blocsRefuses: () => blocsRefuses, noterBloc: (c, q) => noterBloc(c, q),
   ecrireBase: (c, b) => ecrireBase(c, b), reprendreSegments: (p) => reprendreSegments(p),
   condamnerBloc: (u, q) => condamnerBloc(u, q), lireBlocs: () => lireBlocs(),
+  journal: () => journal, veillerCoherence: (v, p) => veillerCoherence(v, p),
+  tranches: () => tranchesEnMemoire, positionCible: () => positionCible(),
+  laisserAuReseau: (p) => laisserAuReseau(p), elementActif: () => elementActif(),
+  mediaDe: (p) => mediaDe(p), extraitsRefuses: () => extraitsRefuses,
 };
 
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
@@ -4285,13 +4295,47 @@ const segmentDe = (plan) => {
    On le jette donc : du cache, de la base, et du vivier. Le plan repasse par la
    fabrique, qui le réencode — c'est plus lourd, mais cette fois l'appareil le
    lit. */
-const blocsRefuses = { combien: 0, copies: 0, reencodes: 0, dernier: "" };
+const blocsRefuses = { combien: 0, copies: 0, reencodes: 0, dernier: "", repris: 0 };
+
+/* Une erreur, une seconde chance — avant de tout refaire.
+
+   La première version condamnait au premier refus. C'était trop dur, et le
+   relevé suivant l'a montré : cinquante-huit blocs jetés, dont DIX réencodés
+   sur l'appareil même. Un bloc réencodé ici n'est pas « mauvais » : il vient
+   d'être écrit par cet appareil, dans le format de cet appareil. S'il est
+   refusé, ce n'est pas le fichier, c'est le moment — WebKit ne tient qu'un
+   petit nombre de décodages à la fois, et la sonde de la pellicule, la
+   fabrique et les trois lecteurs se les disputent.
+
+   Or condamner coûte cher : trois cent sept blocs fabriqués pour cent douze
+   places, 171 ms par bloc au lieu de 59, vingt-deux arrêts de lecture. La
+   correction se payait elle-même en pression, qui provoquait les refus
+   suivants. C'était un cercle, et il était de moi.
+
+   On rend donc sa source au lecteur et l'on réessaie une fois. Ce n'est qu'au
+   second refus, sur le même fichier, qu'on admet que le bloc est en cause. */
+const secondeChanceBloc = new Set();
 
 function condamnerBloc(adresse, pourquoi) {
-  if (!adresse || !String(adresse).startsWith("blob:")) return false;
+  if (!adresse || !String(adresse).startsWith("blob:")) return "";
   let vise = "";
   for (const [cle, quoi] of segments) if (quoi?.url === adresse) { vise = cle; break; }
-  if (!vise) return false;
+  if (!vise) return "";
+  if (!secondeChanceBloc.has(adresse)) {
+    secondeChanceBloc.add(adresse);
+    blocsRefuses.repris += 1;
+    blocsRefuses.dernier = `${pourquoi} — on le rouvre une fois avant de le juger`;
+    // Le lecteur repart de zéro sur le même fichier : c'est la seule façon de
+    // savoir si c'était le fichier ou l'instant.
+    for (const nom of NOMS_LECTEURS) {
+      const autre = lecteurDe(nom);
+      if (!autre || autre.dataset.source !== adresse) continue;
+      autre.dataset.plan = "";
+      autre.dataset.source = "";
+      try { autre.removeAttribute("src"); autre.load(); } catch { /* parti */ }
+    }
+    return "repris";
+  }
   const quoi = segments.get(vise);
   blocsRefuses.combien += 1;
   if (quoi?.copie) blocsRefuses.copies += 1; else blocsRefuses.reencodes += 1;
@@ -4326,7 +4370,7 @@ function condamnerBloc(adresse, pourquoi) {
   const aRefaire = (projet?.plans || []).find((plan) => cleSegment(plan) === vise);
   if (aRefaire) planifierImport(aRefaire);
   setTimeout(() => fabriquerSuivant(), 0);
-  return true;
+  return "jete";
 }
 
 const surSegment = (plan) => Boolean(segmentDe(plan));
@@ -5925,8 +5969,13 @@ async function eprouverBlocsRestaures() {
   for (const [, quoi] of aVoir) quoi.eprouve = true;
   for (const [, quoi] of aVoir) {
     // eslint-disable-next-line no-await-in-loop
-    const ouvre = await lisibleParLecteur(quoi.url);
-    if (!ouvre) condamnerBloc(quoi.url, "relu du cache et illisible");
+    // Deux ouvertures ratées de suite : là, c'est bien le fichier.
+    // eslint-disable-next-line no-await-in-loop
+    if (await lisibleParLecteur(quoi.url)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    if (await lisibleParLecteur(quoi.url)) continue;
+    condamnerBloc(quoi.url, "relu du cache et illisible");
+    condamnerBloc(quoi.url, "relu du cache et illisible");
   }
 }
 
@@ -6194,6 +6243,17 @@ function veillerCoherence(video, plan) {
   }
   const cible = positionCible();
   if (!cible || cible.plan.youtube) { veille.depuis = 0; return; }
+  /* Un plan qu'on laisse au réseau n'est pas un désaccord à corriger.
+
+     « poserPlan » efface volontairement le plan du lecteur dans ce cas — il
+     attend son fichier, il ne doit pas en ouvrir un autre. Le chien de garde
+     voyait alors un lecteur sans plan, concluait au désaccord, et reposait le
+     plan… qui s'effaçait de nouveau. Relevé sur l'appareil : huit « désaccord
+     corrigé (plan faux) » en vingt secondes, toujours au même instant, et
+     « le moniteur montre le plan ? ». Chacune de ces corrections relance la
+     préparation des suivants et la file d'import : c'est du travail pur perte,
+     une fois et demie par seconde, pendant qu'on regarde. */
+  if (laisserAuReseau(cible.plan)) { veille.depuis = 0; return; }
 
   const bonPlan = video?.dataset.plan === cible.plan.id;
   const attendu = entreeLue(cible.plan) + cible.dans;
@@ -14781,10 +14841,17 @@ $("btn-setting").addEventListener("click", () => {
       /* Les blocs que le lecteur de CET appareil a refusés. Un bloc parfait
          ailleurs peut être illisible ici — et tant qu'on ne le comptait pas, il
          revenait noir à chaque tour de boucle. */
-      if (blocsRefuses.combien) {
-        lignes.push(`  blocs refusés par le lecteur : ${blocsRefuses.combien}`
-          + ` (${blocsRefuses.copies} recopié(s), ${blocsRefuses.reencodes} réencodé(s))`);
-        lignes.push(`    dernier : ${blocsRefuses.dernier}`);
+      if (blocsRefuses.combien || blocsRefuses.repris) {
+        /* Deux nombres, et c'est leur rapport qui compte : un bloc rouvert et
+           qui repart n'accuse pas le fichier, il dit que l'appareil n'avait
+           plus de décodeur libre à cet instant-là. Un bloc jeté, lui, est
+           vraiment en cause. */
+        lignes.push(`  blocs rouverts après une erreur : ${blocsRefuses.repris}`
+          + ` · jetés au second refus : ${blocsRefuses.combien}`
+          + (blocsRefuses.combien
+            ? ` (${blocsRefuses.copies} recopié(s), ${blocsRefuses.reencodes} réencodé(s))`
+            : ""));
+        if (blocsRefuses.dernier) lignes.push(`    dernier : ${blocsRefuses.dernier}`);
       }
       if (b.dernierRefus) lignes.push(`  dernier refus d'amorce : ${b.dernierRefus}`);
       if (b.amorcesRefusees > 0 && b.amorcesRefusees >= b.amorces / 2) {
