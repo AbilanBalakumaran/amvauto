@@ -1753,7 +1753,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-13 07:59";
+const VERSION_PAGE = "2026-09-13 09:25";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3473,13 +3473,32 @@ function creerLecteur(nom) {
     if (video.dataset.plan !== String(projetActif()?.plans[lecture.index]?.id)) return;
     planSuivant();
   });
+  /* Une erreur sur N'IMPORTE QUEL lecteur du vivier, pas seulement sur l'actif.
+
+     Les blocs sont ouverts deux plans à l'avance : quand l'un est illisible,
+     l'erreur tombe sur un lecteur qui ne montre encore rien, et elle était donc
+     ignorée. Le bloc restait « prêt », le lecteur restait marqué comme portant
+     ce plan, et la bascule suivante le comptait « à chaud » — un lecteur mort
+     compté comme prêt. C'est la lecture même du relevé de l'appareil : vingt-six
+     bascules à chaud sur vingt-huit, et l'écran noir aux trois quarts.
+
+     Le bloc est donc condamné ici, au plus tôt : à l'avance, c'est-à-dire avant
+     que la coupe arrive, et la fabrique a le temps d'en refaire un lisible. */
   video.addEventListener("error", () => {
+    const jete = condamnerBloc(video.currentSrc || video.src,
+      `erreur ${video.error?.code ?? "?"}`);
     if (video !== elementActif()) return;
     const plan = projetActif()?.plans[lecture.index];
     const vide = $("ecran-vide");
     if (!plan || !vide) return;
-    vide.textContent = `${plan.name} — fichier injoignable`;
+    vide.textContent = jete
+      ? `${plan.name} — bloc illisible, on le refait`
+      : `${plan.name} — fichier injoignable`;
     vide.hidden = false;
+    /* Un bloc jeté n'est pas un plan à sauter : sa source vient de changer, et
+       le replacer sur le rush suffit à le montrer. Sauter ferait perdre un plan
+       du montage pour un fichier qu'on est en train de remplacer. */
+    if (jete) { poserPlan(lecture.index, 0, lecture.demande); return; }
     if (lecture.jouant) planSuivant();
   });
 
@@ -3907,6 +3926,25 @@ function compterJouants() {
 window.__colleUrl = () => colle.url || "";
 window.__segments = () => [...segments.values()].map((x) => x.verdict).filter(Boolean);
 window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } catch { return ""; } };
+/* La poignée du banc d'essai.
+
+   L'application est un module : rien de ce qu'elle déclare n'est joignable du
+   dehors, et un banc ne peut donc rien vérifier qu'elle ne montre. « __etat »
+   rend des nombres ; il en faut un peu plus pour éprouver un chemin précis —
+   poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
+   donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
+window.__banc = {
+  projetActif: () => projetActif(), cleSegment: (p) => cleSegment(p),
+  segmentDe: (p) => segmentDe(p), entreeLue: (p) => entreeLue(p),
+  estLocal: (p) => estLocal(p), locales: () => locales, segments: () => segments,
+  bandeDe: (p) => bandeDe(p), entreeDe: (p) => entreeDe(p),
+  demanderImagette: (...a) => demanderImagette(...a), pellicule: () => pellicule,
+  lecteurDe: (n) => lecteurDe(n), lecteurs: () => NOMS_LECTEURS,
+  blocsRefuses: () => blocsRefuses, noterBloc: (c, q) => noterBloc(c, q),
+  ecrireBase: (c, b) => ecrireBase(c, b), reprendreSegments: (p) => reprendreSegments(p),
+  condamnerBloc: (u, q) => condamnerBloc(u, q), lireBlocs: () => lireBlocs(),
+};
+
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
   /* La réserve, en chiffres : c'est elle que le moniteur montre au lancement et
      à chaque coupe, et sa définition décide de la netteté de ces instants-là.
@@ -3947,6 +3985,8 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     cles: { connues: clesConnues.size, refusees: clesRefusees.size, file: fileCles.length },
     reserve: { ...reserve, octets: poidsReserve(), plafond: PLAFOND_RESERVE,
       lecteurs: NOMS_LECTEURS.length, webkit: SUR_WEBKIT },
+    blocsRefuses: { ...blocsRefuses },
+    restaures: [...segments.values()].filter((x) => x.restaure).length,
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
     verifies: fabrique.verifies || 0, ecartLecteur: fabrique.ecartLecteur,
     faits: fabrique.faits, rates: fabrique.rates,
@@ -4197,6 +4237,73 @@ const segmentDe = (plan) => {
   const cle = cleSegment(plan);
   return cle ? segments.get(cle) || null : null;
 };
+
+/* --- un bloc que le lecteur refuse est jeté, pas subi ---------------------
+
+   C'était le trou le plus coûteux de la lecture, et il ne se voyait pas dans le
+   code : un bloc que le lecteur n'ouvre pas restait dans le cache, déclaré prêt,
+   pour toujours. Relevé sur l'appareil : « état 0/4 · erreur 4 » — c'est-à-dire
+   « source non gérée », refusée avant même qu'il soit question d'horodatage — et
+   douze demandes de position de suite sur un lecteur qui ne chargerait jamais
+   rien. L'écran restait noir soixante-dix-sept pour cent du temps, et le même
+   bloc revenait noir à chaque tour de boucle.
+
+   Deux raisons à cela, et il fallait les deux :
+
+     — l'erreur n'était regardée que sur le lecteur ACTIF. Or les blocs sont
+       ouverts deux plans à l'avance, sur les lecteurs du vivier : l'erreur y
+       tombait dans le silence, et la bascule suivante comptait ce lecteur mort
+       comme « prêt » — « 26 bascules à chaud » sur 28, alors qu'aucune n'avait
+       d'image ;
+     — rien ne jetait le bloc. Le refuser une fois ne coûte qu'une image ; le
+       garder coûte le plan entier, à chaque lecture.
+
+   On le jette donc : du cache, de la base, et du vivier. Le plan repasse par la
+   fabrique, qui le réencode — c'est plus lourd, mais cette fois l'appareil le
+   lit. */
+const blocsRefuses = { combien: 0, copies: 0, reencodes: 0, dernier: "" };
+
+function condamnerBloc(adresse, pourquoi) {
+  if (!adresse || !String(adresse).startsWith("blob:")) return false;
+  let vise = "";
+  for (const [cle, quoi] of segments) if (quoi?.url === adresse) { vise = cle; break; }
+  if (!vise) return false;
+  const quoi = segments.get(vise);
+  blocsRefuses.combien += 1;
+  if (quoi?.copie) blocsRefuses.copies += 1; else blocsRefuses.reencodes += 1;
+  blocsRefuses.dernier = `${pourquoi} — bloc ${quoi?.copie ? "recopié" : "réencodé"}`
+    + `${quoi?.restaure ? ", relu du cache" : ", fait à l'instant"}`
+    + ` (${((quoi?.taille || 0) / 1000).toFixed(0)} ko)`;
+  segments.delete(vise);
+  oublierBloc(vise);
+  try { URL.revokeObjectURL(adresse); } catch { /* déjà libéré */ }
+  effacerBase(vise).catch(() => {});
+  raisonsSegment.set(vise, `le lecteur a refusé ce bloc (${pourquoi})`);
+  /* Le serveur n'a pas à le redécouper : ses octets seraient les mêmes, et c'est
+     justement eux que l'appareil refuse. Ce plan-là sera réencodé sur place. */
+  extraitsRefuses.add(vise);
+  /* Et aucun lecteur du vivier ne doit plus se croire prêt sur ce fichier. */
+  for (const nom of NOMS_LECTEURS) {
+    const autre = lecteurDe(nom);
+    if (!autre || autre.dataset.source !== adresse) continue;
+    autre.dataset.plan = "";
+    autre.dataset.source = "";
+    try { autre.pause(); autre.removeAttribute("src"); autre.load(); } catch { /* parti */ }
+  }
+  majBarreCache();
+  const projet = projetActif();
+  if (projet) majPreparation(projet);
+  /* Le plan retrouve son rush et repasse par la fabrique.
+
+     Pas « redemarrerFabrique » : celle-là tue le fil et compte un redémarrage,
+     et sur un cache entier de blocs refusés elle atteindrait sa limite et
+     renoncerait à tout fabriquer. Ici rien n'est cassé — un bloc de moins à
+     faire, un de plus à refaire. */
+  const aRefaire = (projet?.plans || []).find((plan) => cleSegment(plan) === vise);
+  if (aRefaire) planifierImport(aRefaire);
+  setTimeout(() => fabriquerSuivant(), 0);
+  return true;
+}
 
 const surSegment = (plan) => Boolean(segmentDe(plan));
 
@@ -4961,6 +5068,7 @@ function filFabrique() {
              zéro. */
           copie: !!copie, decalage: copie ? (decalage || 0) : 0,
         });
+        noterBloc(attente.cle, segments.get(attente.cle));
         ecrireBase(attente.cle, mp4).catch(() => {});
         rangerSegments();
         majBarreCache();
@@ -5451,6 +5559,7 @@ async function fabriquerParLecteur(suite, cadre) {
     raisonsSegment.delete(cle);
     segments.set(cle, { url: URL.createObjectURL(mp4), taille: mp4.size,
       duree: piste.echantillons.length / cadence, verdict: null });
+    noterBloc(cle, segments.get(cle));
     ecrireBase(cle, mp4).catch(() => {});
     rangerSegments();
     majBarreCache();
@@ -5755,10 +5864,46 @@ async function reprendreSegments(projet) {
     if (!cle || segments.has(cle)) continue;
     const garde = await lireBase(cle).catch(() => null);
     if (garde instanceof Blob && garde.size) {
-      segments.set(cle, { url: URL.createObjectURL(garde), taille: garde.size });
+      /* Le bloc revient avec ce qu'il est, pas seulement avec ses octets : sans
+         « decalage », une copie du rush relue du cache repart de l'image-clé qui
+         précède le plan au lieu du plan lui-même. */
+      const fiche = lireBlocs()[cle];
+      const su = fiche || {};
+      segments.set(cle, { url: URL.createObjectURL(garde), taille: garde.size,
+        duree: su.u || undefined, copie: !!su.c, serveur: !!su.s,
+        decalage: su.c ? (su.d || 0) : 0, restaure: true, fiche: Boolean(fiche) });
     }
   }
   majBarreCache();
+  eprouverBlocsRestaures();
+}
+
+/* Un bloc relu du cache est cru sur parole, et il ne devrait pas l'être.
+
+   Les octets ont été rangés lors d'une autre séance, parfois par une autre
+   version de l'application, et le lecteur de cet appareil peut très bien ne plus
+   savoir les ouvrir. Jusqu'ici on ne l'apprenait qu'au moment de la coupe — trop
+   tard, et sans rien en tirer : le plan passait noir et le bloc restait en place
+   pour le tour de boucle suivant.
+
+   On en ouvre donc deux, tout de suite, à l'écart de l'écran. S'ils s'ouvrent, on
+   ne cherche pas plus loin : le reste sera vu à l'avance par les lecteurs du
+   vivier, qui savent désormais condamner ce qu'ils n'ouvrent pas. S'ils ne
+   s'ouvrent pas, ils sont jetés maintenant et refaits avant qu'on appuie sur
+   lecture — c'est la différence entre un montage noir et un montage prêt. */
+const EPREUVES_RESTAUREES = 2;
+
+async function eprouverBlocsRestaures() {
+  if (lecture.demande) return;
+  const aVoir = [...segments.entries()]
+    .filter(([, quoi]) => quoi?.restaure && !quoi.eprouve)
+    .slice(0, EPREUVES_RESTAUREES);
+  for (const [, quoi] of aVoir) quoi.eprouve = true;
+  for (const [, quoi] of aVoir) {
+    // eslint-disable-next-line no-await-in-loop
+    const ouvre = await lisibleParLecteur(quoi.url);
+    if (!ouvre) condamnerBloc(quoi.url, "relu du cache et illisible");
+  }
 }
 
 /* --- la lecture ne s'arrête pas au bout -------------------------------
@@ -6718,7 +6863,19 @@ function demanderImagette(plan, temps, pas, exact = false) {
   // Exception à l'exception : un plan sans vignette de source n'a rien à montrer
   // pendant son import. Une seule image, celle de son entrée, lui donne un
   // visage — le reste attend la copie locale.
-  if (!estLocal(plan) && !importsRates.has(mediaDe(plan)) && !(exact && !plan.preview)) return;
+  /* Et le bloc compte comme une copie locale — c'est ici que manquait la moitié
+     de la correction précédente.
+
+     La sonde, elle, savait déjà tirer ses images de l'extrait plutôt que du rush.
+     Mais la demande n'arrivait jamais jusqu'à elle : ce portail-ci exigeait que
+     le RUSH soit sur l'appareil, et depuis que les blocs viennent découpés du
+     serveur le rush n'y arrive plus jamais. Relevé sur l'appareil : « pellicule :
+     0 demandée(s), 0 lancée(s) » sur cent douze plans, c'est-à-dire une
+     pellicule morte et, surtout, plus aucune image de secours quand le lecteur
+     n'a rien à montrer. C'est ce qui transforme un bloc illisible en écran noir
+     au lieu d'une imagette un peu molle. */
+  if (!estLocal(plan) && !surSegment(plan)
+      && !importsRates.has(mediaDe(plan)) && !(exact && !plan.preview)) return;
   bande.demandes.set(identifiant, instant);
   pellicule.demandees += 1;
   attenteImagettes.push({ plan, temps: instant, identifiant });
@@ -9814,6 +9971,66 @@ function noterUsage(cle, octets) {
   noterUsages();
 }
 
+/* --- ce qu'un bloc est, et pas seulement ce qu'il pèse -------------------
+
+   Un bloc n'est pas qu'un fichier. C'est un fichier ET l'endroit où il faut
+   entrer dedans : un extrait recopié du rush commence à l'image-clé qui précède
+   le plan, et « decalage » dit de combien. Cette valeur était posée à la
+   réception et perdue au rangement — c'est-à-dire perdue dans tous les cas qui
+   comptent, puisqu'un bloc n'est calculé qu'une fois et relu à chaque
+   lancement suivant.
+
+   Conséquence mesurable, et c'est exactement l'écart entre les deux relevés de
+   l'appareil : au premier lancement, tous les blocs venaient d'être faits, ils
+   avaient leur décalage, et le lecteur montrait les bonnes images cent pour
+   cent du temps. Au lancement suivant, les mêmes blocs relus du cache repartaient
+   tous de zéro — le groupe d'images qui PRÉCÈDE le plan — et la vérification « ce
+   lecteur sait-il ouvrir une copie ? » était sautée, puisqu'on ne savait plus
+   qu'il s'agissait d'une copie.
+
+   On garde donc, à côté du journal des usages et avec la même discipline, ce
+   qu'il faut pour reconstituer un bloc : quelques dizaines d'octets par entrée,
+   et si le carnet se perd on retombe simplement sur le comportement d'avant. */
+const CLE_BLOCS = "amvauto-blocs";
+
+let blocsVus = null;
+
+function lireBlocs() {
+  if (blocsVus) return blocsVus;
+  try { blocsVus = JSON.parse(localStorage.getItem(CLE_BLOCS) || "{}"); }
+  catch { blocsVus = {}; }
+  if (!blocsVus || typeof blocsVus !== "object") blocsVus = {};
+  return blocsVus;
+}
+
+let ecritureBlocs = null;
+function rangerBlocs() {
+  clearTimeout(ecritureBlocs);
+  ecritureBlocs = setTimeout(() => {
+    try { localStorage.setItem(CLE_BLOCS, JSON.stringify(blocsVus || {})); }
+    catch { /* le carnet des blocs est un confort, pas une donnée */ }
+  }, 1500);
+}
+
+function noterBloc(cle, quoi) {
+  if (!cle || !quoi) return;
+  const carnet = lireBlocs();
+  carnet[cle] = {
+    d: Math.round((quoi.decalage || 0) * 1000) / 1000,
+    u: Math.round((quoi.duree || 0) * 1000) / 1000,
+    c: quoi.copie ? 1 : 0,
+    s: quoi.serveur ? 1 : 0,
+  };
+  rangerBlocs();
+}
+
+function oublierBloc(cle) {
+  const carnet = lireBlocs();
+  if (!(cle in carnet)) return;
+  delete carnet[cle];
+  rangerBlocs();
+}
+
 const poidsReserve = () => Object.values(lireUsages())
   .reduce((somme, x) => somme + (x?.o || 0), 0);
 
@@ -9943,6 +10160,9 @@ async function existeBase(cle) {
 }
 
 async function effacerBase(adresse) {
+  // Ce que le bloc était part avec ses octets : un seul endroit pour les deux,
+  // sinon le carnet garde des entrées pour des fichiers qui n'existent plus.
+  oublierBloc(adresse);
   const base = await ouvrirBase();
   if (!base) return;
   await new Promise((ok) => {
@@ -10231,6 +10451,7 @@ async function prendreExtrait(plan, cle) {
     }
     segments.set(cle, { url: adresseBlob, taille: blob.size,
       duree: duree(plan), verdict: null, copie: true, decalage, serveur: true });
+    noterBloc(cle, segments.get(cle));
     extraitsServeur.add(cle);
     servis.extraits += 1;
     servis.octets += blob.size;
@@ -14285,6 +14506,25 @@ $("btn-setting").addEventListener("click", () => {
           + ` · ${Math.round(fabrique.duree / fabrique.faits)} ms par bloc`);
       }
       if (fabrique.rates) l.push(`  refusés : ${fabrique.rates}`);
+      /* Les blocs relus du cache, et ceux dont on ne sait plus ce qu'ils sont.
+
+         Un bloc rangé avant que le carnet existe revient sans sa fiche, donc sans
+         son décalage : s'il s'agissait d'une copie du rush, le lecteur y entre à
+         zéro au lieu du point du plan et montre le groupe d'images qui le
+         précède. Reposer le montage sur la musique les refait tous, et plus
+         légers. */
+      {
+        const relus = [...segments.values()].filter((x) => x.restaure);
+        if (relus.length) {
+          const sansFiche = relus.filter((x) => !x.fiche).length;
+          l.push(`  relus du cache : ${relus.length}`
+            + ` · ${relus.filter((x) => x.copie).length} copie(s) du rush`);
+          if (sansFiche) {
+            l.push(`    ${sansFiche} sans fiche — leur point d'entrée est perdu,`);
+            l.push("    repose le montage sur la musique pour les refaire");
+          }
+        }
+      }
       {
         const pris = poidsReserve();
         l.push(`  réserve : ${(pris / 1e6).toFixed(0)} Mo sur ${(PLAFOND_RESERVE / 1e6).toFixed(0)} Mo`
@@ -14358,6 +14598,24 @@ $("btn-setting").addEventListener("click", () => {
         `  amorces avant la coupe : ${b.amorces} demandées, ${b.amorcesTenues} tenues, ${b.amorcesRefusees} refusées`,
         `  lecteurs jouant en même temps, au plus : ${b.jouantMax}`,
       ];
+      /* Une bascule « à chaud » ne dit que ceci : un lecteur portait déjà ce
+         plan. Elle ne dit pas qu'il avait une image — et c'est ce qui manquait
+         pour lire le relevé de l'appareil, où vingt-six bascules à chaud
+         coexistaient avec un écran noir aux trois quarts. On compte donc,
+         parmi elles, celles dont le lecteur entrant n'avait rien du tout. */
+      const chauds = b.etats.filter((e) => e.chaud);
+      const vides = chauds.filter((e) => (e.pret ?? -1) < 2).length;
+      if (chauds.length) {
+        lignes.push(`  dont le lecteur entrant n'avait aucune image : ${vides} sur ${chauds.length}`);
+      }
+      /* Les blocs que le lecteur de CET appareil a refusés. Un bloc parfait
+         ailleurs peut être illisible ici — et tant qu'on ne le comptait pas, il
+         revenait noir à chaque tour de boucle. */
+      if (blocsRefuses.combien) {
+        lignes.push(`  blocs refusés par le lecteur : ${blocsRefuses.combien}`
+          + ` (${blocsRefuses.copies} recopié(s), ${blocsRefuses.reencodes} réencodé(s))`);
+        lignes.push(`    dernier : ${blocsRefuses.dernier}`);
+      }
       if (b.dernierRefus) lignes.push(`  dernier refus d'amorce : ${b.dernierRefus}`);
       if (b.amorcesRefusees > 0 && b.amorcesRefusees >= b.amorces / 2) {
         lignes.push("  → cet appareil refuse de décoder plusieurs vidéos à la fois :");
