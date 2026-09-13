@@ -1753,7 +1753,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-13 05:49";
+const VERSION_PAGE = "2026-09-13 07:59";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3944,6 +3944,7 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
     servis: { ...servis }, fileExtraits: fileExtraits.length, compte: { ...compteExtraits },
     pellicule: { ...pellicule },
+    cles: { connues: clesConnues.size, refusees: clesRefusees.size, file: fileCles.length },
     reserve: { ...reserve, octets: poidsReserve(), plafond: PLAFOND_RESERVE,
       lecteurs: NOMS_LECTEURS.length, webkit: SUR_WEBKIT },
     fauxSegments: fabrique.fauxSegments || 0, pourquoi: fabrique.pourquoi || "",
@@ -6766,6 +6767,8 @@ const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" 
 // long que le délai interne de la capture, qui doit avoir sa chance d'abord.
 const GARDE_SONDE = 12000;
 let gardeSonde = null;
+// Les imagettes qui ont déjà droit à un second essai : on ne tourne pas en rond.
+const secondeChance = new Set();
 
 function servirImagettes() {
   if (sondeOccupee) return;
@@ -6930,6 +6933,27 @@ function servirImagettes() {
          le temps que la réserve se constitue, pour repeindre la même image. */
       if (apercu.source && apercu.source !== elementActif()) reveillerMoniteur(200);
     } else {
+      /* Un échec, une seconde chance — avec une source relue.
+
+         Relevé sur l'appareil : vingt-six captures ratées sur quarante-trois,
+         « état 0/4, erreur 4 », c'est-à-dire « source non gérée ». Or le lecteur
+         du montage ouvre les mêmes fichiers sans broncher. Ce qui les distingue,
+         c'est le temps : la sonde garde l'adresse qu'elle avait au moment de la
+         demande, et pendant ce temps le bloc a pu être refait ou rendu à
+         l'appareil — l'adresse ne désigne plus rien.
+
+         On ne condamne donc l'imagette qu'au deuxième échec. Entre les deux, la
+         demande repart et « sourceDe » rend l'adresse du moment. */
+      const deja = secondeChance.has(identifiant);
+      if (!deja) {
+        secondeChance.add(identifiant);
+        bande.demandes.delete(identifiant);
+        pellicule.dernier = `${pourquoi || "échec"} — on relit la source et on réessaie`;
+        sondeOccupee = false;
+        clearTimeout(gardeSonde);
+        setTimeout(servirImagettes, 0);
+        return;
+      }
       bande.echecs.add(identifiant);
       pellicule.ratees += 1;
       pellicule.dernier = `${pourquoi || "échec"} à ${temps.toFixed(2)} s` +
@@ -12472,6 +12496,9 @@ function importerProjet(projet) {
        La demande d'extrait, elle, se fait par plan ; le rush par fichier. Les
        deux cohabitent : « preparerLocal » ne met le rush en file que si aucun
        extrait n'est en route pour ce plan-là. */
+    /* Les images-clés se demandent tôt : elles ne coûtent que deux petites
+       requêtes par rush, et sans elles le bouton « monter » devrait attendre. */
+    planifierCles(plan);
     preparerLocal(plan);
   }
 }
@@ -15094,6 +15121,86 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
    côte à côte. */
 const PAS_DOR = 0.6180339887;
 
+/* --- les images-clés des rushs, connues avant de couper -------------------
+
+   Un extrait ne peut commencer que sur une image-clé : un décodeur ne sait pas
+   partir d'ailleurs. Quand le plan commence entre deux images-clés, l'extrait
+   porte tout le groupe qui précède. Relevé sur l'appareil : 131 Mo d'extraits
+   pour cent douze plans — 1,17 Mo pour une seconde d'image — et la réserve
+   collée à son plafond, donc une purge qui tourne en rond et des blocs refaits
+   trois fois.
+
+   On ne déplace pas les plans après coup : sur ces rushs, l'image-clé la plus
+   proche est parfois à trois secondes, et le plan montrerait une autre scène.
+   On choisit leurs points d'entrée PARMI les images-clés, dès la sélection.
+
+   Et l'on ne s'y écrase pas non plus : un rush de Sakugabooru n'a que trois à
+   six images-clés pour une demi-minute. Les y ramener toutes ferait revenir
+   sans cesse les trois mêmes instants. Elles servent donc de cases — comme les
+   tranches régulières qu'elles remplacent — et quand un rush est employé plus
+   souvent qu'il n'a d'images-clés, les emplois de trop reprennent la découpe
+   d'avant. Le montage garde sa variété, et la plupart des extraits deviennent
+   dix fois plus légers. */
+const clesConnues = new Map();
+const clesRefusees = new Set();
+const clesEnVol = new Set();
+const fileCles = [];
+const CLES_PARALLELES = 3;
+
+function planifierCles(plan) {
+  const adresse = mediaDe(plan);
+  if (!adresse || plan.youtube) return;
+  if (clesConnues.has(adresse) || clesRefusees.has(adresse) || clesEnVol.has(adresse)) return;
+  if (fileCles.some((autre) => mediaDe(autre) === adresse)) return;
+  fileCles.push(plan);
+  servirCles();
+}
+
+function servirCles() {
+  while (clesEnVol.size < CLES_PARALLELES && fileCles.length) {
+    const plan = fileCles.shift();
+    const adresse = mediaDe(plan);
+    if (!adresse || clesConnues.has(adresse) || clesRefusees.has(adresse)) continue;
+    clesEnVol.add(adresse);
+    fetch(`/api/cles?u=${encodeURIComponent(adresse)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((charge) => {
+        if (Array.isArray(charge?.cles) && charge.cles.length) clesConnues.set(adresse, charge);
+        else clesRefusees.add(adresse);
+      })
+      .catch(() => { clesRefusees.add(adresse); })
+      .finally(() => { clesEnVol.delete(adresse); if (fileCles.length) servirCles(); });
+  }
+}
+
+/* Attendre les images-clés des rushs qu'on va couper — mais pas indéfiniment.
+
+   Un montage qui part sans elles coupe comme avant : c'est moins bien, ce n'est
+   pas cassé. Mieux vaut un montage un peu lourd tout de suite qu'un bouton qui
+   ne répond pas. */
+const ATTENTE_CLES = 6000;
+
+async function attendreCles(plans) {
+  for (const plan of plans) planifierCles(plan);
+  const fini = () => !clesEnVol.size && !fileCles.length;
+  const limite = performance.now() + ATTENTE_CLES;
+  while (!fini() && performance.now() < limite) {
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((suite) => setTimeout(suite, 120));
+  }
+}
+
+/* Les instants où ce rush peut commencer sans rien traîner derrière lui, à
+   condition qu'ils laissent la place au plan. */
+function clesUtiles(plan, tenue) {
+  const adresse = mediaDe(plan);
+  const su = clesConnues.get(adresse);
+  if (!su?.cles?.length) return null;
+  const source = dureeSource(plan);
+  const bonnes = su.cles.filter((t) => t >= 0 && t + tenue <= source + 0.05);
+  return bonnes.length ? bonnes : null;
+}
+
 function morceauxDe(plan, tenue, graine = 0) {
   const source = dureeSource(plan);
   const combien = Math.max(1, Math.min(24, Math.floor(source / Math.max(tenue, PLAN_MINI))));
@@ -15126,11 +15233,41 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
      manque presque toujours ; taillé autour de lui, c'est exactement ce qu'un
      monteur serait allé chercher. On le réserve aux passages qui frappent, et à
      un seul emploi : le montrer deux fois lui ôterait ce qui en fait un pic. */
+  const rendre = (entree) => ({
+    entree: Math.round(entree * 1000) / 1000,
+    sortie: Math.round((entree + tenue) * 1000) / 1000,
+  });
+
   const pic = plan.lecture?.pic;
   if (viserLePic && typeof pic === "number" && pic > 0 && pic < source) {
     plan.__picVu = true;
     const entree = Math.max(0, Math.min(pic - tenue / 2, source - tenue));
-    return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
+    /* Le pic est l'instant qu'on est venu chercher : on ne le déplace que si
+       une image-clé tombe assez près pour que l'œil n'y voie rien. */
+    const proches = clesUtiles(plan, tenue);
+    if (proches) {
+      let meilleure = null;
+      for (const t of proches) {
+        if (meilleure === null || Math.abs(t - entree) < Math.abs(meilleure - entree)) meilleure = t;
+      }
+      if (meilleure !== null && Math.abs(meilleure - entree) <= tenue / 2) return rendre(meilleure);
+    }
+    return rendre(entree);
+  }
+
+  /* Les images-clés servent de cases, quand il y en a.
+
+     Chaque emploi du rush prend la suivante dans l'ordre dispersé, exactement
+     comme il prenait la tranche suivante. Au-delà du nombre d'images-clés, on
+     reprend la découpe régulière : mieux vaut un extrait lourd qu'un montage
+     qui répète le même instant. */
+  const surCles = clesUtiles(plan, tenue);
+  if (surCles && pris < surCles.length) {
+    const { ordre: parcours } = morceauxDe(plan, tenue, graine);
+    // Le même parcours dispersé, ramené au nombre d'images-clés.
+    const place = parcours.map((k) => k % surCles.length)
+      .filter((k, i, tous) => tous.indexOf(k) === i)[pris % surCles.length];
+    return rendre(surCles[place ?? (pris % surCles.length)]);
   }
 
   const { combien, pas, ordre } = morceauxDe(plan, tenue, graine);
@@ -15138,7 +15275,7 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
   // Centré dans sa case : un morceau collé au bord en mordrait un autre.
   const milieu = place * pas + pas / 2;
   const entree = Math.max(0, Math.min(milieu - tenue / 2, source - tenue));
-  return { entree: Math.round(entree * 1000) / 1000, sortie: Math.round((entree + tenue) * 1000) / 1000 };
+  return rendre(entree);
 }
 
 /* Deux façons d'enchaîner les plans.
@@ -15585,7 +15722,7 @@ function casesAttendues(projet) {
 /* Poser le montage proposé. On passe par « enregistrer », donc le bouton
    « annuler » le défait comme n'importe quel autre geste : la proposition ne
    coûte rien à essayer. */
-function monterSurLaMusique(bouton) {
+async function monterSurLaMusique(bouton) {
   const projet = projetActif();
   if (!projet) return;
   if (!projet.rythme?.bpm) {
@@ -15598,6 +15735,9 @@ function monterSurLaMusique(bouton) {
     return;
   }
 
+  /* Les images-clés des rushs avant de couper : c'est ce qui permet de choisir
+     des points d'entrée que le découpage n'aura rien à traîner. */
+  await attendreCles(disponibles);
   const montage = construireMontage(projet, { ordre: projet.amv?.ordre, graine: nouvelleGraine() });
   if (!montage) {
     alert("Rien à poser — les durées des rushs n'ont pas encore été mesurées, réessaie dans un instant.");

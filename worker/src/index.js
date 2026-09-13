@@ -7,6 +7,7 @@ import { coffre } from "./coffre.js";
 import { genererMusique } from "./musique.js";
 import { relayerMedia } from "./media.js";
 import { extrait } from "./extrait.js";
+import { cles } from "./cles.js";
 import { grenier } from "./grenier.js";
 import { compte } from "./compte.js";
 import { ecrireParoles } from "./paroles.js";
@@ -336,6 +337,7 @@ export default {
         }
         if (url.pathname === "/api/media") return await relayerMedia(request, url);
         if (url.pathname === "/api/extrait") return await extrait(request, url, env, ctx);
+        if (url.pathname === "/api/cles") return await cles(request, url, env, ctx);
         if (url.pathname === "/api/coffre") return await coffre(request, url, env);
         if (url.pathname === "/api/grenier") return await grenier(request, url, env);
         if (url.pathname === "/api/compte") return await compte(request, url, env);
