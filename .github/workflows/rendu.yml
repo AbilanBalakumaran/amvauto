@@ -31,7 +31,11 @@ permissions:
 jobs:
   rendre:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Quarante minutes, et non vingt : cent douze plans tirés de vingt-six rushs,
+    # c'est près d'un demi-gigaoctet à télécharger avant le premier réencodage.
+    # Une course qu'on arrête au milieu ne coûte pas moins de minutes qu'une
+    # course qui aboutit — elle ne rend simplement rien.
+    timeout-minutes: 40
     steps:
       - name: Récupérer le script de rendu
         uses: actions/checkout@v4
