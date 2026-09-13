@@ -92,9 +92,15 @@ self.onmessage = async (evt) => {
     let prochaine = entree - 0.02;
     const prises = [];
     let cassee = false;
+    let rendues = 0;
+    let premier = null;
+    let dernier = null;
     const dec = new VideoDecoder({
       output: (img) => {
         const t = img.timestamp / 1e6;
+        rendues += 1;
+        if (premier === null) premier = t;
+        dernier = t;
         if (t < entree - 0.02 || t > fin + 0.02 || prises.length >= combien) { img.close(); return; }
         if (t < prochaine) { img.close(); return; }
         prochaine = t + ecart;
@@ -112,7 +118,9 @@ self.onmessage = async (evt) => {
        de marge couvre largement le réordonnancement de n'importe quel encodeur.
      */
     const MARGE_REORDRE = 0.5;
+    let donnees_ech = 0;
     for (let i = depuis; i < ech.length; i += 1) {
+      donnees_ech += 1;
       const e = ech[i];
       if (e.decodage / carte.echelle > fin + MARGE_REORDRE) break;
       dec.decode(new EncodedVideoChunk({
@@ -143,7 +151,17 @@ self.onmessage = async (evt) => {
     try { dec.close(); } catch { /* déjà fermé */ }
     if (cassee || !prises.length) {
       for (const x of prises) x.img.close();
-      return repondre({ echec: "décodage interrompu" });
+      /* Dire CE QUI a manqué, pas seulement que ça a manqué.
+
+         « décodage interrompu » recouvrait trois pannes très différentes : le
+         décodeur n'a rien rendu du tout, il a rendu des images mais toutes hors
+         de la fenêtre demandée, ou il s'est cassé en route. Sans les distinguer,
+         il n'y a rien à corriger. */
+      const quoi = cassee ? "le décodeur s'est arrêté"
+        : !rendues ? `aucune image rendue (${donnees_ech} échantillon(s) donnés)`
+        : `${rendues} image(s) rendues de ${premier?.toFixed(2)} à ${dernier?.toFixed(2)} s,`
+          + ` hors de la fenêtre ${entree.toFixed(2)}–${fin.toFixed(2)} s`;
+      return repondre({ echec: `décodage interrompu — ${quoi}` });
     }
 
     /* Réduites tout de suite à la taille du moniteur : une image de rush pèse

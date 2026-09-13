@@ -1753,7 +1753,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-10 18:13";
+const VERSION_PAGE = "2026-09-13 05:49";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3712,30 +3712,58 @@ function filDecodage() {
    solde par « on n'aura pas d'avance pour celui-là », jamais par une erreur. */
 async function amorcerImages(plan) {
   if (!plan || !moteurPossible()) return;
-  /* Inutile sur un bloc déjà fabriqué : il n'y a plus de déplacement à couvrir,
-     et les instants de la réserve seraient ceux du rush, pas ceux du segment. */
-  if (surSegment(plan)) return;
+  /* La réserve se remplit depuis le BLOC, et non plus seulement depuis le rush.
+
+     Deux règles l'interdisaient, et toutes deux sont périmées. « Inutile sur un
+     bloc déjà fabriqué » supposait que le montage recollé couvrirait les
+     coupes ; il ne se forme plus dès que des blocs viennent du serveur.
+     « Seulement depuis la copie de l'appareil » supposait que le rush y serait ;
+     il n'y arrive plus, puisqu'on ne télécharge que les extraits.
+
+     Résultat relevé sur l'appareil : zéro image décodée d'avance, zéro amorce,
+     et trente pour cent du temps de lecture sans rien à l'écran. La réserve est
+     précisément ce qui doit couvrir ces instants-là.
+
+     Le bloc est un bien meilleur point de départ que le rush : il est local, il
+     pèse mille fois moins, il contient exactement les images du plan. Ses
+     instants sont ceux du segment — et « entreeLue » comme « sourceMaintenant »
+     travaillent déjà dans cette horloge-là, si bien que la réserve et le
+     moniteur se comprennent sans rien changer d'autre. */
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return;
   if (moteur.pretes.has(plan.id) || moteur.refuses.has(plan.id)) return;
   for (const attente of moteur.enCours.values()) if (attente.plan === plan.id) return;
-  // Seulement depuis la copie de l'appareil : lire un fichier entier pour le
-  // démuxer n'a de sens que s'il est déjà là.
-  if (!estLocal(plan)) return;
+  /* La source et l'horloge se choisissent ENSEMBLE.
+
+     Premier essai : la source était le bloc, et l'instant venait de
+     « entreeLue » — qui suit, lui, la source que le LECTEUR ouvrirait. Quand le
+     montage recollé existe, « entreeLue » rend la position du plan dans ce
+     grand fichier. On demandait donc au décodeur la fenêtre 30,80–31,14 s d'un
+     fichier qui va de zéro à une seconde : vingt-six images rendues, toutes
+     hors de la fenêtre, et la réserve refusée à chaque plan.
+
+     Trois cas, et chacun apporte son horloge avec sa source. */
+  if (surColle(plan)) return;   // le fichier recollé couvre déjà les coupes
+  const extrait = segmentDe(plan);
+  if (!extrait && !estLocal(plan)) return;
   const fil = filDecodage();
   if (!fil) return;
-  const garde = await lireBase(adresse).catch(() => null);
+  const garde = extrait
+    ? await fetch(extrait.url).then((r) => r.blob()).catch(() => null)
+    : await lireBase(adresse).catch(() => null);
   if (!(garde instanceof Blob) || !garde.size) { moteur.refuses.add(plan.id); return; }
-  const entree = entreeDe(plan);
+  const entree = extrait ? (extrait.decalage || 0) : entreeDe(plan);
+  const bout = entree + duree(plan);
   const id = (moteur.numero += 1);
   moteur.enCours.set(id, { plan: plan.id, entree, depart: performance.now() });
-  const fin = Math.min(sortieDe(plan), entree + AVANCE_IMAGES);
+  const fin = Math.min(bout, entree + AVANCE_IMAGES);
   fil.postMessage({
     id, blob: garde, entree, fin,
     large: LARGE_MEMOIRE, combien: IMAGES_PAR_PLAN,
     // La carte du fichier se garde d'une demande à l'autre : un montage revient
-    // sans cesse au même rush, et la relire à chaque fois est du travail refait.
-    cle: adresse,
+    // sans cesse au même fichier, et la relire à chaque fois est du travail
+    // refait. La clé désigne donc le fichier ouvert — bloc ou rush.
+    cle: extrait ? cleSegment(plan) : adresse,
     // Un pas régulier, pour que la réserve couvre toute la plage et pas
     // seulement son début.
     pas: Math.max(0, (fin - entree) / Math.max(1, IMAGES_PAR_PLAN)),
@@ -3898,7 +3926,8 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
   lecture: { index: lecture.index, position: Math.round((lecture.position || 0) * 100) / 100,
     demande: !!lecture.demande, scrub: !!lecture.scrub, reboucle: !!lecture.reboucle,
     cible: lecture.cible ? { temps: Math.round(lecture.cible.temps * 100) / 100, essais: lecture.cible.essais } : null },
-  fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0 },
+  fil: { demandes: moteur.repondues, moyenne: moteur.repondues ? Math.round(moteur.duree / moteur.repondues) : 0,
+    refuses: moteur.refuses.size, echec: moteur.echec || "" },
   bascules: { ...bascules }, vues: { ...vues }, arrets: { ...arrets },
   defauts: { ...defauts, enCours: Boolean(fabrique.encours) },
   // Quel projet est à l'écran, et à quel projet appartient le fichier recollé.
@@ -5363,7 +5392,9 @@ async function fabriquerParLecteur(suite, cadre) {
     toile.height = h;
     const ctx = toile.getContext("2d", { alpha: false });
 
-    const debitVise = debitPermis(l, h, cadence, debitSegment(plan, cadre));
+    // Le débit du MONTAGE, pas celui de ce plan : c'est ce qui donne à tous les
+    // blocs le même niveau H.264, donc le même en-tête, donc un recollage possible.
+    const debitVise = debitPermis(l, h, cadence, debitMontage(projetActif(), cadre));
     const codec = await choisirCodec(CODECS_VIDEO(l, h, cadence, debitVise),
       { width: l, height: h, framerate: cadence, bitrate: debitVise });
     if (!codec) { raisonsSegment.set(cle, "aucun codec d'encodage"); ranger(); return false; }
@@ -5543,7 +5574,7 @@ async function fabriquerSuivant() {
     // Le même cadre et la même cadence pour tous : c'est ce qui permettra de
     // les recoller en un seul fichier sans rien réencoder.
     large: cadre.large, haut: cadre.haut, cadence: IMAGES_PAR_SECONDE,
-    debit: debitSegment(suite.plan, cadre),
+    debit: debitMontage(projetActif(), cadre),
     recule,
     /* On ne recopie que si le montage entier tire d'une seule source : sinon
        les blocs ne se recolleraient plus, et le fichier unique est ce qui fait
@@ -5627,6 +5658,34 @@ const BITS_PAR_PIXEL = 0.55;
 // Et un plancher : en dessous, l'encodeur rend des blocs, quelle que soit la
 // source. Une source déjà pauvre ne justifie pas de la rendre pire.
 const BITS_PLANCHER = 0.30;
+
+/* Un seul débit pour tout le montage, et donc un seul niveau H.264.
+
+   Le débit se calculait plan par plan, à partir du poids et de la définition de
+   CHAQUE rush. Or le niveau H.264 se choisit d'après le débit : deux blocs aux
+   débits différents sortent avec des jeux de paramètres différents, et le
+   recollage — qui les veut identiques — refuse d'assembler. Relevé sur
+   l'appareil : « dernier refus d'assemblage : segments de définitions
+   différentes », sur un montage dont les cent douze blocs étaient prêts.
+
+   On prend donc le plus exigeant des plans et on l'applique à tous : personne
+   n'y perd en qualité, et tous les blocs partagent enfin le même en-tête.
+
+   La valeur est gardée tant que le montage et le cadre ne changent pas — elle
+   parcourt tous les plans, et elle est demandée à chaque bloc fabriqué. */
+let debitVu = { version: -1, projet: "", cadre: "", valeur: 0 };
+
+function debitMontage(projet, cadre) {
+  const marque = `${cadre.large}x${cadre.haut}`;
+  if (debitVu.version === versionMontage && debitVu.projet === projet?.id && debitVu.cadre === marque) {
+    return debitVu.valeur;
+  }
+  let plus = 0;
+  for (const plan of projet?.plans || []) plus = Math.max(plus, debitSegment(plan, cadre));
+  const valeur = plus || debitSegment(null, cadre);
+  debitVu = { version: versionMontage, projet: projet?.id || "", cadre: marque, valeur };
+  return valeur;
+}
 
 function debitSegment(plan, cadre) {
   const vise = BITS_PAR_PIXEL * cadre.large * cadre.haut * IMAGES_PAR_SECONDE;
@@ -9768,12 +9827,24 @@ async function faireDeLaPlace(besoin) {
   return partis;
 }
 
-/* Ce dont le montage ouvert a besoin : ses blocs et ses rushs. */
+/* Ce dont le montage ouvert a besoin — et rien de plus.
+
+   Les rushs y étaient protégés en bloc, tous, tant que le montage était ouvert.
+   C'était l'erreur : un rush ne sert qu'à fabriquer les blocs, et une fois
+   qu'ils sont faits il ne sert plus à rien. Relevé sur l'appareil : 658 Mo
+   gardés pour un plafond de 157, soixante-dix-sept fichiers rendus et pourtant
+   rien qui redescende — parce que les six cents mégaoctets de rushs étaient
+   tous déclarés vivants.
+
+   Un rush n'est donc vivant que tant que SON bloc manque. Les blocs, eux, le
+   restent : ce sont eux qu'on lit. */
 function clesVivantes() {
   const vives = new Set();
   for (const plan of projetActif()?.plans || []) {
     const cle = cleSegment(plan);
     if (cle) vives.add(cle);
+    // Le rush n'est retenu que si son bloc n'est pas encore là.
+    if (cle && segments.has(cle)) continue;
     const adresse = mediaDe(plan);
     if (adresse) { vives.add(adresse); vives.add(cleParticelle(adresse)); }
   }
@@ -14047,6 +14118,28 @@ $("btn-setting").addEventListener("click", () => {
           `${video?.dataset.vise ? ` · vise ${Math.round(Number(video.dataset.vise) * 100) / 100} s` : ""}` +
           `${video?.seeking ? " · déplacement en cours" : ""}`,
         `  média ${estLocal(cible.plan) ? "importé sur l'appareil" : "distant"}`,
+        /* D'où vient l'image que le lecteur tente d'ouvrir.
+
+           « erreur 4 » veut dire « source non gérée », et la question qui suit
+           est toujours la même : QUELLE source ? Sans cette ligne, il faut la
+           deviner. */
+        ...(() => {
+          const nature = (plan) => (surColle(plan) ? "recollé"
+            : segmentDe(plan) ? "bloc"
+            : estLocal(plan) ? "rush local"
+            : "rush distant");
+          const compte = {};
+          for (const plan of projet.plans) {
+            const quoi = nature(plan);
+            compte[quoi] = (compte[quoi] || 0) + 1;
+          }
+          const bout = String(video?.currentSrc || "");
+          return [
+            `  le lecteur ouvre : ${nature(cible.plan)}`
+              + (bout ? ` (${bout.startsWith("blob:") ? "fichier local" : bout.slice(0, 28)})` : " (rien)"),
+            `  sources du montage : ${Object.entries(compte).map(([k, v]) => `${v} ${k}`).join(" · ")}`,
+          ];
+        })(),
         `  pellicule : ${pellicule.demandees} demandée(s), ${pellicule.lancees} lancée(s), ` +
           `${pellicule.prises} prise(s), ${pellicule.ratees} échec(s)` +
           `${pellicule.dernier ? ` — dernier : ${pellicule.dernier}` : ""}`,
