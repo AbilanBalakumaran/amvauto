@@ -100,7 +100,21 @@ export async function relayerMedia(request, url) {
     adresse = suite;
   }
   if (!amont.ok && amont.status !== 206) {
-    return new Response(`source indisponible (${amont.status})`, { status: 502 });
+    /* Un fichier qui n'existe plus doit le dire tel quel.
+
+       Tout ce qui n'allait pas ressortait en 502, « panne du relais » — y
+       compris un 404. Or l'appareil traite les deux de façons opposées : une
+       panne de relais se réessaie, un fichier disparu s'abandonne. Confondus,
+       un lien mort était retenté quatre fois avec des attentes de plus en plus
+       longues, et la file de préparation restait ouverte une minute de plus
+       pour un plan qui ne viendrait jamais. Mesuré sur le banc : vingt-quatre
+       secondes pour déclarer perdu un fichier absent, au lieu d'une.
+
+       Les codes qui disent « cette ressource n'existe pas, ou pas pour toi »
+       passent donc tels quels ; le reste devient une panne de relais. */
+    const definitif = [404, 410, 451].includes(amont.status);
+    return new Response(`source indisponible (${amont.status})`,
+      { status: definitif ? amont.status : 502 });
   }
 
   const reponse = new Headers();

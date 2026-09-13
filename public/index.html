@@ -1753,7 +1753,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-13 09:25";
+const VERSION_PAGE = "2026-09-13 11:49";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -8028,9 +8028,35 @@ function bilanProjet(projet) {
   // dernière ? » se sont réglés en la cherchant dans un onglet.
   const importes = projet.plans.filter(pretAJouer).length;
   const reste = projet.plans.length - importes;
+  /* Ce que le montage occupe SUR L'APPAREIL, et non ce que pèsent les rushs
+     à la source.
+
+     La ligne annonçait « 2036 Mo » pour un montage dont l'appareil ne tient que
+     quarante — c'est la somme des tailles déclarées par Sakugabooru, héritée du
+     temps où l'on rapatriait chaque rush en entier. On ne le fait plus : on ne
+     télécharge que les tranches utiles, et le plus souvent rien du tout,
+     puisque les blocs arrivent déjà découpés. Le nombre ne voulait donc plus
+     rien dire, et se lisait comme deux gigaoctets pris sur le téléphone.
+
+     On dit ce qui est vrai : la place que CE montage tient réellement, relevée
+     dans le journal des usages, fichier par fichier — ses blocs, ses rushs et
+     les tranches de rushs qu'il a fallu descendre. */
+  const tenu = (() => {
+    const carnet = lireUsages();
+    const vues = new Set();
+    let somme = 0;
+    for (const plan of projet.plans) {
+      const adresse = mediaDe(plan);
+      for (const cle of [cleSegment(plan), adresse, adresse && cleParticelle(adresse)]) {
+        if (!cle || vues.has(cle)) continue;
+        vues.add(cle);
+        somme += carnet[cle]?.o || 0;
+      }
+    }
+    return somme;
+  })();
   return (
-    `${projet.plans.length} plans · ${bilan.mb.toFixed(0)} Mo` +
-    (bilan.mbRendu > bilan.mb + 0.5 ? ` au montage · ${bilan.mbRendu.toFixed(0)} Mo au rendu` : "") +
+    `${projet.plans.length} plans · ${(tenu / 1e6).toFixed(0)} Mo sur l'appareil` +
     (reste ? ` · ${reste} à importer` : " · tous importés") +
     (manquantes ? ` · ${manquantes} durée${manquantes > 1 ? "s" : ""}…` : "") +
     ` · v${VERSION_PAGE.slice(-5)}`
@@ -9777,7 +9803,53 @@ setInterval(() => {
     const repris = relancerPerdus();
     if (repris) { relances.reprises += repris; lancerImport(); }
   }
+  rattraperOublies();
 }, 10000);
+
+/* Les plans qui ne sont dans aucun livre.
+
+   La file connaît quatre états : en attente, en vol, prêt, abandonné. Un plan
+   qui n'est dans aucun des quatre est invisible — il n'avance pas, il n'est
+   jamais réessayé, et le panneau de préparation ne se ferme pas puisqu'il
+   compte un fichier qui n'arrivera jamais. Relevé sur l'appareil : « Fichiers
+   106/112 · 1 introuvable », soit cinq plans dans ce cinquième état, et une
+   file qui tourne indéfiniment avec « reprise dans 0 s ».
+
+   La cause n'a pas à être connue pour être réparée — et c'est le point : toute
+   interruption qui n'est ni le chien de garde ni un abandon volontaire laisse
+   un plan ici. On ne cherche donc pas à fermer chaque chemin un par un, on
+   vérifie l'état. Un tour pour remettre en file, un second pour constater que
+   cela n'a rien donné et le dire. Deux tours de dix secondes : jamais de faux
+   abandon sur un plan qui était simplement entre deux mains. */
+const oubliesVus = new Map();
+
+function rattraperOublies() {
+  const projet = projetActif();
+  if (!projet || transfert.suspendu) return;
+  const sources = new Map();
+  for (const plan of projet.plans) {
+    const adresse = !plan.youtube && mediaDe(plan);
+    if (adresse && !sources.has(adresse)) sources.set(adresse, plan);
+  }
+  const enFile = new Set(fileImport.map((plan) => mediaDe(plan)));
+  for (const [adresse, plan] of sources) {
+    const tenu = locales.has(adresse) || importsRates.has(adresse)
+      || enFile.has(adresse) || arretsImport.has(adresse) || enImport.has(adresse)
+      || attentesImport.has(adresse) || rushInutile(adresse, projet.plans);
+    if (tenu) { oubliesVus.delete(adresse); continue; }
+    const vu = (oubliesVus.get(adresse) || 0) + 1;
+    oubliesVus.set(adresse, vu);
+    if (vu === 1) { planifierImport(plan); lancerImport(); continue; }
+    if (vu < 3) continue;
+    // Deux tours sans que rien ne le reprenne : il est perdu, et il faut le
+    // dire plutôt que de laisser le compteur ouvert pour toujours.
+    oubliesVus.delete(adresse);
+    importsRates.add(adresse);
+    raisonsImport.set(adresse, { code: 0, texte: "resté sans réponse", definitif: false });
+    majImports();
+    majPreparation(projet);
+  }
+}
 const ATTENTE_ESSAI = [4000, 12000, 40000];
 
 /* Le débit observé, pour annoncer une attente plutôt qu'un point d'interrogation.
@@ -10860,7 +10932,12 @@ async function rapatrier(plan) {
     if (erreur?.name !== "AbortError" || coupeParGarde) {
       const faits = (essaisImport.get(adresse) || 0) + 1;
       essaisImport.set(adresse, faits);
-      if (faits >= ESSAIS_MAX) {
+      /* Un fichier qui n'existe plus n'existera pas davantage au quatrième
+         essai. Trois tentatives de plus sur un lien mort, c'est de la 4G
+         dépensée pour rien et, surtout, une file qui reste ouverte une minute
+         de plus à cause d'un plan qui ne viendra jamais. */
+      const mort = [404, 410, 451].includes(Number(erreur?.message));
+      if (mort || faits >= ESSAIS_MAX) {
         importsRates.add(adresse);
         /* Pourquoi il a renoncé, et si cela vaut la peine d'y revenir.
 
@@ -10874,7 +10951,7 @@ async function rapatrier(plan) {
         raisonsImport.set(adresse, {
           code: Number.isFinite(code) ? code : 0,
           texte: nommerEchec(erreur),
-          definitif: code === 404 || code === 410 || code === 451,
+          definitif: mort,
         });
       } else {
         /* Espacé, et remis en file : le lien mobile a le temps de revenir.
@@ -12270,6 +12347,20 @@ function bilanApercu(projet) {
     concernes += 1;
     if (segments.has(cle)) faits += 1;
     else if (segmentsRates.has(cle)) refuses += 1;
+    /* Un plan dont le rush est déclaré introuvable n'est pas « en cours de
+       préparation » : il n'a plus de source à découper. Il était pourtant
+       compté comme préparable, et l'aperçu restait donc à 93 % pour toujours —
+       « 103/111 préparés » sans que rien n'avance jamais. Il compte comme
+       refusé, et le pourcentage atteint enfin cent. S'il revient — le bouton
+       « Réessayer » existe pour cela — il repasse du bon côté tout seul. */
+    else if (!plan.youtube && importsRates.has(mediaDe(plan))
+             && !locales.has(mediaDe(plan))) {
+      refuses += 1;
+      // Et la raison se dit : « 1 sans segment — raison inconnue » n'apprend rien.
+      if (!raisonsSegment.has(cle)) {
+        raisonsSegment.set(cle, `le rush est introuvable (${raisonsImport.get(mediaDe(plan))?.texte || "sans réponse"})`);
+      }
+    }
   }
   /* Le but, ce n'est pas « préparer les quatre-vingt-huit », c'est « préparer
      tout ce qui peut l'être ». Un bloc définitivement refusé sort donc du but
@@ -12310,9 +12401,20 @@ function direRefus(brut) {
 
 function raisonDominante() {
   const parRaison = new Map();
-  for (const cle of segmentsRates) {
+  const compter = (cle) => {
     const texte = direRefus(raisonsSegment.get(cle));
     parRaison.set(texte, (parRaison.get(texte) || 0) + 1);
+  };
+  for (const cle of segmentsRates) compter(cle);
+  /* Les plans comptés « sans segment » sans que la fabrique les ait refusés —
+     un rush introuvable, un bloc que le lecteur a rejeté — doivent pouvoir
+     s'expliquer eux aussi. Sans cela l'écran disait « 1 sans segment — raison
+     inconnue », c'est-à-dire le contraire de ce que cette ligne existe pour
+     faire. */
+  for (const plan of projetActif()?.plans || []) {
+    const cle = cleSegment(plan);
+    if (!cle || segments.has(cle) || segmentsRates.has(cle)) continue;
+    if (raisonsSegment.has(cle)) compter(cle);
   }
   let meilleur = "";
   let combien = 0;
@@ -15459,6 +15561,58 @@ function clesUtiles(plan, tenue) {
   return bonnes.length ? bonnes : null;
 }
 
+/* Les cases où un plan peut commencer, de la moins chère à la plus chère.
+
+   Les images-clés seules ne suffisaient pas. Un rush de Sakugabooru en compte
+   trois à six pour une demi-minute, et un montage de cent douze plans sur
+   vingt-six rushs en emploie chacun quatre fois : au-delà du nombre
+   d'images-clés, on reprenait la découpe régulière, c'est-à-dire un instant
+   quelconque. Or un instant quelconque coûte tout le groupe d'images qui le
+   précède. Mesuré sur quatre vrais rushs : 1,2 à 2,9 Mo pour montrer 1,2
+   seconde, jusqu'à 205 images décodées pour en afficher 30, et une avance de
+   7,3 secondes. Relevé sur l'appareil : trois cent un blocs pour 282 Mo, et
+   trente-quatre refusés par le lecteur — tous des copies, pas un seul
+   réencodé.
+
+   On ne peut pas se contenter de ramener ces plans-là sur l'image-clé la plus
+   proche : deux plans différents tomberaient sur le même instant, et le
+   montage se répéterait. Mesuré aussi : à 4,65 s et à 9,07 s, un même rush
+   renvoyait deux fois 0,50 s.
+
+   Les cases sont donc faites de deux nombres : une image-clé, et un rang. Au
+   rang zéro, le plan commence exactement sur l'image-clé — l'extrait ne porte
+   rien d'autre que lui. Au rang suivant, il commence un peu après, et l'extrait
+   porte cette avance-là, bornée. Les instants restent tous distincts, le
+   montage garde sa variété, et le prix reste borné à « PAS_APRES_CLE fois le
+   dernier rang » au lieu d'un groupe d'images entier. */
+const PAS_APRES_CLE = 0.3;
+const RANGS_APRES_CLE = 3;
+
+function casesUtiles(plan, tenue, graine = 0) {
+  const cles = clesUtiles(plan, tenue);
+  if (!cles) return null;
+  const source = dureeSource(plan);
+  const { ordre } = morceauxDe(plan, tenue, graine);
+  /* Les images-clés dans l'ordre dispersé du générateur, et non dans l'ordre du
+     fichier : deux plans voisins du montage ne doivent pas tomber sur deux
+     instants voisins du rush. */
+  const disperse = ordre.map((k) => k % cles.length)
+    .filter((k, i, tous) => tous.indexOf(k) === i)
+    .map((k) => cles[k]);
+  const cases = [];
+  for (let rang = 0; rang < RANGS_APRES_CLE; rang += 1) {
+    for (const cle of disperse) {
+      const t = cle + rang * PAS_APRES_CLE;
+      // Ce qui dépasse le rush, ou ce qui a déjà dépassé l'image-clé suivante —
+      // là, c'est elle qu'il faut prendre, et elle est déjà dans la liste.
+      if (t + tenue > source + 0.05) continue;
+      if (cles.some((autre) => autre > cle && autre <= t + 1e-6)) continue;
+      cases.push(Math.round(t * 1000) / 1000);
+    }
+  }
+  return cases.length ? cases : null;
+}
+
 function morceauxDe(plan, tenue, graine = 0) {
   const source = dureeSource(plan);
   const combien = Math.max(1, Math.min(24, Math.floor(source / Math.max(tenue, PLAN_MINI))));
@@ -15519,14 +15673,8 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
      comme il prenait la tranche suivante. Au-delà du nombre d'images-clés, on
      reprend la découpe régulière : mieux vaut un extrait lourd qu'un montage
      qui répète le même instant. */
-  const surCles = clesUtiles(plan, tenue);
-  if (surCles && pris < surCles.length) {
-    const { ordre: parcours } = morceauxDe(plan, tenue, graine);
-    // Le même parcours dispersé, ramené au nombre d'images-clés.
-    const place = parcours.map((k) => k % surCles.length)
-      .filter((k, i, tous) => tous.indexOf(k) === i)[pris % surCles.length];
-    return rendre(surCles[place ?? (pris % surCles.length)]);
-  }
+  const cases = casesUtiles(plan, tenue, graine);
+  if (cases && pris < cases.length) return rendre(cases[pris]);
 
   const { combien, pas, ordre } = morceauxDe(plan, tenue, graine);
   const place = ordre[pris % combien];
