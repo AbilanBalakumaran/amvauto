@@ -1777,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-13 12:47";
+const VERSION_PAGE = "2026-09-13 16:05";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3977,6 +3977,8 @@ window.__banc = {
   tranches: () => tranchesEnMemoire, positionCible: () => positionCible(),
   laisserAuReseau: (p) => laisserAuReseau(p), elementActif: () => elementActif(),
   mediaDe: (p) => mediaDe(p), extraitsRefuses: () => extraitsRefuses,
+  lecture: () => lecture, plansAbsents: (p) => plansAbsents(p),
+  feuilleDeRoute: (p, m) => feuilleDeRoute(p, m),
 };
 
 window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.refuses],
@@ -4266,8 +4268,26 @@ function cleSegment(plan) {
 }
 
 const segmentDe = (plan) => {
-  if (!plan || rendu.encours || rendu.parImage) return null;
+  if (!plan) return null;
   if (window.__sansCache) return null;      // interrupteur du banc d'essai
+  /* Pendant un rendu, le rush d'abord — mais seulement s'il est là.
+
+     La règle était « pendant un rendu, jamais de bloc » : le rush porte l'image
+     d'origine, le bloc en est une copie réduite à la taille de l'écran. Elle
+     supposait que le rush finissait toujours par arriver. Ce n'est plus vrai
+     depuis que les blocs viennent découpés du serveur : le rush n'est jamais
+     rapatrié, et l'export attendait donc un fichier que plus personne n'allait
+     chercher. « 99 plans ne sont pas encore sur l'appareil » d'un côté,
+     « encore 0 plan à rapatrier » de l'autre, et un bouton bloqué pour
+     toujours sur « Préparation 112/112 ».
+
+     Et la perte est bien plus petite qu'elle n'en a l'air : un bloc venu du
+     serveur est une RECOPIE du rush, octet pour octet, à sa définition
+     d'origine — 854 points sur ces rushs-là, quand l'export en demande 1280.
+     Rendre depuis ce bloc ou depuis le rush donne exactement la même image. Un
+     bloc réencodé sur l'appareil, lui, coûte un réencodage de plus ; c'est le
+     prix d'un export qui part au lieu d'un export qui n'existe pas. */
+  if ((rendu.encours || rendu.parImage) && estLocal(plan)) return null;
   const cle = cleSegment(plan);
   return cle ? segments.get(cle) || null : null;
 };
@@ -5927,10 +5947,17 @@ function debitSegment(plan, cadre) {
    refait : c'est tout l'intérêt d'un cache. */
 async function reprendreSegments(projet) {
   if (!projet?.plans.length) return;
+  // Toutes les clés d'un coup : une transaction au lieu de cent soixante-quinze.
+  const aLire = [];
+  for (const plan of projet.plans) {
+    const cle = cleSegment(plan);
+    if (cle && !segments.has(cle) && !aLire.includes(cle)) aLire.push(cle);
+  }
+  const trouves = await lireBaseGroupe(aLire).catch(() => new Map());
   for (const plan of projet.plans) {
     const cle = cleSegment(plan);
     if (!cle || segments.has(cle)) continue;
-    const garde = await lireBase(cle).catch(() => null);
+    const garde = trouves.get(cle) || null;
     if (garde instanceof Blob && garde.size) {
       /* Le bloc revient avec ce qu'il est, pas seulement avec ses octets : sans
          « decalage », une copie du rush relue du cache repart de l'image-clé qui
@@ -10039,6 +10066,41 @@ async function lireBase(adresse) {
   });
 }
 
+/* Lire plusieurs enregistrements d'un coup.
+
+   Reprendre un montage de cent soixante-quinze plans ouvrait cent
+   soixante-quinze transactions, l'une après l'autre, chacune rendant la main au
+   fil principal entre-temps. Mesuré au lancement, processeur bridé six fois :
+   trente-six tâches longues pour 4,8 secondes, dont une de 1278 ms — c'est
+   exactement le gel dont parle l'utilisateur.
+
+   Une seule transaction, une seule demande par clé dedans : le navigateur les
+   sert à la file sans repasser par la boucle d'événements entre chacune. */
+async function lireBaseGroupe(cles) {
+  const base = await ouvrirBase();
+  if (!base || !cles.length) return new Map();
+  return new Promise((ok) => {
+    const rendu = new Map();
+    let transaction;
+    try { transaction = base.transaction(MAGASIN, "readonly"); }
+    catch { return ok(rendu); }
+    const magasin = transaction.objectStore(MAGASIN);
+    for (const cle of cles) {
+      const requete = magasin.get(cle);
+      requete.onsuccess = () => {
+        if (requete.result) {
+          rendu.set(cle, requete.result);
+          noterUsage(cle, requete.result.size);
+        }
+      };
+      requete.onerror = () => { /* cette clé-là manque, les autres continuent */ };
+    }
+    transaction.oncomplete = () => ok(rendu);
+    transaction.onerror = () => ok(rendu);
+    transaction.onabort = () => ok(rendu);
+  });
+}
+
 /* Faire le ménage des segments d'une fabrication précédente.
 
    Changer la version de fabrication refait tous les segments — et laisse les
@@ -13246,6 +13308,212 @@ $("btn-export").addEventListener("click", () => {
   ouvrirExport(projet);
 });
 
+/* --- le rendu fait ailleurs -------------------------------------------
+
+   Un rendu de deux minutes vingt filme l'aperçu pendant deux minutes vingt,
+   écran allumé, application au premier plan, téléphone qui chauffe. Le montage,
+   lui, ne pèse rien : quelques kilo-octets de bornes et d'adresses. Tout ce
+   travail peut donc se faire sur une machine qui ne tient pas dans une poche.
+
+   GitHub offre deux mille minutes de runner Linux par mois. Un rendu en coûte
+   deux ou trois : de quoi en faire plusieurs centaines sans rien payer. Le
+   dépôt porte déjà le workflow et le script — il ne manquait que de quoi le
+   déclencher depuis le téléphone.
+
+   Ce qui part d'ici : la feuille de route, et rien d'autre. Les rushs, le
+   runner va les chercher lui-même à leur adresse publique. La musique, en
+   revanche, est un fichier choisi sur l'appareil : elle est déposée une fois
+   sur notre propre serveur, et le runner vient la lire là.
+
+   Le jeton, lui, ne quitte jamais l'appareil : il n'est envoyé qu'à
+   « api.github.com », et rangé dans le navigateur de son propriétaire. */
+const CLE_GITHUB = "amvauto-github";
+const DEPOT_PAR_DEFAUT = "AbilanBalakumaran/amvauto";
+
+function lireGitHub() {
+  try {
+    const su = JSON.parse(localStorage.getItem(CLE_GITHUB) || "{}");
+    return { depot: su.depot || DEPOT_PAR_DEFAUT, jeton: su.jeton || "" };
+  } catch { return { depot: DEPOT_PAR_DEFAUT, jeton: "" }; }
+}
+
+function noterGitHub(quoi) {
+  try { localStorage.setItem(CLE_GITHUB, JSON.stringify(quoi)); }
+  catch { /* le navigateur refuse d'écrire : on fera sans mémoire */ }
+}
+
+/* La feuille de route : ce que le runner a besoin de savoir, et pas un mot de
+   plus. Les plans sans adresse publique n'y sont pas — un rush importé à la
+   main ne peut pas être retrouvé de l'autre côté. */
+function feuilleDeRoute(projet, musique) {
+  const t = tailleRendu();
+  const plans = [];
+  const ecartes = [];
+  for (const plan of projet.plans) {
+    const adresse = mediaDe(plan);
+    if (!adresse || plan.youtube || !/^https:\/\//.test(adresse)) { ecartes.push(plan); continue; }
+    plans.push({
+      video: adresse,
+      entree: Math.round(entreeDe(plan) * 1000) / 1000,
+      sortie: Math.round(sortieDe(plan) * 1000) / 1000,
+    });
+  }
+  return {
+    feuille: {
+      cadence: IMAGES_PAR_SECONDE,
+      largeur: t.largeur - (t.largeur % 2),
+      hauteur: t.hauteur - (t.hauteur % 2),
+      ...(musique ? { musique } : {}),
+      plans,
+    },
+    ecartes,
+  };
+}
+
+/* Déposer la musique, une seule fois : la clé est l'empreinte du fichier, un
+   second dépôt du même morceau ne renvoie rien sur le réseau. */
+async function deposerPiste(projet) {
+  const blob = projet.audio?.blob || lecture.audio?.__blob || null;
+  const fichier = blob || (await lireBase(cleMusique(projet)).catch(() => null));
+  if (!(fichier instanceof Blob) || !fichier.size) return null;
+  const reponse = await fetch("/api/piste", {
+    method: "PUT",
+    headers: { "content-type": fichier.type || "audio/mpeg" },
+    body: fichier,
+  });
+  if (!reponse.ok) throw new Error(`dépôt de la musique refusé (${reponse.status}) — ${await reponse.text()}`);
+  const dit = await reponse.json();
+  return dit.url || null;
+}
+
+/* Déclencher le rendu, puis suivre la course sans la bloquer.
+
+   On ne télécharge pas l'artefact ici : GitHub ne le sert qu'à une requête
+   signée, et la redirection qui suit n'accepte pas d'en-tête depuis un
+   navigateur. Le lien vers la course, lui, s'ouvre dans l'onglet GitHub où l'on
+   est déjà identifié — deux touches, et le MP4 est dans les fichiers du
+   téléphone. */
+async function lancerRenduDistant(projet, bouton, etat) {
+  const { depot, jeton } = lireGitHub();
+  if (!jeton) { etat.textContent = "Il manque le jeton GitHub — le champ est juste en dessous."; return; }
+
+  const avant = bouton.textContent;
+  bouton.disabled = true;
+  bouton.textContent = "Envoi…";
+  try {
+    etat.textContent = "Dépôt de la musique…";
+    let musique = null;
+    try { musique = await deposerPiste(projet); }
+    catch (erreur) { etat.textContent = `${erreur.message}\nLe rendu partirait muet : on s'arrête là.`; return; }
+    if (!musique) {
+      etat.textContent = "Aucune musique ouverte : la vidéo sortirait muette. Rouvre le fichier en bas de ce panneau.";
+      return;
+    }
+
+    const { feuille, ecartes } = feuilleDeRoute(projet, musique);
+    if (!feuille.plans.length) {
+      etat.textContent = "Aucun plan n'a d'adresse publique : le rendu déporté ne peut rien aller chercher.";
+      return;
+    }
+
+    etat.textContent = "Demande envoyée à GitHub…";
+    const depuis = new Date(Date.now() - 60000).toISOString();
+    const envoi = await githubAppel(`/repos/${depot}/actions/workflows/rendu.yml/dispatches`, jeton, {
+      method: "POST",
+      body: JSON.stringify({ ref: "main", inputs: {
+        montage: JSON.stringify(feuille),
+        nom: nomDeFichier(projet).slice(0, 60) || "amv",
+      } }),
+    });
+    if (!envoi.ok) {
+      const dit = await envoi.text().catch(() => "");
+      etat.textContent = envoi.status === 404
+        ? `GitHub répond « introuvable » pour ${depot}. Vérifie le nom du dépôt, et que le jeton a bien le droit « Actions : lecture et écriture » sur CE dépôt.`
+        : envoi.status === 401 || envoi.status === 403
+          ? "GitHub a refusé le jeton. Il lui faut le droit « Actions : lecture et écriture » sur ce dépôt."
+          : `GitHub a refusé la demande (${envoi.status}). ${dit.slice(0, 200)}`;
+      return;
+    }
+
+    /* La réponse d'un déclenchement est vide : il faut retrouver la course. */
+    etat.textContent = "Rendu lancé. Recherche de la course…";
+    let course = null;
+    for (let essai = 0; essai < 12 && !course; essai += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((suite) => setTimeout(suite, 2500));
+      // eslint-disable-next-line no-await-in-loop
+      const liste = await githubAppel(
+        `/repos/${depot}/actions/workflows/rendu.yml/runs?per_page=5&created=>${depuis}`, jeton);
+      if (!liste.ok) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const dit = await liste.json().catch(() => null);
+      course = dit?.workflow_runs?.[0] || null;
+    }
+    if (!course) {
+      etat.textContent = "Le rendu est lancé, mais la course n'a pas été retrouvée tout de suite."
+        + `\nRegarde l'onglet Actions de ${depot} dans une minute.`;
+      return;
+    }
+
+    montrerCourse(course, etat, depot, jeton);
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = avant;
+  }
+}
+
+/* Suivre la course jusqu'au bout, sans empêcher de faire autre chose. */
+function montrerCourse(course, etat, depot, jeton) {
+  const lien = course.html_url;
+  const dire = (quoi) => { etat.innerHTML = ""; etat.append(quoi); };
+  const ligne = (texte) => {
+    const bloc = document.createElement("div");
+    bloc.textContent = texte;
+    const a = document.createElement("a");
+    a.href = lien;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = "Ouvrir la course sur GitHub";
+    a.style.cssText = "display:inline-block;margin-top:6px;color:var(--vert);text-decoration:underline";
+    const tout = document.createElement("div");
+    tout.append(bloc, a);
+    return tout;
+  };
+  dire(ligne("Rendu en cours sur GitHub — compte deux à quatre minutes."));
+
+  let tours = 0;
+  const suivre = setInterval(async () => {
+    tours += 1;
+    if (!document.body.contains(etat) || tours > 80) { clearInterval(suivre); return; }
+    const reponse = await githubAppel(`/repos/${depot}/actions/runs/${course.id}`, jeton).catch(() => null);
+    if (!reponse?.ok) return;
+    const dit = await reponse.json().catch(() => null);
+    if (!dit) return;
+    if (dit.status !== "completed") {
+      dire(ligne(`Rendu en cours sur GitHub — ${dit.status === "queued" ? "en file" : "en train de rendre"}…`));
+      return;
+    }
+    clearInterval(suivre);
+    dire(ligne(dit.conclusion === "success"
+      ? "Rendu terminé. Le fichier est dans les artefacts de la course, en bas de la page GitHub."
+      : `Le rendu a échoué (${dit.conclusion}). La page GitHub dit à quelle étape.`));
+  }, 5000);
+}
+
+async function githubAppel(chemin, jeton, options = {}) {
+  const reponse = await fetch(`https://api.github.com${chemin}`, {
+    ...options,
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${jeton}`,
+      "x-github-api-version": "2022-11-28",
+      ...(options.body ? { "content-type": "application/json" } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  return reponse;
+}
+
 /* Ce qui empêche de rendre, en une phrase — ou rien du tout.
 
    C'est la même vérification que celle qui écrit le bouton, mais rendue au
@@ -13295,10 +13563,25 @@ function texteExport(projet, format, extension) {
     `Le rendu se fait en temps réel : compte ${minutage(longueur)}, écran allumé et application au premier plan.`,
     "",
     absents
-      ? `${absents} plan${absents > 1 ? "s ne sont" : " n'est"} pas encore sur l'appareil${reste ? `, ${reste} Mo à venir` : ""}. Le rendu attend : filmer un montage incomplet donnerait du noir, et coûterait le même temps. Laisse la page ouverte, les fichiers arrivent.`
+      ? `${absents} plan${absents > 1 ? "s ne sont" : " n'est"} pas encore prêt${absents > 1 ? "s" : ""}${reste ? `, ${reste} Mo à venir` : ""}. Le rendu attend : filmer un montage incomplet donnerait du noir, et coûterait le même temps. Laisse la page ouverte, les fichiers arrivent.`
       : perdus
         ? `Prêt, à ceci près : ${perdus} plan${perdus > 1 ? "s sont introuvables et sortiront noirs" : " est introuvable et sortira noir"}. Retire-le${perdus > 1 ? "s" : ""} de la piste si tu préfères.`
-        : "Tous les plans sont sur l'appareil : le rendu sera complet.",
+        : "Tout est prêt : le rendu sera complet.",
+    /* D'où viendront les images, et ce que cela change.
+
+       Un bloc venu du serveur est la recopie exacte du rush, à sa définition
+       d'origine : rendre depuis lui ne coûte rien. Un bloc réencodé ici est
+       passé une fois par l'encodeur du téléphone. Le dire vaut mieux que de le
+       laisser deviner. */
+    ...(() => {
+      const parBloc = projet.plans.filter((plan) => !plan.youtube && mediaDe(plan)
+        && !estLocal(plan) && surSegment(plan));
+      if (!parBloc.length) return [];
+      const copies = parBloc.filter((plan) => segments.get(cleSegment(plan))?.copie).length;
+      return ["", `${parBloc.length} plan(s) seront rendus depuis leur bloc, le rush n'ayant pas été rapatrié`
+        + ` — dont ${copies} recopié(s) du rush sans perte`
+        + (parBloc.length > copies ? `, et ${parBloc.length - copies} réencodé(s) une fois.` : ".")];
+    })(),
   ].join("\n");
 }
 
@@ -13438,8 +13721,26 @@ function ouvrirExport(projet) {
   /* Les fichiers continuent d'arriver pendant que le panneau est ouvert : le
      bouton doit s'allumer tout seul quand le dernier est là, sans quoi il
      faudrait le refermer et le rouvrir pour s'en apercevoir. */
+  /* Recalculé seulement quand quelque chose a bougé.
+
+     Le panneau refaisait tout chaque seconde : « plansAbsents », « plansPerdus »,
+     « resteAImporter », la phrase entière, et le bouton — sept parcours complets
+     du montage par seconde, chacun consultant le cache pour chaque plan. Mesuré
+     sur cent soixante-quinze plans, processeur bridé six fois : quarante-trois
+     tâches longues en huit secondes, 5,5 secondes de fil principal pris sur
+     huit. L'écran ne répondait plus au doigt.
+
+     Or tout cela ne change que lorsqu'un fichier arrive ou un bloc se fait. Une
+     signature de quelques nombres suffit à le savoir, et elle coûte un seul
+     parcours. */
+  let signature = "";
   const veille = setInterval(() => {
     if (!document.body.contains(video)) { clearInterval(veille); return; }
+    const bilan = resteAImporter(projet);
+    const marque = [bilan.prets, bilan.total, bilan.perdus, segments.size,
+      Boolean(lecture.audio), rendu.encours, etatRendu.methode, etatRendu.taille].join("|");
+    if (marque === signature) return;
+    signature = marque;
     jauger();
     meta.textContent = texteExport(projet, format, extension);
   }, 1000);
@@ -13495,9 +13796,64 @@ function ouvrirExport(projet) {
   fermer.textContent = "Fermer";
   fermer.addEventListener("click", () => { arreterRendu(); fermerFeuille(); });
 
-  actions.append(video, paquet, edl, liste, fermer);
+  /* Le rendu fait ailleurs : un bouton, et le jeton juste en dessous.
+
+     Il n'apparaît qu'une fois : c'est le même geste que « Rendre la vidéo »,
+     mais le travail se fait sur une machine qui ne chauffe pas dans une poche.
+     Le champ du jeton reste visible tant qu'il est vide — c'est la seule chose
+     à faire une fois pour toutes. */
+  const distant = document.createElement("button");
+  distant.type = "button";
+  distant.textContent = "Rendre sur GitHub";
+  distant.title = "Le rendu se fait sur un runner GitHub : le téléphone n'encode rien";
+  distant.addEventListener("click", () => lancerRenduDistant(projet, distant, etat));
+
+  const compteGitHub = document.createElement("div");
+  compteGitHub.className = "lecteur-meta";
+  compteGitHub.style.marginTop = "8px";
+  const peindreGitHub = () => {
+    const su = lireGitHub();
+    compteGitHub.innerHTML = "";
+    const dit = document.createElement("div");
+    dit.textContent = su.jeton
+      ? `Rendu déporté prêt — dépôt ${su.depot}, jeton enregistré sur cet appareil.`
+      : "Rendu déporté : il faut un jeton GitHub « fine-grained » avec le droit"
+        + " « Actions : lecture et écriture » sur ton dépôt. Il reste sur cet appareil"
+        + " et n'est envoyé qu'à api.github.com.";
+    const champ = document.createElement("input");
+    champ.type = "password";
+    champ.autocomplete = "off";
+    champ.placeholder = su.jeton ? "jeton enregistré — colle-en un autre pour le remplacer" : "github_pat_…";
+    champ.style.cssText = "width:100%;margin-top:6px;padding:7px 9px;border-radius:8px;"
+      + "border:1px solid var(--trait);background:#141414;color:var(--texte);font:inherit;font-size:0.78rem";
+    const ou = document.createElement("input");
+    ou.type = "text";
+    ou.value = su.depot;
+    ou.placeholder = "utilisateur/dépôt";
+    ou.style.cssText = champ.style.cssText;
+    const garder = document.createElement("button");
+    garder.type = "button";
+    garder.textContent = "Enregistrer";
+    garder.style.cssText = "margin-top:6px;padding:5px 12px;border-radius:999px;border:1px solid var(--trait);"
+      + "background:#1b1b1b;color:var(--texte);font:inherit;font-size:0.74rem";
+    garder.addEventListener("click", () => {
+      const jeton = champ.value.trim() || lireGitHub().jeton;
+      noterGitHub({ depot: ou.value.trim() || DEPOT_PAR_DEFAUT, jeton });
+      peindreGitHub();
+    });
+    const oublier = document.createElement("button");
+    oublier.type = "button";
+    oublier.textContent = "Oublier le jeton";
+    oublier.style.cssText = garder.style.cssText + ";margin-left:6px";
+    oublier.addEventListener("click", () => { noterGitHub({ depot: lireGitHub().depot, jeton: "" }); peindreGitHub(); });
+    compteGitHub.append(dit, champ, ou, garder);
+    if (su.jeton) compteGitHub.append(oublier);
+  };
+  peindreGitHub();
+
+  actions.append(video, distant, paquet, edl, liste, fermer);
   if (!lecture.audio) actions.append(musique);
-  corps.append(titre, meta, rangeeMethode, rangeeTaille, etat, livraison, actions);
+  corps.append(titre, meta, rangeeMethode, rangeeTaille, etat, livraison, actions, compteGitHub);
   peindreMethodes();
   peindreTailles();
   jauger();
@@ -13605,7 +13961,7 @@ const rendu = { encours: false, parImage: false, enregistreur: null, surveille: 
    au lieu de bloquer le bouton pour l'éternité. */
 const plansAbsents = (projet) =>
   projet.plans.filter((plan) => !plan.youtube && mediaDe(plan)
-    && !estLocal(plan) && !importsRates.has(mediaDe(plan)));
+    && !pretAJouer(plan) && !importsRates.has(mediaDe(plan)));
 
 const plansPerdus = (projet) =>
   projet.plans.filter((plan) => !plan.youtube && mediaDe(plan) && importsRates.has(mediaDe(plan)));
@@ -14284,12 +14640,19 @@ async function rendreImages(projet, reglages) {
            couper. Multiplié par quatre-vingt-huit plans, c'est du temps dépensé
            à fabriquer ce que personne ne verra. */
         lecteur.pause();
-        const entree = Math.min(entreeDe(plan), Math.max(0, (lecteur.duration || 0) - 0.02));
+        /* L'horloge de la source qu'on vient d'ouvrir, pas celle du rush.
+
+           « entreeDe » donne l'instant dans le rush ; quand c'est un bloc qui
+           est ouvert, cet instant n'y existe pas — il tombe au-delà de la fin
+           d'un fichier d'une seconde. « entreeLue » répond pour la source
+           réellement ouverte, rush ou bloc, et c'est la seule qui puisse
+           servir ici. */
+        const entree = Math.min(entreeLue(plan), Math.max(0, (lecteur.duration || 0) - 0.02));
         await attendreImage(lecteur, entree);
         prevoir(index + 1);
       }
 
-      const dans = entreeDe(plan) + Math.max(0, t - (debuts[index] || 0));
+      const dans = entreeLue(plan) + Math.max(0, t - (debuts[index] || 0));
       const vise = Math.min(dans, Math.max(0, (lecteur.duration || dans) - 0.02));
       await attendreImage(lecteur, vise);
 

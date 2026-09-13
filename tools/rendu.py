@@ -38,6 +38,9 @@ HOTES = {
     "sakugabooru.com",
     "v.animethemes.moe",
     "animethemes.moe",
+    # La musique du montage, déposée par l'application le temps du rendu : elle
+    # vient d'un fichier choisi sur le téléphone, elle n'a pas d'autre adresse.
+    "amvauto.mangateamz2.workers.dev",
 }
 
 ENTETES = {"User-Agent": "amvauto/0.1 (+https://github.com/AbilanBalakumaran/amvauto)"}

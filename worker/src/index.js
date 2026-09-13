@@ -9,6 +9,7 @@ import { relayerMedia } from "./media.js";
 import { extrait } from "./extrait.js";
 import { cles } from "./cles.js";
 import { grenier } from "./grenier.js";
+import { piste } from "./piste.js";
 import { compte } from "./compte.js";
 import { ecrireParoles } from "./paroles.js";
 import { accorderParoles } from "./accord.js";
@@ -340,6 +341,7 @@ export default {
         if (url.pathname === "/api/cles") return await cles(request, url, env, ctx);
         if (url.pathname === "/api/coffre") return await coffre(request, url, env);
         if (url.pathname === "/api/grenier") return await grenier(request, url, env);
+        if (url.pathname === "/api/piste") return await piste(request, url, env);
         if (url.pathname === "/api/compte") return await compte(request, url, env);
         if (url.pathname === "/api/musique") return await genererMusique(request, url, env);
         if (url.pathname === "/api/paroles") return await ecrireParoles(request, url, env);
