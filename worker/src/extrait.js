@@ -41,6 +41,29 @@ export const VERSION_EXTRAIT = 3;
    secondes changent tout. On se cale donc quand c'est gratuit, et pas autrement. */
 const CALAGE_TOLERE = 0.4;
 
+/* Ce qu'un extrait a le droit de traîner devant le plan.
+
+   Un extrait ne peut commencer que sur une image-clé. Quand le plan ne tombe
+   pas dessus, l'extrait porte tout le groupe d'images qui précède — et sur ces
+   rushs-là, c'est énorme. Mesuré sur quatre vrais rushs de Sakugabooru : 2,9 Mo
+   pour montrer 1,2 seconde, 205 images décodées pour en afficher 30, jusqu'à
+   7,3 secondes d'avance. Relevé sur l'appareil : 209 extraits pour 192 Mo, une
+   réserve collée à son plafond avec trois mille sept cents fichiers rendus, et
+   vingt blocs refusés par le lecteur — dix-neuf recopiés, un seul réencodé.
+
+   Le générateur choisit désormais ses points d'entrée parmi les images-clés et
+   leurs abords immédiats : l'avance ne dépasse jamais trois pas de trois
+   dixièmes. Au-delà, c'est que le montage a été posé avant cette règle — ou que
+   le rush n'a pas d'image-clé utilisable. Dans les deux cas la recopie n'est
+   plus le bon chemin : l'appareil fera un bloc réencodé de quatre-vingt-dix
+   kilo-octets à partir des seules tranches utiles, ce qui lui coûte moins de
+   réseau ET dix fois moins de place.
+
+   On refuse donc ici, avant d'envoyer quoi que ce soit : un extrait qu'on
+   n'aurait pas dû faire ne doit pas traverser la 4G pour être jeté à
+   l'arrivée. */
+const AVANCE_TOLEREE = 0.9;
+
 const TETE = 32768;
 // Au-delà, l'extrait n'a plus d'intérêt : autant que l'appareil prenne le rush.
 const PLAFOND_EXTRAIT = 12 * 1024 * 1024;
@@ -137,6 +160,9 @@ async function decouper(adresse, entree, sortie) {
   }
   const copie = copierMorceau(troue, remplie, entree, sortie, proche <= CALAGE_TOLERE);
   if (copie.echec) return { echec: copie.echec };
+  if (Math.abs(copie.decalage || 0) > AVANCE_TOLEREE) {
+    return { echec: `avance de ${(copie.decalage || 0).toFixed(2)} s — à réencoder sur l'appareil` };
+  }
   const octets = new Uint8Array(await copie.mp4.arrayBuffer());
   if (!octets.length || octets.length > PLAFOND_EXTRAIT) return { echec: "extrait hors mesure" };
   return { octets, images: copie.images, duree: copie.couverte, decalage: copie.decalage,
@@ -182,6 +208,12 @@ export async function extrait(request, url, env, ctx) {
          rendu au calcul et perdu à la relecture — c'est-à-dire dans tous les cas
          qui comptent, puisqu'un extrait n'est calculé qu'une fois. */
       const meta = range.customMetadata || {};
+      // Un extrait rangé avant la règle d'avance ne doit pas ressortir : il
+      // coûterait le même mégaoctet qu'au premier jour.
+      if (Math.abs(Number(meta.decalage) || 0) > AVANCE_TOLEREE) {
+        return new Response(`avance de ${meta.decalage} s — à réencoder sur l'appareil`,
+          { status: 422, headers: { "cache-control": "public, max-age=86400" } });
+      }
       return new Response(range.body, { headers: entetes({
         "x-amvauto-extrait": "rangé",
         "x-amvauto-decalage": meta.decalage || "0",

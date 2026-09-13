@@ -892,6 +892,30 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 }
 .preparation[hidden] { display: none; }
 .preparation-dit { display: block; }
+/* Pendant la lecture, le bandeau se tait presque.
+
+   Il est fait pour se lire d'un coup d'œil quand on attend ; quand on REGARDE,
+   il devient ce qu'on regarde. Trois lignes de texte et quatre boutons posés au
+   milieu d'un moniteur de quatre cent quatorze points, c'est la moitié de
+   l'image. « Affichage insistant » : c'était exactement cela.
+
+   Il se réduit donc à une seule ligne, sans boutons, tant que la lecture tourne,
+   et reprend sa taille dès qu'on met en pause — c'est là qu'on veut ses
+   gestes. */
+.preparation.discret {
+  left: auto;
+  right: 8px;
+  max-width: 72%;
+  padding: 3px 8px;
+  font-size: 0.66rem;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.75;
+}
+.preparation.discret button,
+.preparation.discret .transferts { display: none; }
 .preparation button {
   margin-top: 5px;
   padding: 4px 10px;
@@ -1753,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-13 11:49";
+const VERSION_PAGE = "2026-09-13 12:28";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -10010,7 +10034,30 @@ const cleParticelle = (adresse) => `partiel:${adresse}`;
    L'index des usages tient dans le stockage local : quelques dizaines d'octets
    par entrée, relu instantanément, et reconstruit tout seul s'il se perd. On
    évite ainsi de changer la structure de la base, et donc toute migration. */
-const PLAFOND_RESERVE = 150 * 1024 * 1024;
+/* Le plafond suit l'appareil, au lieu d'être un nombre rond.
+
+   Cent cinquante mébioctets, c'était une valeur posée sans rien mesurer — et
+   trop petite : un montage de cent douze plans y tient à peine, deux montages
+   ouverts n'y tiennent pas du tout. Relevé sur l'appareil : la réserve collée à
+   son plafond, « ce montage à lui seul le dépasse », et TROIS MILLE SEPT CENT
+   SOIXANTE-CINQ fichiers rendus en une séance. Ce n'est plus une purge, c'est
+   un tapis roulant : chaque bloc écrit en chasse une dizaine d'autres, qu'il
+   faudra retélécharger.
+
+   On prend donc une part de ce que le navigateur nous accorde vraiment, avec un
+   plancher pour les appareils avares et un plafond pour ne jamais remplir le
+   téléphone de quelqu'un. La valeur se recalcule à chaque mesure de place. */
+const PLANCHER_RESERVE = 150 * 1024 * 1024;
+const SOMMET_RESERVE = 600 * 1024 * 1024;
+const PART_RESERVE = 0.4;
+let PLAFOND_RESERVE = PLANCHER_RESERVE;
+
+function ajusterPlafond(quota) {
+  if (!(quota > 0)) return;
+  PLAFOND_RESERVE = Math.round(
+    Math.min(SOMMET_RESERVE, Math.max(PLANCHER_RESERVE, quota * PART_RESERVE)),
+  );
+}
 const CLE_USAGES = "amvauto-usages";
 const PURGEABLE = (cle) => typeof cle === "string"
   && (cle.startsWith("seg:") || cle.startsWith("partiel:") || /^https?:/.test(cle));
@@ -10210,7 +10257,11 @@ function noterPlaceRefusee(erreur) {
 async function mesurerPlace() {
   try {
     const bilan = await navigator.storage?.estimate?.();
-    if (bilan) { place.octets = bilan.usage || 0; place.total = bilan.quota || 0; }
+    if (bilan) {
+      place.octets = bilan.usage || 0;
+      place.total = bilan.quota || 0;
+      ajusterPlafond(place.total);
+    }
   } catch { /* l'appareil ne le dit pas */ }
 }
 mesurerPlace();
@@ -10497,7 +10548,17 @@ async function prendreExtrait(plan, cle) {
         return;
       }
       extraitsRefuses.add(cle);
-      raisonsSegment.set(cle, `le serveur n'a pas su le découper (${reponse.status})`);
+      /* Un 422 n'est pas toujours une panne : le serveur refuse aussi, exprès,
+         les extraits qui traîneraient trop d'images devant le plan — ils pèsent
+         dix fois le bloc réencodé et ce sont eux que le lecteur rejette. Il dit
+         pourquoi dans le corps de sa réponse, et c'est cela qu'il faut montrer,
+         pas un code. */
+      const pourquoi = reponse.status === 422
+        ? await reponse.text().catch(() => "")
+        : "";
+      raisonsSegment.set(cle, pourquoi
+        ? `le serveur a préféré le laisser à l'appareil : ${pourquoi}`
+        : `le serveur n'a pas su le découper (${reponse.status})`);
       planifierImport(plan);
       return;
     }
@@ -11146,6 +11207,8 @@ function majPreparation(projet) {
 
   dit.textContent = etat.texte;
   bandeau.hidden = !etat.texte;
+  // Pendant la lecture il ne prend plus la place de l'image.
+  bandeau.classList.toggle("discret", Boolean(lecture.demande));
   majNotificationTransfert();
 }
 
@@ -12908,6 +12971,11 @@ function majTransport() {
   const ecrire = (element, texte) => { if (element && element.textContent !== texte) element.textContent = texte; };
   ecrire($("timecode"), `${horloge(position, lecture.echelle > 300 ? 2 : 1)} / ${horloge(total(projet))}`);
   const enLecture = lecture.demande || lecture.jouant;
+  /* Le bandeau d'attente se range dès que la lecture part, et ressort à la
+     pause. « toggle » avec un état explicite ne touche au DOM que s'il change :
+     on peut donc le poser ici, dans la boucle qui suit la tête. */
+  const attente = $("preparation");
+  if (attente) attente.classList.toggle("discret", enLecture);
   const forme = enLecture ? "pause" : "play";
   for (const bouton of [$("lecture")]) {
     if (bouton && bouton.dataset.forme !== forme) {
