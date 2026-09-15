@@ -1906,7 +1906,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 18:10";
+const VERSION_PAGE = "2026-09-15 18:22";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3484,11 +3484,19 @@ function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
   const morceaux = [];
-  const tous = [...(state.projets || [])].sort((a, b) => {
-    const va = estArchive(a) ? 1 : 0;
-    const vb = estArchive(b) ? 1 : 0;
-    return va - vb || (b.cree || 0) - (a.cree || 0);
-  });
+  /* Du plus récent au plus ancien, et rien d'autre.
+
+     Les montages rangés partaient en bas de la liste. Ranger une carte la
+     faisait donc sauter sous le doigt qui venait de l'appuyer, et la ressortir
+     la ramenait ailleurs : on rangeait au jugé, sans jamais savoir où l'on en
+     était. Une liste se lit par ses places ; ce qui les fixe ici est la date de
+     création, qui ne change jamais.
+
+     On perd le regroupement — rangés d'un côté, ouverts de l'autre. Chaque
+     carte le dit déjà pour son compte : sa ligne porte « rangé le … » ou
+     « ouvert », le montage courant garde son cerne vert, et le geste d'état
+     n'a pas la même silhouette d'un côté et de l'autre. */
+  const tous = [...(state.projets || [])].sort((a, b) => (b.cree || 0) - (a.cree || 0));
 
   /* Deux choses différentes vivent dans cet onglet, et on n'y vient jamais
      pour les deux à la fois : les MONTAGES, qu'on rouvre pour continuer à
