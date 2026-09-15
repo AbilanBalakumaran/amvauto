@@ -221,9 +221,6 @@ export async function grenier(request, url, env) {
     if (annonce > POIDS_MAX) return texte("rendu trop lourd", 413);
 
     const nom = nomPropre(url.searchParams.get("nom") || "rendu.mp4");
-    const corps = await request.arrayBuffer();
-    if (!corps.byteLength) return texte("rendu vide", 400);
-    if (corps.byteLength > POIDS_MAX) return texte("rendu trop lourd", 413);
 
     /* Ce que le rendu raconte de lui-même, tel que le déposant le donne.
 
@@ -242,10 +239,29 @@ export async function grenier(request, url, env) {
     };
     for (const [clef, valeur] of Object.entries(meta)) if (!valeur) delete meta[clef];
 
-    await env.GRENIER.put(`${code}/${nom}`, corps, {
+    /* Le fichier passe directement du réseau à R2, sans s'arrêter en mémoire.
+
+       Il s'y arrêtait : « await request.arrayBuffer() » chargeait tout le rendu
+       dans le tas du Worker avant de l'écrire. Un Worker dispose de cent
+       vingt-huit mébioctets en tout ; un rendu de deux minutes vingt en pèse
+       quatre-vingt-treize, et l'écriture en demande une seconde copie. C'était
+       le dépôt le plus lourd qui échouait — c'est-à-dire précisément celui pour
+       lequel tout ce chemin existe.
+
+       Le corps de la requête est un flux : R2 sait le prendre tel quel, et rien
+       n'est jamais tenu en entier. La longueur est déjà vérifiée plus haut,
+       d'après ce que l'expéditeur annonce ; ce qui a réellement été écrit est
+       vérifié en dessous, sur l'objet rendu. */
+    if (!request.body) return texte("rendu vide", 400);
+    const ecrit = await env.GRENIER.put(`${code}/${nom}`, request.body, {
       httpMetadata: { contentType: type },
       customMetadata: meta,
-    });
+    }).catch(() => null);
+    if (!ecrit) return texte("le dépôt a échoué", 502);
+    if (!ecrit.size) {
+      await env.GRENIER.delete(`${code}/${nom}`).catch(() => null);
+      return texte("rendu vide", 400);
+    }
 
     /* Le grenier tient ses deux bornes : un nombre de rendus, et un poids.
        Ce qui dépasse l'une ou l'autre s'en va, en commençant par le plus

@@ -1777,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 13:31";
+const VERSION_PAGE = "2026-09-15 13:46";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3240,27 +3240,119 @@ function renommerProjet(projet) {
    Séparé du reste de l'historique : la liste des montages est immédiate, celle
    des rendus demande un aller-retour. Les mêler ferait attendre la première
    pour la seconde. */
+/* Les rendus gardés sur l'appareil.
+
+   Ils existaient déjà, mais n'étaient proposés qu'à un seul endroit : le volet
+   « Exporter » du projet ouvert. Un rendu fait la semaine dernière sur un autre
+   montage était donc invisible, alors qu'il dormait dans la base. L'historique
+   est l'endroit où l'on vient chercher « ce que j'ai fait », et c'est là qu'il
+   doit être. */
+async function carteRenduLocal(id, fiche, apres) {
+  const rendu = {
+    nom: `${fiche.nom || "rendu"}.${fiche.extension || "mp4"}`,
+    taille: fiche.taille || 0,
+    quand: fiche.quand || 0,
+    projet: fiche.nom || "",
+    duree: fiche.duree || 0,
+    plans: 0,
+    source: "appareil",
+  };
+  const carte = document.createElement("div");
+  carte.className = "lecteur-meta";
+  carte.style.cssText = "border:1px solid var(--trait);border-radius:12px;padding:10px;margin-bottom:8px";
+  const dit = document.createElement("div");
+  dit.textContent = `${direRendu(rendu)} · gardé sur l'appareil`;
+  dit.style.marginBottom = "8px";
+  carte.append(dit);
+
+  const gestes = document.createElement("div");
+  gestes.style.cssText = "display:flex;flex-wrap:wrap;gap:6px";
+  const ouvrir = document.createElement("button");
+  ouvrir.type = "button";
+  ouvrir.className = "archive-action";
+  ouvrir.textContent = "Ouvrir";
+  ouvrir.addEventListener("click", async () => {
+    ouvrir.disabled = true;
+    const blob = await lireBase(`rendu:${id}`).catch(() => null);
+    ouvrir.disabled = false;
+    if (!(blob instanceof Blob) || !blob.size) {
+      dit.textContent = `${direRendu(rendu)} — le fichier n'est plus sur l'appareil.`;
+      return;
+    }
+    const hote = document.createElement("div");
+    carte.append(hote);
+    livrerRendu(blob, fiche.extension || "mp4", { nom: fiche.nom || "rendu" }, hote);
+    ouvrir.remove();
+  });
+  const jeter = document.createElement("button");
+  jeter.type = "button";
+  jeter.className = "archive-action danger";
+  jeter.textContent = "Supprimer";
+  jeter.addEventListener("click", async () => {
+    if (!confirm(`Supprimer le rendu de « ${fiche.nom || "ce montage"} » gardé sur l'appareil ?`)) return;
+    await effacerBase(`rendu:${id}`).catch(() => {});
+    const fiches = lireFichesRendu();
+    delete fiches[id];
+    try { localStorage.setItem(CLE_RENDUS, JSON.stringify(fiches)); } catch { /* tant pis */ }
+    apres?.();
+  });
+  gestes.append(ouvrir, jeter);
+  carte.append(gestes);
+  return carte;
+}
+
+/* Tous les rendus, d'où qu'ils viennent.
+
+   Deux origines et une seule liste : ceux qui sont en ligne — déposés par le
+   rendu fait sur GitHub, téléchargeables et partageables sans quitter
+   l'application — et ceux qui sont gardés ici. Les séparer en deux endroits
+   obligeait à savoir lequel chercher. */
 async function peindreRendusEnLigne() {
   const hote = $("histoire-rendus");
   if (!hote) return;
-  if (!coffre.code) {
-    hote.replaceChildren(note("Les rendus terminés s'afficheront ici une fois que tu auras un compte"
-      + " — c'est lui qui donne au grenier la clé de tes fichiers. Réglages, onglet Compte."));
-    return;
-  }
-  const liste = await listerGrenier();
+  const morceaux = [];
+
   const titre = document.createElement("div");
   titre.className = "lecteur-titre";
   titre.style.padding = "var(--e4) 0 8px";
-  titre.textContent = `Rendus en ligne (${liste.length})`;
-  if (!liste.length) {
-    hote.replaceChildren(titre,
-      note("Aucun rendu en ligne. Ceux que tu feras avec « Rendre sur GitHub » arriveront ici tout seuls,"
-        + " prêts à télécharger ou à enregistrer dans Photos."));
-    return;
+  morceaux.push(titre);
+
+  const rafraichir = document.createElement("button");
+  rafraichir.type = "button";
+  rafraichir.className = "archive-action";
+  rafraichir.textContent = "Rafraîchir la liste";
+  rafraichir.addEventListener("click", () => peindreRendusEnLigne());
+
+  // Ce qui est sur l'appareil se lit tout de suite, sans réseau.
+  const fiches = Object.entries(lireFichesRendu())
+    .sort((a, b) => (b[1]?.quand || 0) - (a[1]?.quand || 0));
+  const locaux = await Promise.all(
+    fiches.map(([id, fiche]) => carteRenduLocal(id, fiche, () => peindreRendusEnLigne())),
+  );
+
+  const enLigne = coffre.code ? await listerGrenier() : [];
+  const cartes = enLigne.map((rendu) => carteRendu(rendu, () => peindreRendusEnLigne()));
+
+  titre.textContent = `Rendus (${cartes.length + locaux.length})`;
+  morceaux.push(...cartes, ...locaux);
+
+  if (!coffre.code) {
+    /* Sans code, rien ne peut arriver du rendu déporté — et la cause est ici,
+       pas dans un autre onglet. On la montre, et on la répare sur place. */
+    morceaux.push(note("Les rendus faits sur GitHub reviennent ici tout seuls — mais il leur faut"
+      + " d'abord ton code AMVAUTO, qui dit où les déposer. Il n'y en a pas encore sur cet appareil."));
+    morceaux.push(blocCodeAmvauto(() => peindreRendusEnLigne()));
+  } else if (!cartes.length) {
+    morceaux.push(note("Aucun rendu en ligne pour l'instant. Ceux que tu feras avec « Rendre sur GitHub »"
+      + " arriveront ici tout seuls — à condition que ton code AMVAUTO soit aussi dans les secrets du"
+      + " dépôt, sous le nom AMVAUTO_CODE. Sans lui, le rendu reste dans les artefacts de GitHub."));
+    morceaux.push(blocCodeAmvauto(() => peindreRendusEnLigne()));
   }
-  const cartes = liste.map((rendu) => carteRendu(rendu, () => peindreRendusEnLigne()));
-  hote.replaceChildren(titre, ...cartes);
+  if (!cartes.length && !locaux.length && coffre.code) {
+    morceaux.push(note("Rien non plus sur l'appareil : les rendus faits ici s'y gardent tout seuls."));
+  }
+  morceaux.push(rafraichir);
+  hote.replaceChildren(...morceaux);
 }
 
 function rendreHistoire() {
@@ -14310,9 +14402,20 @@ async function corrigerRendu(blob) {
    survit à tout sauf à un effacement des données du navigateur. */
 const cleRendu = (projet) => `rendu:${projet.id}`;
 
+/* Un rendu qu'on n'a pas réussi à ranger doit le dire.
+
+   L'échec était avalé : « stockage plein, le rendu reste offert dans la page ».
+   C'est vrai — jusqu'à ce qu'on ferme la page. Ensuite il n'existe plus, et
+   rien ne l'a jamais annoncé : « on dirait que les anciens rendus ne
+   s'enregistrent pas ». C'était exactement cela, en silence.
+
+   Rend maintenant ce qui s'est passé, pour que le panneau puisse le dire et
+   proposer l'autre chemin — le grenier, qui ne dépend pas de la place restante
+   sur le téléphone. */
 async function garderRendu(projet, blob, extension) {
   try {
-    await ecrireBase(cleRendu(projet), blob);
+    const range = await ecrireBase(cleRendu(projet), blob);
+    if (range === false) return { echec: "l'appareil a refusé de le ranger — mémoire pleine" };
     const fiches = lireFichesRendu();
     fiches[projet.id] = {
       quand: Date.now(),
@@ -14322,7 +14425,10 @@ async function garderRendu(projet, blob, extension) {
       nom: projet.nom,
     };
     localStorage.setItem(CLE_RENDUS, JSON.stringify(fiches));
-  } catch { /* stockage plein : le rendu reste offert dans la page, pas au-delà */ }
+    return { garde: true };
+  } catch (erreur) {
+    return { echec: `impossible de le ranger (${erreur?.name || "erreur"})` };
+  }
 }
 
 const CLE_RENDUS = "amvauto-rendus";
@@ -14830,7 +14936,11 @@ async function rendreHorsTempsReel(projet, bouton, etat, offrir) {
     }
     etat.textContent = `Rendu terminé en ${minutage(Math.round(fait.secondes))} — `
       + `${fait.images} images à ${IMAGES_PAR_SECONDE} par seconde, sans un saut.`;
-    await garderRendu(projet, fait.blob, "mp4");
+    const range = await garderRendu(projet, fait.blob, "mp4");
+    if (range?.echec) {
+      etat.textContent += `\n\nIl n'a PAS pu être gardé sur l'appareil : ${range.echec}.`
+        + " Enregistre-le maintenant — ou fais-le rendre sur GitHub, le grenier ne dépend pas de la place ici.";
+    }
     offrir(fait.blob, "mp4", IMAGES_PAR_SECONDE);
   } finally {
     rendu.encours = false;
