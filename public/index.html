@@ -1777,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 14:17";
+const VERSION_PAGE = "2026-09-15 14:51";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3267,23 +3267,23 @@ async function carteRenduLocal(id, fiche, apres) {
 
   const gestes = document.createElement("div");
   gestes.style.cssText = "display:flex;flex-wrap:wrap;gap:6px";
-  const ouvrir = document.createElement("button");
-  ouvrir.type = "button";
-  ouvrir.className = "archive-action";
-  ouvrir.textContent = "Ouvrir";
-  ouvrir.addEventListener("click", async () => {
-    ouvrir.disabled = true;
-    const blob = await lireBase(`rendu:${id}`).catch(() => null);
-    ouvrir.disabled = false;
+
+  /* Les mêmes gestes que pour un rendu en ligne : ce qui change est l'endroit
+     où les octets sont pris, pas ce qu'on en fait. */
+  const octets = () => lireBase(`rendu:${id}`).catch(() => null);
+  let adresse = "";
+  const ouvrir = boutonApercu(carte, async () => {
+    if (adresse) return adresse;
+    const blob = await octets();
     if (!(blob instanceof Blob) || !blob.size) {
       dit.textContent = `${direRendu(rendu)} — le fichier n'est plus sur l'appareil.`;
-      return;
+      return "";
     }
-    const hote = document.createElement("div");
-    carte.append(hote);
-    livrerRendu(blob, fiche.extension || "mp4", { nom: fiche.nom || "rendu" }, hote);
-    ouvrir.remove();
+    adresse = URL.createObjectURL(blob);
+    return adresse;
   });
+  const telecharger = boutonEnregistrer(octets, rendu.nom, rendu.projet || rendu.nom);
+
   const jeter = document.createElement("button");
   jeter.type = "button";
   jeter.className = "archive-action danger";
@@ -3296,7 +3296,7 @@ async function carteRenduLocal(id, fiche, apres) {
     try { localStorage.setItem(CLE_RENDUS, JSON.stringify(fiches)); } catch { /* tant pis */ }
     apres?.();
   });
-  gestes.append(ouvrir, jeter);
+  gestes.append(ouvrir, telecharger, jeter);
   carte.append(gestes);
   return carte;
 }
@@ -3355,6 +3355,10 @@ async function peindreRendusEnLigne() {
   hote.replaceChildren(...morceaux);
 }
 
+/* Laquelle des deux faces est montrée. Gardée entre deux passages : on revient
+   presque toujours pour la même chose. */
+let histoireFace = "rendus";
+
 function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
@@ -3365,31 +3369,54 @@ function rendreHistoire() {
     return va - vb || (b.cree || 0) - (a.cree || 0);
   });
 
+  /* Deux choses différentes vivent dans cet onglet, et on n'y vient jamais
+     pour les deux à la fois : les MONTAGES, qu'on rouvre pour continuer à
+     travailler, et les RENDUS, qu'on vient regarder ou enregistrer. Les
+     empiler obligeait à faire défiler l'un pour atteindre l'autre. Une bascule,
+     et l'on voit celui qu'on cherche. */
+  const bascule = document.createElement("nav");
+  bascule.className = "reglages-nav";
+  bascule.style.padding = "var(--e4) var(--e4) 0";
+  const faces = [["rendus", "Rendus"], ["projets", "Montages"]];
+  for (const [quoi, dit] of faces) {
+    const bouton = document.createElement("button");
+    bouton.type = "button";
+    bouton.className = `reglages-onglet${histoireFace === quoi ? " actif" : ""}`;
+    bouton.textContent = dit;
+    bouton.addEventListener("click", () => {
+      if (histoireFace === quoi) return;
+      histoireFace = quoi;
+      rendreHistoire();
+    });
+    bascule.append(bouton);
+  }
+  morceaux.push(bascule);
+
+  const rendus = document.createElement("div");
+  rendus.id = "histoire-rendus";
+  rendus.style.padding = "0 var(--e4)";
+  rendus.hidden = histoireFace !== "rendus";
+  morceaux.push(rendus);
+
   const titre = document.createElement("div");
   titre.className = "lecteur-titre";
   titre.style.padding = "var(--e4) var(--e4) 0";
   titre.textContent = `Tous les montages (${tous.length})`;
+  titre.hidden = histoireFace !== "projets";
   morceaux.push(titre);
 
-  /* Les rendus déjà faits, avant les montages.
-
-     C'est ce qu'on vient chercher le plus souvent dans cet onglet : la vidéo
-     finie, pas le banc de montage. Elle arrive du réseau, donc plus tard que le
-     reste — le bloc est posé vide et se remplit tout seul. */
-  const rendus = document.createElement("div");
-  rendus.id = "histoire-rendus";
-  rendus.style.padding = "0 var(--e4)";
-  morceaux.push(rendus);
-
   if (!tous.length) {
-    morceaux.push(note("Aucun montage pour l'instant. Le premier que tu créeras apparaîtra ici, et il y restera."));
+    const vide = note("Aucun montage pour l'instant. Le premier que tu créeras apparaîtra ici, et il y restera.");
+    vide.hidden = histoireFace !== "projets";
+    morceaux.push(vide);
     vue.replaceChildren(...morceaux);
-  peindreRendusEnLigne().catch(() => {});
+    peindreRendusEnLigne().catch(() => {});
     return;
   }
 
   const liste = document.createElement("div");
   liste.className = "projets colonne";
+  liste.hidden = histoireFace !== "projets";
   for (const projet of tous) {
     const range = estArchive(projet);
     const carte = document.createElement("div");
@@ -15165,28 +15192,101 @@ const direRendu = (rendu) => [
 /* Enregistrer dans Photos passe par le partage du système, et le partage veut
    un fichier — donc il faut l'avoir reçu en entier. C'est le seul des trois
    gestes qui coûte le poids de la vidéo, et il le dit avant de commencer. */
-async function partagerRendu(rendu, bouton) {
-  const avant = bouton.textContent;
-  bouton.disabled = true;
-  try {
-    bouton.textContent = "Réception…";
-    const reponse = await fetch(adresseRendu(rendu), { cache: "no-store" });
-    if (!reponse.ok) throw new Error(String(reponse.status));
-    const blob = await reponse.blob();
-    const fichier = new File([blob], rendu.nom, { type: blob.type || "video/mp4" });
-    if (!navigator.canShare?.({ files: [fichier] })) {
-      bouton.textContent = "Ce navigateur ne sait pas partager un fichier";
+/* Enregistrer dans Photos, en deux appuis — et il en faut deux.
+
+   La feuille « Enregistrer la vidéo » d'iOS s'ouvre par « navigator.share ».
+   Safari exige que cet appel ait lieu PENDANT le geste de l'utilisateur : un
+   « await fetch » avant lui consomme le geste, et le partage est refusé sans
+   rien dire. C'était le défaut — on appuyait, la vidéo arrivait, et rien ne
+   s'ouvrait. Ce qu'on obtenait à la place, avec un lien de téléchargement,
+   c'est l'onglet Fichiers ou une page Safari : exactement ce qu'on voulait
+   éviter.
+
+   Il n'y a pas de contournement : on ne peut pas partager des octets qu'on n'a
+   pas encore, ni les recevoir sans perdre le geste. On sépare donc les deux. Le
+   premier appui va chercher la vidéo et le dit ; le second, qui est un vrai
+   geste tout neuf, ouvre la feuille d'iOS immédiatement — sans aucune attente
+   entre les deux, puisque les octets sont déjà là.
+
+   Là où le partage de fichiers n'existe pas — un ordinateur — le bouton
+   redevient un téléchargement ordinaire. */
+function boutonEnregistrer(chercher, nom, titre) {
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.className = "archive-action fort";
+  bouton.textContent = "Télécharger";
+  let pret = null;
+
+  const versFichier = (blob) => new File([blob], nom, { type: blob.type || "video/mp4" });
+
+  bouton.addEventListener("click", async () => {
+    /* Second appui : les octets sont là, on ouvre la feuille tout de suite.
+       Rien d'attendu avant — c'est la condition pour qu'iOS l'accepte. */
+    if (pret) {
+      try {
+        await navigator.share({ files: [pret], title: titre });
+        bouton.textContent = "Enregistrée";
+        setTimeout(() => { bouton.textContent = "Enregistrer dans Photos"; }, 3000);
+      } catch (erreur) {
+        // Annulé d'un geste : ce n'est pas une panne, on ne dit rien.
+        if (erreur?.name !== "AbortError") bouton.textContent = "Refusé par l'appareil";
+      }
       return;
     }
-    await navigator.share({ files: [fichier], title: rendu.projet || rendu.nom });
-  } catch (erreur) {
-    // Un partage annulé d'un geste n'est pas une panne : on ne dit rien.
-    if (erreur?.name !== "AbortError") bouton.textContent = "Le partage a échoué";
-  } finally {
-    bouton.disabled = false;
-    if (bouton.textContent === "Réception…") bouton.textContent = avant;
-    setTimeout(() => { bouton.textContent = avant; }, 4000);
-  }
+
+    bouton.disabled = true;
+    bouton.textContent = "Réception…";
+    try {
+      const blob = await chercher();
+      if (!(blob instanceof Blob) || !blob.size) throw new Error("vide");
+      const fichier = versFichier(blob);
+      if (navigator.canShare?.({ files: [fichier] })) {
+        pret = fichier;
+        bouton.textContent = "Enregistrer dans Photos";
+        return;
+      }
+      /* Pas de partage de fichiers : on retombe sur un téléchargement, qui est
+         le bon geste sur un ordinateur. */
+      const lien = document.createElement("a");
+      lien.href = URL.createObjectURL(blob);
+      lien.download = nom;
+      lien.click();
+      setTimeout(() => URL.revokeObjectURL(lien.href), 60000);
+      bouton.textContent = "Téléchargée";
+      setTimeout(() => { bouton.textContent = "Télécharger"; }, 3000);
+    } catch {
+      bouton.textContent = "La vidéo n'a pas pu être reçue";
+      setTimeout(() => { bouton.textContent = "Télécharger"; }, 4000);
+    } finally {
+      bouton.disabled = false;
+    }
+  });
+  return bouton;
+}
+
+/* Un aperçu, posé dans la carte et refermable. */
+function boutonApercu(carte, source) {
+  const voir = document.createElement("button");
+  voir.type = "button";
+  voir.className = "archive-action";
+  voir.textContent = "Aperçu";
+  voir.addEventListener("click", async () => {
+    const deja = carte.querySelector("video");
+    if (deja) { deja.remove(); voir.textContent = "Aperçu"; return; }
+    voir.disabled = true;
+    const src = await source();
+    voir.disabled = false;
+    if (!src) { voir.textContent = "Aperçu indisponible"; return; }
+    const video = document.createElement("video");
+    video.src = src;
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.style.cssText = "width:100%;border-radius:10px;display:block;background:#000;margin-top:8px";
+    carte.append(video);
+    voir.textContent = "Masquer";
+  });
+  return voir;
 }
 
 function carteRendu(rendu, apres) {
@@ -15202,34 +15302,14 @@ function carteRendu(rendu, apres) {
   const gestes = document.createElement("div");
   gestes.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;align-items:center";
 
-  const voir = document.createElement("button");
-  voir.type = "button";
-  voir.className = "archive-action";
-  voir.textContent = "Voir";
-  voir.addEventListener("click", () => {
-    if (carte.querySelector("video")) { carte.querySelector("video").remove(); voir.textContent = "Voir"; return; }
-    const video = document.createElement("video");
-    video.src = adresseRendu(rendu);
-    video.controls = true;
-    video.playsInline = true;
-    video.preload = "metadata";
-    video.style.cssText = "width:100%;border-radius:10px;display:block;background:#000;margin-top:8px";
-    carte.append(video);
-    voir.textContent = "Masquer";
-  });
-
-  const telecharger = document.createElement("a");
-  telecharger.className = "archive-action";
-  telecharger.href = adresseRendu(rendu, true);
-  telecharger.download = rendu.nom;
-  telecharger.textContent = "Télécharger le MP4";
-  telecharger.style.textDecoration = "none";
-
-  const partager = document.createElement("button");
-  partager.type = "button";
-  partager.className = "archive-action";
-  partager.textContent = "Enregistrer dans Photos";
-  partager.addEventListener("click", () => partagerRendu(rendu, partager));
+  // L'aperçu se lit directement du grenier, par tranches : rien à recevoir
+  // d'avance pour voir le début.
+  const voir = boutonApercu(carte, () => adresseRendu(rendu));
+  const telecharger = boutonEnregistrer(
+    () => fetch(adresseRendu(rendu), { cache: "no-store" })
+      .then((r) => (r.ok ? r.blob() : null)),
+    rendu.nom, rendu.projet || rendu.nom,
+  );
 
   const jeter = document.createElement("button");
   jeter.type = "button";
@@ -15243,7 +15323,7 @@ function carteRendu(rendu, apres) {
     apres?.();
   });
 
-  gestes.append(voir, telecharger, partager, jeter);
+  gestes.append(voir, telecharger, jeter);
   carte.append(gestes);
   return carte;
 }
