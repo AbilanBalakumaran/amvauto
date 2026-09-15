@@ -21,7 +21,21 @@
 import { codeValide } from "./coffre.js";
 
 const POIDS_MAX = 100_000_000;   // la limite d'un corps de requête chez Cloudflare
-const GARDES = 3;                // rendus conservés par code
+
+/* Combien de rendus on garde, et jusqu'où.
+
+   Trois, c'était le compte d'un dépannage : de quoi ne pas perdre le dernier
+   export. Ce n'est pas un historique. Depuis que le rendu se fait sur un runner
+   et se dépose ici tout seul, le grenier EST l'historique — c'est là qu'on
+   revient chercher un montage d'il y a trois semaines, sans avoir à le refaire.
+
+   On borne donc par les deux bouts, et par le plus petit des deux : un nombre,
+   pour que la liste reste lisible, et un poids, pour que la place occupée ne
+   dépende pas de la durée des montages. Trois gigaoctets par code sur les dix
+   offerts : trois personnes peuvent s'en servir sans jamais se gêner, et un
+   rendu de quatre-vingt-dix mégaoctets en laisse passer une trentaine. */
+const GARDES = 24;
+const POIDS_PAR_CODE = 3 * 1024 ** 3;
 
 /* Les limites qu'il ne faut pas dépasser, et qui ne sont écrites nulle part
    ailleurs que dans la grille tarifaire de Cloudflare.
@@ -85,14 +99,44 @@ const nomPropre = (brut) => {
 };
 
 async function inventaire(env, code) {
-  const liste = await env.GRENIER.list({ prefix: `${code}/` });
+  // « include » est nécessaire : sans lui, R2 ne rend ni les métadonnées ni le
+  // type, et la liste ne saurait dire que « rendu.mp4, 93 Mo ».
+  const liste = await env.GRENIER.list({ prefix: `${code}/`, include: ["customMetadata", "httpMetadata"] });
   return liste.objects
-    .map((o) => ({
-      nom: o.key.slice(code.length + 1),
-      taille: o.size,
-      quand: o.uploaded ? new Date(o.uploaded).getTime() : 0,
-    }))
+    .map((o) => {
+      const meta = o.customMetadata || {};
+      return {
+        nom: o.key.slice(code.length + 1),
+        taille: o.size,
+        quand: o.uploaded ? new Date(o.uploaded).getTime() : 0,
+        type: o.httpMetadata?.contentType || "",
+        // Ce que le rendu raconte de lui-même. Tout est facultatif : un dépôt
+        // fait par une version plus ancienne n'en a aucun, et la liste doit
+        // rester lisible quand même.
+        projet: meta.projet || "",
+        duree: Number(meta.duree) || 0,
+        plans: Number(meta.plans) || 0,
+        source: meta.source || "",
+        musique: meta.musique || "",
+      };
+    })
     .sort((a, b) => b.quand - a.quand);
+}
+
+/* Ce qui doit partir pour que le grenier tienne ses deux bornes.
+
+   Les plus récents d'abord : on garde tant qu'on est sous le compte ET sous le
+   poids, et tout ce qui vient après s'en va. */
+function aJeter(rendus) {
+  const partants = [];
+  let poids = 0;
+  let gardes = 0;
+  for (const rendu of rendus) {
+    poids += rendu.taille || 0;
+    gardes += 1;
+    if (gardes > GARDES || poids > POIDS_PAR_CODE) partants.push(rendu);
+  }
+  return partants;
 }
 
 export async function grenier(request, url, env) {
@@ -109,14 +153,64 @@ export async function grenier(request, url, env) {
     if (url.searchParams.has("place")) return donnees(await place(env, code));
     const nom = url.searchParams.get("nom");
     if (!nom) return donnees({ rendus: await inventaire(env, code) });
-    const objet = await env.GRENIER.get(`${code}/${nomPropre(nom)}`);
+    /* Le fichier, en entier ou par tranches.
+
+       Une balise vidéo ne lit pas un fichier de quatre-vingt-dix mégaoctets d'un
+       bloc : elle demande le début, puis se déplace. Sans les plages, tout
+       arrivait avant la première image et l'on ne pouvait pas sauter dans la
+       vidéo. C'est ce qui sépare « un fichier qu'on télécharge » d'« un rendu
+       qu'on regarde ». */
+    const plage = (request.headers.get("range") || "").match(/^bytes=(\d*)-(\d*)$/);
+    const cle = `${code}/${nomPropre(nom)}`;
+    const entetes = (objet, extra = {}) => ({
+      "content-type": objet.httpMetadata?.contentType || "application/octet-stream",
+      "accept-ranges": "bytes",
+      "cache-control": "private, no-store",
+      /* Sur un téléphone, un lien sans ce nom enregistre « grenier » sans
+         suffixe, et le fichier n'est plus reconnu comme une vidéo. Il n'est posé
+         que si l'on demande le téléchargement : sans cela, l'aperçu d'une balise
+         vidéo se transformerait lui aussi en téléchargement. */
+      ...(url.searchParams.has("telecharger")
+        ? { "content-disposition": `attachment; filename="${nomPropre(nom)}"` }
+        : {}),
+      ...extra,
+    });
+
+    if (plage) {
+      const tete = await env.GRENIER.head(cle);
+      if (!tete) return texte("rendu introuvable", 404);
+      /* Deux formes, et elles ne se lisent pas pareil : « bytes=100-499 » donne
+         un début et une fin ; « bytes=-500 » demande les cinq cents DERNIERS
+         octets. Les confondre renvoie le début du fichier à qui demandait la
+         fin — un lecteur vidéo qui cherche l'index d'un MP4 ne trouve alors
+         rien. */
+      const suffixe = !plage[1];
+      const debut = suffixe
+        ? Math.max(0, tete.size - Number(plage[2] || 0))
+        : Number(plage[1]);
+      const fin = suffixe || !plage[2]
+        ? tete.size - 1
+        : Math.min(Number(plage[2]), tete.size - 1);
+      if (!Number.isFinite(debut) || !(debut >= 0) || debut > fin || fin >= tete.size) {
+        return new Response("plage hors du fichier", {
+          status: 416, headers: { "content-range": `bytes */${tete.size}` },
+        });
+      }
+      const morceau = await env.GRENIER.get(cle, { range: { offset: debut, length: fin - debut + 1 } });
+      if (!morceau) return texte("rendu introuvable", 404);
+      return new Response(morceau.body, {
+        status: 206,
+        headers: entetes(morceau, {
+          "content-length": String(fin - debut + 1),
+          "content-range": `bytes ${debut}-${fin}/${tete.size}`,
+        }),
+      });
+    }
+
+    const objet = await env.GRENIER.get(cle);
     if (!objet) return texte("rendu introuvable", 404);
     return new Response(objet.body, {
-      headers: {
-        "content-type": objet.httpMetadata?.contentType || "application/octet-stream",
-        "content-length": String(objet.size),
-        "cache-control": "private, no-store",
-      },
+      headers: entetes(objet, { "content-length": String(objet.size) }),
     });
   }
 
@@ -131,12 +225,34 @@ export async function grenier(request, url, env) {
     if (!corps.byteLength) return texte("rendu vide", 400);
     if (corps.byteLength > POIDS_MAX) return texte("rendu trop lourd", 413);
 
-    await env.GRENIER.put(`${code}/${nom}`, corps, { httpMetadata: { contentType: type } });
+    /* Ce que le rendu raconte de lui-même, tel que le déposant le donne.
 
-    /* Trois rendus gardés, pas plus : au quatrième, le plus ancien s'en va.
-       Sans cette borne, la place occupée ne dépendrait de rien. */
+       Rien n'est obligatoire et rien n'est cru : ce sont des libellés, affichés
+       tels quels dans une liste, jamais interprétés. On borne simplement leur
+       longueur — R2 plafonne l'ensemble des métadonnées, et une liste se lit
+       mieux avec des noms courts. */
+    const mot = (nomChamp, combien = 80) =>
+      String(url.searchParams.get(nomChamp) || "").slice(0, combien);
+    const meta = {
+      projet: mot("projet"),
+      duree: mot("duree", 12),
+      plans: mot("plans", 6),
+      source: mot("source", 20),
+      musique: mot("musique", 80),
+    };
+    for (const [clef, valeur] of Object.entries(meta)) if (!valeur) delete meta[clef];
+
+    await env.GRENIER.put(`${code}/${nom}`, corps, {
+      httpMetadata: { contentType: type },
+      customMetadata: meta,
+    });
+
+    /* Le grenier tient ses deux bornes : un nombre de rendus, et un poids.
+       Ce qui dépasse l'une ou l'autre s'en va, en commençant par le plus
+       ancien. Sans cela, la place occupée ne dépendrait de rien. */
     const restants = await inventaire(env, code);
-    for (const vieux of restants.slice(GARDES)) {
+    for (const vieux of aJeter(restants)) {
+      // eslint-disable-next-line no-await-in-loop
       await env.GRENIER.delete(`${code}/${vieux.nom}`).catch(() => null);
     }
     return donnees({ rendus: await inventaire(env, code) });

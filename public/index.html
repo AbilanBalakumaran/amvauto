@@ -1777,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-13 16:05";
+const VERSION_PAGE = "2026-09-15 12:41";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3235,6 +3235,34 @@ function renommerProjet(projet) {
    j'ai fait jusqu'ici » — y compris ce qui est encore ouvert. Chaque montage y
    est donc listé, avec ce qu'il contient, quand il a été créé, et trois gestes :
    l'ouvrir dans l'onglet Projet, le renommer, le ranger ou le ressortir. */
+/* Les rendus en ligne, remplis quand ils arrivent.
+
+   Séparé du reste de l'historique : la liste des montages est immédiate, celle
+   des rendus demande un aller-retour. Les mêler ferait attendre la première
+   pour la seconde. */
+async function peindreRendusEnLigne() {
+  const hote = $("histoire-rendus");
+  if (!hote) return;
+  if (!coffre.code) {
+    hote.replaceChildren(note("Les rendus terminés s'afficheront ici une fois que tu auras un compte"
+      + " — c'est lui qui donne au grenier la clé de tes fichiers. Réglages, onglet Compte."));
+    return;
+  }
+  const liste = await listerGrenier();
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.style.padding = "var(--e4) 0 8px";
+  titre.textContent = `Rendus en ligne (${liste.length})`;
+  if (!liste.length) {
+    hote.replaceChildren(titre,
+      note("Aucun rendu en ligne. Ceux que tu feras avec « Rendre sur GitHub » arriveront ici tout seuls,"
+        + " prêts à télécharger ou à enregistrer dans Photos."));
+    return;
+  }
+  const cartes = liste.map((rendu) => carteRendu(rendu, () => peindreRendusEnLigne()));
+  hote.replaceChildren(titre, ...cartes);
+}
+
 function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
@@ -3251,9 +3279,20 @@ function rendreHistoire() {
   titre.textContent = `Tous les montages (${tous.length})`;
   morceaux.push(titre);
 
+  /* Les rendus déjà faits, avant les montages.
+
+     C'est ce qu'on vient chercher le plus souvent dans cet onglet : la vidéo
+     finie, pas le banc de montage. Elle arrive du réseau, donc plus tard que le
+     reste — le bloc est posé vide et se remplit tout seul. */
+  const rendus = document.createElement("div");
+  rendus.id = "histoire-rendus";
+  rendus.style.padding = "0 var(--e4)";
+  morceaux.push(rendus);
+
   if (!tous.length) {
     morceaux.push(note("Aucun montage pour l'instant. Le premier que tu créeras apparaîtra ici, et il y restera."));
     vue.replaceChildren(...morceaux);
+  peindreRendusEnLigne().catch(() => {});
     return;
   }
 
@@ -3327,6 +3366,7 @@ function rendreHistoire() {
   morceaux.push(liste);
   morceaux.push(note("« Ranger » retire un montage de la barre des projets sans rien perdre : ses plans, ses coupes et sa musique l'attendent. « Ouvrir » le remet en place."));
   vue.replaceChildren(...morceaux);
+  peindreRendusEnLigne().catch(() => {});
 }
 
 function barreProjets() {
@@ -13423,6 +13463,12 @@ async function lancerRenduDistant(projet, bouton, etat) {
       body: JSON.stringify({ ref: "main", inputs: {
         montage: JSON.stringify(feuille),
         nom: nomDeFichier(projet).slice(0, 60) || "amv",
+        /* Ce que le rendu emportera avec lui dans la liste : sans cela, un
+           historique ne dit que « rendu.mp4, 93 Mo », ce qui ne distingue rien
+           d'un montage à l'autre. */
+        projet: String(projet.nom || "").slice(0, 80),
+        duree: String(Math.round(total(projet))),
+        plans: String(projet.plans.length),
       } }),
     });
     if (!envoi.ok) {
@@ -13455,7 +13501,7 @@ async function lancerRenduDistant(projet, bouton, etat) {
       return;
     }
 
-    montrerCourse(course, etat, depot, jeton);
+    montrerCourse(course, etat, depot, jeton, Date.parse(depuis) || Date.now());
   } finally {
     bouton.disabled = false;
     bouton.textContent = avant;
@@ -13463,7 +13509,7 @@ async function lancerRenduDistant(projet, bouton, etat) {
 }
 
 /* Suivre la course jusqu'au bout, sans empêcher de faire autre chose. */
-function montrerCourse(course, etat, depot, jeton) {
+function montrerCourse(course, etat, depot, jeton, depuis = Date.now()) {
   const lien = course.html_url;
   const dire = (quoi) => { etat.innerHTML = ""; etat.append(quoi); };
   const ligne = (texte) => {
@@ -13494,9 +13540,31 @@ function montrerCourse(course, etat, depot, jeton) {
       return;
     }
     clearInterval(suivre);
-    dire(ligne(dit.conclusion === "success"
-      ? "Rendu terminé. Le fichier est dans les artefacts de la course, en bas de la page GitHub."
-      : `Le rendu a échoué (${dit.conclusion}). La page GitHub dit à quelle étape.`));
+    if (dit.conclusion !== "success") {
+      dire(ligne(`Le rendu a échoué (${dit.conclusion}). La page GitHub dit à quelle étape.`));
+      return;
+    }
+    /* Le fichier est déposé par la dernière étape du workflow, juste après la
+       fin de la course : il peut manquer d'une poignée de secondes. On le
+       cherche donc quelques fois avant de renvoyer vers GitHub. */
+    dire(ligne("Rendu terminé. Réception du fichier…"));
+    for (let essai = 0; essai < 10; essai += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const rendus = await listerGrenier();
+      const neuf = rendus.find((r) => r.quand >= depuis - 60000);
+      if (neuf) {
+        etat.innerHTML = "";
+        const dire_ = document.createElement("div");
+        dire_.textContent = "Rendu terminé — il est aussi dans l'onglet Historique.";
+        dire_.style.marginBottom = "8px";
+        etat.append(dire_, carteRendu(neuf, () => { etat.textContent = "Rendu supprimé."; }));
+        return;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((suite) => setTimeout(suite, 4000));
+    }
+    dire(ligne("Rendu terminé, mais il n'est pas arrivé dans le grenier."
+      + " Le secret AMVAUTO_CODE manque peut-être au dépôt — le fichier reste dans les artefacts de la course."));
   }, 5000);
 }
 
@@ -14897,6 +14965,118 @@ async function listerGrenier() {
   } catch {
     return [];
   }
+}
+
+/* --- un rendu du grenier, rendu utilisable ------------------------------
+
+   Ce qu'on veut d'un rendu, sur un téléphone : le voir, l'enregistrer dans
+   Photos, ou le télécharger. Rien de tout cela ne demandait de quitter
+   l'application — c'est pourtant ce qu'il fallait faire, parce que le fichier
+   n'existait que comme artefact GitHub : une archive ZIP, derrière une page
+   lourde et une connexion, effacée au bout de sept jours.
+
+   Les trois gestes sont ici, et ils tirent du même endroit : le grenier, qui
+   sert le fichier par tranches — donc une vidéo qu'on peut parcourir sans
+   l'avoir entièrement reçue. */
+const adresseRendu = (rendu, telecharger = false) =>
+  `/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(rendu.nom)}`
+  + (telecharger ? "&telecharger=1" : "");
+
+const direRendu = (rendu) => [
+  rendu.projet || rendu.nom,
+  rendu.duree ? minutage(rendu.duree) : "",
+  rendu.plans ? `${rendu.plans} plans` : "",
+  // Sous dix mégaoctets, l'entier ment : un rendu de 400 ko s'annonçait « 0 Mo ».
+  `${(rendu.taille / 1e6).toFixed(rendu.taille < 1e7 ? 1 : 0)} Mo`,
+  rendu.quand ? new Date(rendu.quand).toLocaleString("fr-FR",
+    { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "",
+  rendu.source === "github" ? "rendu sur GitHub" : "",
+].filter(Boolean).join(" · ");
+
+/* Enregistrer dans Photos passe par le partage du système, et le partage veut
+   un fichier — donc il faut l'avoir reçu en entier. C'est le seul des trois
+   gestes qui coûte le poids de la vidéo, et il le dit avant de commencer. */
+async function partagerRendu(rendu, bouton) {
+  const avant = bouton.textContent;
+  bouton.disabled = true;
+  try {
+    bouton.textContent = "Réception…";
+    const reponse = await fetch(adresseRendu(rendu), { cache: "no-store" });
+    if (!reponse.ok) throw new Error(String(reponse.status));
+    const blob = await reponse.blob();
+    const fichier = new File([blob], rendu.nom, { type: blob.type || "video/mp4" });
+    if (!navigator.canShare?.({ files: [fichier] })) {
+      bouton.textContent = "Ce navigateur ne sait pas partager un fichier";
+      return;
+    }
+    await navigator.share({ files: [fichier], title: rendu.projet || rendu.nom });
+  } catch (erreur) {
+    // Un partage annulé d'un geste n'est pas une panne : on ne dit rien.
+    if (erreur?.name !== "AbortError") bouton.textContent = "Le partage a échoué";
+  } finally {
+    bouton.disabled = false;
+    if (bouton.textContent === "Réception…") bouton.textContent = avant;
+    setTimeout(() => { bouton.textContent = avant; }, 4000);
+  }
+}
+
+function carteRendu(rendu, apres) {
+  const carte = document.createElement("div");
+  carte.className = "lecteur-meta";
+  carte.style.cssText = "border:1px solid var(--trait);border-radius:12px;padding:10px;margin-bottom:8px";
+
+  const dit = document.createElement("div");
+  dit.textContent = direRendu(rendu);
+  dit.style.marginBottom = "8px";
+  carte.append(dit);
+
+  const gestes = document.createElement("div");
+  gestes.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;align-items:center";
+
+  const voir = document.createElement("button");
+  voir.type = "button";
+  voir.className = "archive-action";
+  voir.textContent = "Voir";
+  voir.addEventListener("click", () => {
+    if (carte.querySelector("video")) { carte.querySelector("video").remove(); voir.textContent = "Voir"; return; }
+    const video = document.createElement("video");
+    video.src = adresseRendu(rendu);
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.style.cssText = "width:100%;border-radius:10px;display:block;background:#000;margin-top:8px";
+    carte.append(video);
+    voir.textContent = "Masquer";
+  });
+
+  const telecharger = document.createElement("a");
+  telecharger.className = "archive-action";
+  telecharger.href = adresseRendu(rendu, true);
+  telecharger.download = rendu.nom;
+  telecharger.textContent = "Télécharger le MP4";
+  telecharger.style.textDecoration = "none";
+
+  const partager = document.createElement("button");
+  partager.type = "button";
+  partager.className = "archive-action";
+  partager.textContent = "Enregistrer dans Photos";
+  partager.addEventListener("click", () => partagerRendu(rendu, partager));
+
+  const jeter = document.createElement("button");
+  jeter.type = "button";
+  jeter.className = "archive-action danger";
+  jeter.textContent = "Supprimer";
+  jeter.addEventListener("click", async () => {
+    if (!confirm(`Supprimer « ${rendu.projet || rendu.nom} » du grenier ? La vidéo sera perdue, ici comme sur les autres appareils.`)) return;
+    jeter.disabled = true;
+    await fetch(`/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(rendu.nom)}`,
+      { method: "DELETE" }).catch(() => null);
+    apres?.();
+  });
+
+  gestes.append(voir, telecharger, partager, jeter);
+  carte.append(gestes);
+  return carte;
 }
 
 function lienGrenier(rendu) {

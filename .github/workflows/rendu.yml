@@ -23,6 +23,21 @@ on:
         required: false
         default: amv
         type: string
+      projet:
+        description: "Le nom du montage, pour la liste des rendus"
+        required: false
+        default: ""
+        type: string
+      duree:
+        description: "Sa durée en secondes"
+        required: false
+        default: ""
+        type: string
+      plans:
+        description: "Combien de plans"
+        required: false
+        default: ""
+        type: string
 
 # Le job n'a besoin que d'écrire son artefact : rien d'autre du dépôt.
 permissions:
@@ -61,3 +76,47 @@ jobs:
           path: sortie.mp4
           retention-days: 7
           if-no-files-found: error
+
+      # Le vrai point d'arrivée : le grenier de l'application.
+      #
+      # Un artefact GitHub oblige à quitter la PWA, ouvrir un site lourd sur un
+      # téléphone, se connecter, trouver la section « Artifacts », et récupérer
+      # un ZIP au lieu d'une vidéo. Et il expire au bout de sept jours.
+      #
+      # Le grenier, lui, est déjà dans l'application : la liste s'y affiche, le
+      # fichier s'y télécharge en un geste et se partage vers Photos. Le dépôt
+      # passe par le code de vingt caractères du compte — le même qui sert à
+      # retrouver ses montages d'un appareil à l'autre — rangé dans les secrets
+      # du dépôt. Sans ce secret, l'étape est simplement sautée : l'artefact
+      # reste là, et rien n'échoue.
+      - name: Déposer dans le grenier de l'application
+        env:
+          CODE: ${{ secrets.AMVAUTO_CODE }}
+          HOTE: ${{ vars.AMVAUTO_HOTE || 'https://amvauto.mangateamz2.workers.dev' }}
+          NOM: ${{ inputs.nom }}
+          PROJET: ${{ inputs.projet }}
+          DUREE: ${{ inputs.duree }}
+          PLANS: ${{ inputs.plans }}
+        run: |
+          set -u
+          # Le secret absent n'est pas une panne : l'artefact reste le chemin
+          # d'avant, et l'on ne fait pas échouer un rendu qui a abouti.
+          if [ -z "${CODE:-}" ]; then
+            echo "Aucun secret AMVAUTO_CODE : dépôt sauté, l'artefact ci-dessus reste disponible."
+            exit 0
+          fi
+          fichier="$(printf '%s' "$NOM" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-60)"
+          [ -n "$fichier" ] || fichier=amv
+          horodatage="$(date -u +%Y%m%d-%H%M)"
+          code_http=$(curl -sS -o reponse.json -w '%{http_code}' \
+            -X PUT "$HOTE/api/grenier?code=$CODE&nom=$fichier-$horodatage.mp4&source=github&projet=$(printf '%s' "$PROJET" | jq -sRr @uri)&duree=$(printf '%s' "$DUREE" | jq -sRr @uri)&plans=$(printf '%s' "$PLANS" | jq -sRr @uri)" \
+            -H 'content-type: video/mp4' \
+            --data-binary @sortie.mp4) || code_http=000
+          echo "dépôt : HTTP $code_http"
+          if [ "$code_http" != "200" ]; then
+            echo "Le dépôt a échoué — l'artefact ci-dessus reste disponible." >&2
+            head -c 400 reponse.json >&2 || true
+            exit 0
+          fi
+          echo "Le rendu est dans l'application, onglet Historique."
+
