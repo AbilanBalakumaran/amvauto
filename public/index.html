@@ -100,7 +100,13 @@ button svg, .puce svg, .badge-score svg { display: block; }
 .demarrage {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  /* Au-dessus de tout, bandeaux compris. C'est un rideau : il est tiré pendant
+     que l'application se monte, et de nouveau juste avant un rechargement. Il
+     partageait l'étage des bandeaux persistants, et comme il est écrit dans la
+     page alors qu'ils y sont ajoutés ensuite, c'est le bandeau qui passait
+     devant — « une nouvelle version est disponible » s'affichait sur l'écran de
+     lancement, et jusque sur celui du rechargement qu'on venait de demander. */
+  z-index: 300;
   display: none;
   place-items: center;
   align-content: center;
@@ -1940,7 +1946,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 18:30";
+const VERSION_PAGE = "2026-09-15 18:35";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
