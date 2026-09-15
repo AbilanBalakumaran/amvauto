@@ -1777,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 13:46";
+const VERSION_PAGE = "2026-09-15 14:17";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4110,6 +4110,7 @@ window.__banc = {
   laisserAuReseau: (p) => laisserAuReseau(p), elementActif: () => elementActif(),
   mediaDe: (p) => mediaDe(p), extraitsRefuses: () => extraitsRefuses,
   lecture: () => lecture, plansAbsents: (p) => plansAbsents(p),
+  deposerPiste: (p) => deposerPiste(p), cleMusique: (p) => cleMusique(p),
   feuilleDeRoute: (p, m) => feuilleDeRoute(p, m),
 };
 
@@ -8654,6 +8655,19 @@ function brancherPincement(cadre) {
   }, { passive: true });
 }
 
+/* Une musique qu'on n'a pas pu ranger vaut pour la séance, pas au-delà.
+
+   C'est réparable — il suffit de rouvrir le fichier — mais encore faut-il le
+   savoir. Le silence d'avant laissait croire que tout allait bien jusqu'à la
+   prochaine ouverture de l'application. */
+const musiqueVolatile = new Set();
+
+function noterMusiqueVolatile(projet) {
+  if (!projet?.id) return;
+  musiqueVolatile.add(projet.id);
+  majImports();
+}
+
 /* --- bande son -------------------------------------------------------- */
 /* Les extensions d'abord, le type générique ensuite.
 
@@ -8762,11 +8776,15 @@ async function reprendreMusique(projet) {
   if (lecture.audioProjet === projet.id && (lecture.audio || !projet.audio)) return;
   if (!projet.audio) {
     if (lecture.audio) { arreterSon(); lecture.audio = null; }
+    // Le fichier tenu en mémoire appartient au montage qu'on quitte : le garder
+    // ferait déposer la musique d'un autre sur le rendu de celui-ci.
+    lecture.audioFichier = null;
     lecture.audioProjet = projet.id;
     return;
   }
   lecture.audioProjet = projet.id;
   if (lecture.audio) { arreterSon(); lecture.audio = null; }
+  lecture.audioFichier = null;
   let blob;
   try { blob = await lireBase(cleMusique(projet)); } catch { return; }
   if (!(blob instanceof Blob) || !blob.size) return;
@@ -8781,6 +8799,7 @@ async function reprendreMusique(projet) {
   if (projetActif()?.id !== projet.id) return;
   if (!son.duration) return;
   lecture.audio = son;
+  lecture.audioFichier = blob;
   // La barre de son disait « Rouvrir le fichier » : elle n'a plus lieu de le dire.
   rendreProjet();
 }
@@ -8794,7 +8813,23 @@ function chargerSon(projet, fichier) {
     projet.audio = { nom: fichier.name, duree: Math.round(son.duration * 100) / 100 };
     lecture.audio = son;
     lecture.audioProjet = projet.id;
-    ecrireBase(cleMusique(projet), fichier).catch(() => { /* stockage plein : la musique vaudra pour cette séance */ });
+    /* Le fichier reste sous la main, en plus d'être rangé.
+
+       Le rendu déporté a besoin des octets de la musique, et il allait les
+       chercher dans la base. Or l'écriture peut avoir échoué — elle le pouvait
+       en silence — et il annonçait alors « Aucune musique ouverte » à quelqu'un
+       qui en entendait une. Ce qui est ouvert est ouvert : on le garde. */
+    lecture.audioFichier = fichier;
+    /* Et l'on fait de la place avant d'écrire, comme pour tout le reste. La
+       musique ne passait pas par là : sur un appareil dont la réserve est à son
+       plafond, son rangement échouait sans rien libérer ni rien dire. */
+    faireDeLaPlace(fichier.size || 0)
+      .catch(() => 0)
+      .then(() => ecrireBase(cleMusique(projet), fichier))
+      .then((range) => {
+        if (range === false) noterMusiqueVolatile(projet);
+      })
+      .catch(() => noterMusiqueVolatile(projet));
     sauver();
     enregistrer(projet);
     rendreProjet();
@@ -11421,6 +11456,9 @@ function phraseAvancement(projet) {
   if (volatiles.size) {
     bouts.push(`${volatiles.size} non rangé${volatiles.size > 1 ? "s" : ""} — mémoire de l'appareil pleine`);
   }
+  if (musiqueVolatile.has(projet.id)) {
+    bouts.push("musique non rangée — elle vaudra pour cette séance, pense à la rouvrir ensuite");
+  }
 
   /* Une seule barre pour tout le travail — les fichiers puis la préparation.
      Deux barres pour deux phases se liraient comme deux travaux, et celle qui
@@ -13508,9 +13546,20 @@ function feuilleDeRoute(projet, musique) {
 /* Déposer la musique, une seule fois : la clé est l'empreinte du fichier, un
    second dépôt du même morceau ne renvoie rien sur le réseau. */
 async function deposerPiste(projet) {
-  const blob = projet.audio?.blob || lecture.audio?.__blob || null;
-  const fichier = blob || (await lireBase(cleMusique(projet)).catch(() => null));
-  if (!(fichier instanceof Blob) || !fichier.size) return null;
+  /* D'abord le fichier ouvert dans cette séance, ensuite seulement la base.
+
+     L'ordre inverse était le défaut : on interrogeait un rangement qui pouvait
+     avoir échoué, et l'on concluait « aucune musique » alors qu'elle jouait. */
+  const fichier = (lecture.audioFichier instanceof Blob && lecture.audioFichier.size)
+    ? lecture.audioFichier
+    : await lireBase(cleMusique(projet)).catch(() => null);
+  if (!(fichier instanceof Blob) || !fichier.size) {
+    throw new Error(projet.audio?.nom
+      ? `« ${projet.audio.nom} » n'est plus ouvert : un navigateur ne peut pas rouvrir seul un fichier`
+        + " choisi la dernière fois, et le rangement de cette musique avait échoué. Rouvre-la en bas"
+        + " de ce panneau, puis relance."
+      : "Aucune musique choisie : la vidéo sortirait muette.");
+  }
   const reponse = await fetch("/api/piste", {
     method: "PUT",
     headers: { "content-type": fichier.type || "audio/mpeg" },
@@ -13539,9 +13588,9 @@ async function lancerRenduDistant(projet, bouton, etat) {
     etat.textContent = "Dépôt de la musique…";
     let musique = null;
     try { musique = await deposerPiste(projet); }
-    catch (erreur) { etat.textContent = `${erreur.message}\nLe rendu partirait muet : on s'arrête là.`; return; }
+    catch (erreur) { etat.textContent = `${erreur.message}\n\nLe rendu partirait muet : on s'arrête là.`; return; }
     if (!musique) {
-      etat.textContent = "Aucune musique ouverte : la vidéo sortirait muette. Rouvre le fichier en bas de ce panneau.";
+      etat.textContent = "La musique n'a pas pu être déposée. Le rendu partirait muet : on s'arrête là.";
       return;
     }
 
