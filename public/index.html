@@ -1777,7 +1777,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 12:41";
+const VERSION_PAGE = "2026-09-15 13:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -11529,6 +11529,9 @@ function majCompte() {
   const zone = $("zone-compte");
   if (!zone) return;
   zone.replaceChildren();
+  /* Le code avant tout le reste : c'est ce qu'on vient chercher ici, et il ne
+     dépend pas d'être connecté — il existe sur l'appareil, compte ou pas. */
+  zone.append(blocCodeAmvauto(() => majCompte()));
 
   if (session.jeton && session.identifiant) {
     const ligne = document.createElement("div");
@@ -11559,7 +11562,7 @@ function majCompte() {
     zone.append(ligne);
     zone.append(note("Tes montages suivent ce compte : connecte-toi sur un autre appareil et ils y seront. "
       + "Les vidéos, elles, se retéléchargent depuis leur source — elles ne voyagent pas."));
-    return;
+    return;   // le bloc du code est déjà posé au-dessus
   }
 
   const formulaire = document.createElement("form");
@@ -13919,9 +13922,16 @@ function ouvrirExport(projet) {
   };
   peindreGitHub();
 
+  /* Le code du compte, ici aussi : c'est la deuxième moitié du rendu déporté.
+     Le jeton dit à GitHub qui demande ; le code dit où déposer la vidéo. Les
+     chercher dans deux onglets différents n'avait aucun sens. */
+  const codeAmv = document.createElement("div");
+  const peindreCode = () => codeAmv.replaceChildren(blocCodeAmvauto(peindreCode));
+  peindreCode();
+
   actions.append(video, distant, paquet, edl, liste, fermer);
   if (!lecture.audio) actions.append(musique);
-  corps.append(titre, meta, rangeeMethode, rangeeTaille, etat, livraison, actions, compteGitHub);
+  corps.append(titre, meta, rangeeMethode, rangeeTaille, etat, livraison, actions, codeAmv, compteGitHub);
   peindreMethodes();
   peindreTailles();
   jauger();
@@ -18127,6 +18137,96 @@ function nouveauCode() {
 }
 
 const lisible = (code) => (code.match(/.{1,5}/g) || []).join("-");
+
+/* --- le code du compte, montré là où on en a besoin ----------------------
+
+   Il était affiché à un seul endroit — en petit, en sous-titre, dans le
+   panneau « Compte » de l'onglet « À propos », et SEULEMENT une fois connecté.
+   Autant dire nulle part : « je suis allé dans Setting et dans tous les autres
+   menus, il n'y a aucune section Compte ni aucun code ». Le bouton « Setting »
+   ouvre les infos de lecture ; les réglages sont sous l'icône (i) de la barre
+   du bas. Rien n'indiquait ce détour.
+
+   Pire : le code n'existait pas du tout tant qu'on n'avait ni activé la
+   sauvegarde en ligne ni créé de compte. Demander de le recopier dans les
+   secrets d'un dépôt revenait donc à demander de recopier une chose qui
+   n'avait jamais été créée.
+
+   Ce bloc répare les deux : il montre le code en clair, il le copie d'un
+   geste, et il le crée s'il n'existe pas. Il est posé aux deux endroits où la
+   question se pose — le panneau « Compte », et le volet « Exporter », juste à
+   côté du jeton GitHub. */
+function blocCodeAmvauto(apres) {
+  const bloc = document.createElement("div");
+  bloc.className = "lecteur-meta";
+  bloc.style.cssText = "border:1px solid var(--trait);border-radius:12px;padding:10px;margin-top:8px";
+
+  const titre = document.createElement("div");
+  titre.className = "fort";
+  titre.textContent = "Mon code AMVAUTO";
+  titre.style.marginBottom = "6px";
+  bloc.append(titre);
+
+  if (!coffre.code) {
+    bloc.append(note("Aucun code sur cet appareil. C'est lui qui relie tes montages d'un téléphone à"
+      + " l'autre, et c'est lui que le rendu déporté utilise pour déposer la vidéo ici."));
+    const creer = document.createElement("button");
+    creer.type = "button";
+    creer.className = "archive-action";
+    creer.textContent = "Créer mon code";
+    creer.addEventListener("click", () => {
+      coffre.code = nouveauCode();
+      noterCoffre();
+      apres?.();
+    });
+    bloc.append(creer);
+    return bloc;
+  }
+
+  /* Le code se lit par groupes de cinq — c'est ainsi qu'on le recopie sans se
+     tromper — mais ce qui part dans le presse-papier est le code brut : un
+     secret GitHub avec des tirets ne vaut rien. */
+  const valeur = document.createElement("div");
+  valeur.textContent = lisible(coffre.code);
+  valeur.style.cssText = "font:600 1.05rem/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;"
+    + "letter-spacing:.06em;word-break:break-all;user-select:all;-webkit-user-select:all;"
+    + "background:#141414;border-radius:8px;padding:8px 10px;margin-bottom:8px";
+  bloc.append(valeur);
+
+  const gestes = document.createElement("div");
+  gestes.style.cssText = "display:flex;flex-wrap:wrap;gap:6px";
+
+  const copier = document.createElement("button");
+  copier.type = "button";
+  copier.className = "archive-action";
+  copier.textContent = "Copier mon code AMVAUTO";
+  copier.addEventListener("click", async () => {
+    const avant = copier.textContent;
+    try {
+      await navigator.clipboard.writeText(coffre.code);
+      copier.textContent = "Copié";
+    } catch {
+      /* Safari refuse le presse-papier hors de certains contextes. On
+         sélectionne alors le code : un appui long suffit à le copier. */
+      const choix = window.getSelection?.();
+      if (choix) {
+        const etendue = document.createRange();
+        etendue.selectNodeContents(valeur);
+        choix.removeAllRanges();
+        choix.addRange(etendue);
+      }
+      copier.textContent = "Sélectionné — appui long pour copier";
+    }
+    setTimeout(() => { copier.textContent = avant; }, 3000);
+  });
+  gestes.append(copier);
+  bloc.append(gestes);
+
+  bloc.append(note("À recopier une seule fois dans ton dépôt GitHub, sous Settings → Secrets and"
+    + " variables → Actions → New repository secret, avec le nom AMVAUTO_CODE. C'est ce qui permet au"
+    + " rendu fait sur GitHub de revenir tout seul dans l'onglet Historique."));
+  return bloc;
+}
 const nettoyerCode = (brut) => String(brut || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 
 function codeValide(code) {
