@@ -933,7 +933,12 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   opacity: 0.75;
 }
 .preparation.discret button,
+.preparation.discret .preparation-gestes,
 .preparation.discret .transferts { display: none; }
+.preparation-gestes {
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; margin-top: 6px;
+}
 /* Les gestes de ce bandeau sont des carrés verts, comme partout ailleurs.
 
    La règle qui vivait ici — une pilule bordée, fond blanc translucide — battait
@@ -957,7 +962,6 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   background: var(--vert-fonce);
   color: #fff;
 }
-.preparation .action-carree { margin-top: 6px; }
 
 .transport { display: flex; align-items: center; gap: var(--e3); }
 .lecture {
@@ -1083,6 +1087,11 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 }
 .action-carree svg { width: 20px; height: 20px; }
 .action-carree:disabled { opacity: .55; }
+/* Un carré « armé » — la cloche qui veille — était rigoureusement identique au
+   même carré éteint : on appuyait, et rien ne bougeait. Il s'inverse : le fond
+   devient clair et le dessin prend la couleur de l'application. C'est la seule
+   inversion de la grammaire, et elle ne sert qu'à cela. */
+.action-carree.on { background: #fff; color: var(--vert-fonce); }
 .action-carree.danger { background: linear-gradient(135deg, #C1121F, #7d0c15); }
 
 /* La carte d'un rendu : une vignette, ce qu'il est, et ses gestes.
@@ -1229,12 +1238,12 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .barre-cache { display: block; width: 100%; height: 3px; margin-bottom: 2px; border-radius: 2px; }
 /* Les trois gestes du chargement, sous le bandeau : suspendre, reprendre,
    arrêter. Petits, côte à côte, et toujours atteignables au pouce. */
-.transferts { display: inline-flex; gap: 6px; margin-left: 8px; vertical-align: middle; }
+.transferts { display: flex; gap: 6px; }
 /* Ces trois gestes sont des carrés verts comme partout ailleurs : la règle de
    « .action-carree » suffit, et celle qui vivait ici — une pilule bordée sur
    fond sombre — la battait par sa spécificité sans rien apporter. On ne garde
    que ce qui est propre à cet endroit : l'état « suspendu », qui doit se voir. */
-.transferts .action-carree.on { background: linear-gradient(135deg, #C1121F, #7d0c15); }
+.transferts .action-carree.on { background: linear-gradient(135deg, #C1121F, #7d0c15); color: #fff; }
 .transferts[hidden] { display: none; }
 /* La piste gelée : une seule image à la place de cent vingt blocs.
 
@@ -1897,7 +1906,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 17:48";
+const VERSION_PAGE = "2026-09-15 18:10";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2074,8 +2083,13 @@ const TRAITS = {
   valide: '<path d="M5 13l4 4 10-10" stroke-width="2.4"/>',
   reessayer: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>',
   cloche: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+  /* Les deux faces d'un même bouton. Elles ne se distinguaient que par le sens
+     d'une pointe de flèche haute de quatre points : à vingt points de côté, sur
+     un téléphone tenu à bout de bras, cela ne se voyait pas. Elles n'ont plus
+     la même silhouette du tout — une boîte que l'on ferme d'un côté, un cadre
+     dont on s'échappe de l'autre. */
   ranger: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M12 12v5"/><path d="M9.5 14.5 12 17l2.5-2.5"/>',
-  ressortir: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M12 18v-5"/><path d="M9.5 15.5 12 13l2.5 2.5"/>',
+  ressortir: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   pause: '<path d="M8 5v14M16 5v14" stroke-width="2.6"/>',
   plein: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
   plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
@@ -3576,7 +3590,17 @@ function rendreHistoire() {
       changerProjet(projet.id);
       rendreProjet();
       rendre();
-      document.querySelector('[data-tab="projet"]')?.click();
+      /* On reste où l'on est. Ressortir un montage envoyait sur l'atelier :
+         c'était décider à la place de qui regarde sa liste, et en plein
+         parcours de rangement cela la lui retirait des mains.
+
+         Mais il faut alors redessiner cette liste soi-même. Le saut d'onglet
+         la reconstruisait au passage ; sans lui, elle restait sur l'état
+         d'avant — « archiver » redessine, puis « changerProjet » change le
+         montage courant, et plus personne ne le disait. La carte annonce
+         maintenant « ouvert en ce moment » dès l'appui, et son geste bascule
+         avec elle. */
+      rendreHistoire();
     });
 
     const renommer = document.createElement("button");
@@ -3600,7 +3624,7 @@ function rendreHistoire() {
     liste.append(carte);
   }
   morceaux.push(liste);
-  morceaux.push(note("La flèche qui rentre dans la boîte range un montage : il quitte la barre des projets sans rien perdre, et ses plans, ses coupes et sa musique l'attendent. La flèche qui en ressort le remet en place et l'ouvre."));
+  morceaux.push(note("La flèche qui rentre dans la boîte range un montage : il quitte la barre des projets sans rien perdre, et ses plans, ses coupes et sa musique l'attendent. La flèche qui s'échappe du cadre le remet en place et le rouvre, sans quitter cette liste."));
   vue.replaceChildren(...morceaux);
   peindreRendusEnLigne().catch(() => {});
 }
@@ -3715,7 +3739,15 @@ function editeur(projet) {
   /* Les trois gestes, sous le bandeau. Ils doivent être là même quand la
      notification porte les mêmes : sur iPhone, une notification web n'accepte
      aucun bouton, et ce serait justement l'appareil qui en a le plus besoin. */
-  preparation.append(preparationDit, boutonsTransfert(), boutonVeille());
+  /* Une rangée, pas une ligne de texte. Les gestes étaient posés côte à côte
+     comme des mots dans un paragraphe centré : la boîte des transferts était
+     alignée sur son milieu, la cloche sur sa ligne de base, et la cloche
+     montait de neuf points et demi au-dessus des trois autres. Un conteneur
+     souple les met sur la même horizontale, quoi qu'ils contiennent. */
+  const gestesPreparation = document.createElement("span");
+  gestesPreparation.className = "preparation-gestes";
+  gestesPreparation.append(boutonsTransfert(), boutonVeille());
+  preparation.append(preparationDit, gestesPreparation);
 
   ecran.append(moniteur, ...lecteurs, vide, preparation);
   bloc.append(ecran, transport(), pisteComplete(projet));
