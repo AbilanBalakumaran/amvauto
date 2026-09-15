@@ -1028,6 +1028,77 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .projet-fermer svg { width: 13px; height: 13px; }
 .archive-gestes { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .archive-action.danger { border-color: rgba(193,18,31,.5); color: #ff9aa2; }
+
+/* --- la grammaire des gestes, une seule pour toute l'application --------
+
+   Elle s'était faite au coup par coup : ici un lien souligné, là un bouton
+   bordé, ailleurs un bouton plein — et rien ne disait lequel était le geste
+   principal. Trois règles, reprises de l'autre application pour que les deux se
+   ressemblent, avec la couleur de celle-ci :
+
+     — le geste que l'on vient faire est PLEIN, dans le vert de l'application ;
+     — les gestes secondaires restent bordés sur fond sombre ;
+     — un geste qui se dit d'un dessin — télécharger, supprimer — est un carré
+       de trente-huit points, sans texte, avec son icône au milieu. */
+.archive-action.fort {
+  border: none;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff;
+  padding: 10px 16px;
+}
+.archive-action.fort:disabled { opacity: .6; }
+
+.action-carree {
+  width: 38px; height: 38px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff; cursor: pointer;
+}
+.action-carree svg { width: 20px; height: 20px; }
+.action-carree:disabled { opacity: .55; }
+.action-carree.danger { background: linear-gradient(135deg, #C1121F, #7d0c15); }
+
+/* La carte d'un rendu : une vignette, ce qu'il est, et ses gestes.
+
+   La vignette n'est pas une décoration : c'est elle qu'on touche pour lancer la
+   lecture. Avant, la carte ne montrait rien tant qu'on n'avait pas appuyé sur
+   « Aperçu » — un rendu ressemblait à une ligne de texte parmi d'autres. */
+.rendu-carte {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #161616;
+  border: 1px solid var(--trait);
+  margin-bottom: 8px;
+}
+.rendu-vignette {
+  position: relative;
+  width: 72px; height: 48px;
+  border-radius: 6px; overflow: hidden;
+  background: #000 center/cover no-repeat;
+  border: 0; padding: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+/* Le triangle de lecture par-dessus, pour que la vignette se lise comme un
+   bouton et non comme une image. */
+.rendu-vignette::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .35);
+}
+.rendu-vignette svg {
+  position: relative; z-index: 1;
+  width: 22px; height: 22px; color: #fff;
+}
+.rendu-titre { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rendu-titre strong { font-size: .88rem; }
+.rendu-titre span { font-size: .74rem; color: var(--doux); }
+.rendu-gestes { display: flex; gap: 6px; align-items: center; }
+.rendu-lecteur { grid-column: 1 / -1; }
 .projet-vignette {
   flex: none;
   display: grid;
@@ -1777,7 +1848,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 14:51";
+const VERSION_PAGE = "2026-09-15 15:14";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1947,6 +2018,11 @@ const TRAITS = {
   annuler: '<path d="M9 14L4 9l5-5"/><path d="M4 9h9a6 6 0 0 1 0 12H8"/>',
   retablir: '<path d="M15 14l5-5-5-5"/><path d="M20 9h-9a6 6 0 0 0 0 12h5"/>',
   play: '<path d="M7 4.5l12 7.5-12 7.5z" fill="currentColor" stroke="none"/>',
+  /* Les trois états d'un bouton qui enregistre : on attend, c'est prêt, c'est
+     fait. Un bouton carré n'a que son dessin pour le dire. */
+  attente: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+  garder: '<path d="M5 4h11l3 3v13H5z"/><path d="M9 4v5h6V4"/><path d="M8 20v-6h8v6"/>',
+  valide: '<path d="M5 13l4 4 10-10" stroke-width="2.4"/>',
   pause: '<path d="M8 5v14M16 5v14" stroke-width="2.6"/>',
   plein: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
   plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
@@ -3247,7 +3323,7 @@ function renommerProjet(projet) {
    montage était donc invisible, alors qu'il dormait dans la base. L'historique
    est l'endroit où l'on vient chercher « ce que j'ai fait », et c'est là qu'il
    doit être. */
-async function carteRenduLocal(id, fiche, apres) {
+function carteRenduLocal(id, fiche, apres) {
   const rendu = {
     nom: `${fiche.nom || "rendu"}.${fiche.extension || "mp4"}`,
     taille: fiche.taille || 0,
@@ -3257,50 +3333,30 @@ async function carteRenduLocal(id, fiche, apres) {
     plans: 0,
     source: "appareil",
   };
-  const carte = document.createElement("div");
-  carte.className = "lecteur-meta";
-  carte.style.cssText = "border:1px solid var(--trait);border-radius:12px;padding:10px;margin-bottom:8px";
-  const dit = document.createElement("div");
-  dit.textContent = `${direRendu(rendu)} · gardé sur l'appareil`;
-  dit.style.marginBottom = "8px";
-  carte.append(dit);
-
-  const gestes = document.createElement("div");
-  gestes.style.cssText = "display:flex;flex-wrap:wrap;gap:6px";
-
   /* Les mêmes gestes que pour un rendu en ligne : ce qui change est l'endroit
      où les octets sont pris, pas ce qu'on en fait. */
   const octets = () => lireBase(`rendu:${id}`).catch(() => null);
-  let adresse = "";
-  const ouvrir = boutonApercu(carte, async () => {
-    if (adresse) return adresse;
-    const blob = await octets();
-    if (!(blob instanceof Blob) || !blob.size) {
-      dit.textContent = `${direRendu(rendu)} — le fichier n'est plus sur l'appareil.`;
-      return "";
-    }
-    adresse = URL.createObjectURL(blob);
-    return adresse;
+  let adresseLocale = "";
+  return carteDeRendu(rendu, {
+    octets,
+    adresse: async () => {
+      if (adresseLocale) return adresseLocale;
+      const blob = await octets();
+      if (!(blob instanceof Blob) || !blob.size) return "";
+      adresseLocale = URL.createObjectURL(blob);
+      return adresseLocale;
+    },
+    supprimer: async (bouton) => {
+      if (!confirm(`Supprimer le rendu de « ${fiche.nom || "ce montage"} » gardé sur l'appareil ?`)) return;
+      bouton.disabled = true;
+      await effacerBase(`rendu:${id}`).catch(() => {});
+      const fiches = lireFichesRendu();
+      delete fiches[id];
+      try { localStorage.setItem(CLE_RENDUS, JSON.stringify(fiches)); } catch { /* tant pis */ }
+      apres?.();
+    },
   });
-  const telecharger = boutonEnregistrer(octets, rendu.nom, rendu.projet || rendu.nom);
-
-  const jeter = document.createElement("button");
-  jeter.type = "button";
-  jeter.className = "archive-action danger";
-  jeter.textContent = "Supprimer";
-  jeter.addEventListener("click", async () => {
-    if (!confirm(`Supprimer le rendu de « ${fiche.nom || "ce montage"} » gardé sur l'appareil ?`)) return;
-    await effacerBase(`rendu:${id}`).catch(() => {});
-    const fiches = lireFichesRendu();
-    delete fiches[id];
-    try { localStorage.setItem(CLE_RENDUS, JSON.stringify(fiches)); } catch { /* tant pis */ }
-    apres?.();
-  });
-  gestes.append(ouvrir, telecharger, jeter);
-  carte.append(gestes);
-  return carte;
 }
-
 /* Tous les rendus, d'où qu'ils viennent.
 
    Deux origines et une seule liste : ceux qui sont en ligne — déposés par le
@@ -3326,9 +3382,7 @@ async function peindreRendusEnLigne() {
   // Ce qui est sur l'appareil se lit tout de suite, sans réseau.
   const fiches = Object.entries(lireFichesRendu())
     .sort((a, b) => (b[1]?.quand || 0) - (a[1]?.quand || 0));
-  const locaux = await Promise.all(
-    fiches.map(([id, fiche]) => carteRenduLocal(id, fiche, () => peindreRendusEnLigne())),
-  );
+  const locaux = fiches.map(([id, fiche]) => carteRenduLocal(id, fiche, () => peindreRendusEnLigne()));
 
   const enLigne = coffre.code ? await listerGrenier() : [];
   const cartes = enLigne.map((rendu) => carteRendu(rendu, () => peindreRendusEnLigne()));
@@ -15178,15 +15232,16 @@ const adresseRendu = (rendu, telecharger = false) =>
   `/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(rendu.nom)}`
   + (telecharger ? "&telecharger=1" : "");
 
-const direRendu = (rendu) => [
-  rendu.projet || rendu.nom,
+const direRendu = (rendu, avecNom = true) => [
+  avecNom ? (rendu.projet || rendu.nom) : "",
   rendu.duree ? minutage(rendu.duree) : "",
   rendu.plans ? `${rendu.plans} plans` : "",
   // Sous dix mégaoctets, l'entier ment : un rendu de 400 ko s'annonçait « 0 Mo ».
   `${(rendu.taille / 1e6).toFixed(rendu.taille < 1e7 ? 1 : 0)} Mo`,
   rendu.quand ? new Date(rendu.quand).toLocaleString("fr-FR",
     { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "",
-  rendu.source === "github" ? "rendu sur GitHub" : "",
+  rendu.source === "github" ? "rendu sur GitHub"
+    : rendu.source === "appareil" ? "gardé sur l'appareil" : "",
 ].filter(Boolean).join(" · ");
 
 /* Enregistrer dans Photos passe par le partage du système, et le partage veut
@@ -15213,9 +15268,13 @@ const direRendu = (rendu) => [
 function boutonEnregistrer(chercher, nom, titre) {
   const bouton = document.createElement("button");
   bouton.type = "button";
-  bouton.className = "archive-action fort";
-  bouton.textContent = "Télécharger";
+  bouton.className = "action-carree";
+  bouton.title = "Télécharger";
+  bouton.innerHTML = icone("exporter");
   let pret = null;
+  /* Le libellé d'un bouton carré est son infobulle et son dessin : le triangle
+     d'enregistrement remplace la flèche quand les octets sont là. */
+  const dire = (quoi, dessin) => { bouton.title = quoi; bouton.innerHTML = icone(dessin); };
 
   const versFichier = (blob) => new File([blob], nom, { type: blob.type || "video/mp4" });
 
@@ -15225,24 +15284,24 @@ function boutonEnregistrer(chercher, nom, titre) {
     if (pret) {
       try {
         await navigator.share({ files: [pret], title: titre });
-        bouton.textContent = "Enregistrée";
-        setTimeout(() => { bouton.textContent = "Enregistrer dans Photos"; }, 3000);
+        dire("Enregistrée", "valide");
+        setTimeout(() => dire("Enregistrer dans Photos", "garder"), 3000);
       } catch (erreur) {
         // Annulé d'un geste : ce n'est pas une panne, on ne dit rien.
-        if (erreur?.name !== "AbortError") bouton.textContent = "Refusé par l'appareil";
+        if (erreur?.name !== "AbortError") dire("Refusé par l'appareil", "exporter");
       }
       return;
     }
 
     bouton.disabled = true;
-    bouton.textContent = "Réception…";
+    dire("Réception…", "attente");
     try {
       const blob = await chercher();
       if (!(blob instanceof Blob) || !blob.size) throw new Error("vide");
       const fichier = versFichier(blob);
       if (navigator.canShare?.({ files: [fichier] })) {
         pret = fichier;
-        bouton.textContent = "Enregistrer dans Photos";
+        dire("Enregistrer dans Photos", "garder");
         return;
       }
       /* Pas de partage de fichiers : on retombe sur un téléchargement, qui est
@@ -15252,11 +15311,11 @@ function boutonEnregistrer(chercher, nom, titre) {
       lien.download = nom;
       lien.click();
       setTimeout(() => URL.revokeObjectURL(lien.href), 60000);
-      bouton.textContent = "Téléchargée";
-      setTimeout(() => { bouton.textContent = "Télécharger"; }, 3000);
+      dire("Téléchargée", "valide");
+      setTimeout(() => dire("Télécharger", "exporter"), 3000);
     } catch {
-      bouton.textContent = "La vidéo n'a pas pu être reçue";
-      setTimeout(() => { bouton.textContent = "Télécharger"; }, 4000);
+      dire("La vidéo n'a pas pu être reçue", "exporter");
+      setTimeout(() => dire("Télécharger", "exporter"), 4000);
     } finally {
       bouton.disabled = false;
     }
@@ -15264,68 +15323,100 @@ function boutonEnregistrer(chercher, nom, titre) {
   return bouton;
 }
 
-/* Un aperçu, posé dans la carte et refermable. */
-function boutonApercu(carte, source) {
-  const voir = document.createElement("button");
-  voir.type = "button";
-  voir.className = "archive-action";
-  voir.textContent = "Aperçu";
-  voir.addEventListener("click", async () => {
-    const deja = carte.querySelector("video");
-    if (deja) { deja.remove(); voir.textContent = "Aperçu"; return; }
-    voir.disabled = true;
-    const src = await source();
-    voir.disabled = false;
-    if (!src) { voir.textContent = "Aperçu indisponible"; return; }
-    const video = document.createElement("video");
-    video.src = src;
-    video.controls = true;
-    video.playsInline = true;
-    video.preload = "metadata";
-    video.style.cssText = "width:100%;border-radius:10px;display:block;background:#000;margin-top:8px";
-    carte.append(video);
-    voir.textContent = "Masquer";
+
+/* La vignette d'un rendu : l'image du montage dont il vient.
+
+   Un rendu n'a pas d'image à lui — c'est une vidéo, et en tirer une image
+   coûterait de la télécharger. Mais le montage dont il vient en a une, et elle
+   est déjà sur l'appareil : c'est la même que la piste montre. On la retrouve
+   par le nom, et à défaut la vignette reste noire avec son triangle. */
+function imageDuRendu(rendu) {
+  const nom = (rendu.projet || "").trim().toLowerCase();
+  if (!nom) return "";
+  const projet = (state.projets || []).find((x) => (x.nom || "").trim().toLowerCase() === nom);
+  return projet?.plans?.find((plan) => plan.preview)?.preview || "";
+}
+
+/* Une carte de rendu, quelle que soit sa provenance.
+
+   « octets » dit où prendre la vidéo, « adresse » comment la donner à un lecteur
+   sans la recevoir en entier — le grenier sert par tranches, un fichier local
+   passe par une adresse d'objet. Le reste est commun, et doit l'être : deux
+   listes qui se ressemblent ne doivent pas se manipuler autrement. */
+function carteDeRendu(rendu, { octets, adresse, supprimer }) {
+  const carte = document.createElement("div");
+  carte.className = "rendu-carte";
+
+  const vignette = document.createElement("button");
+  vignette.type = "button";
+  vignette.className = "rendu-vignette";
+  vignette.title = "Lire ce rendu";
+  vignette.innerHTML = icone("play");
+  const image = imageDuRendu(rendu);
+  if (image) vignette.style.backgroundImage = `url("${image}")`;
+
+  const titre = document.createElement("div");
+  titre.className = "rendu-titre";
+  const nom = document.createElement("strong");
+  nom.textContent = rendu.projet || rendu.nom;
+  const sous = document.createElement("span");
+  sous.textContent = direRendu(rendu, false);
+  titre.append(nom, sous);
+
+  const gestes = document.createElement("div");
+  gestes.className = "rendu-gestes";
+
+  const garder = boutonEnregistrer(octets, rendu.nom, rendu.projet || rendu.nom);
+  const jeter = document.createElement("button");
+  jeter.type = "button";
+  jeter.className = "action-carree danger";
+  jeter.title = "Supprimer";
+  jeter.innerHTML = icone("supprimer");
+  jeter.addEventListener("click", () => supprimer(jeter));
+  gestes.append(garder, jeter);
+
+  /* Le lecteur prend toute la largeur, sous la ligne : une vidéo coincée dans
+     une colonne de soixante-douze points ne se regarde pas. */
+  let lecteur = null;
+  vignette.addEventListener("click", async () => {
+    if (lecteur) { lecteur.remove(); lecteur = null; vignette.innerHTML = icone("play"); return; }
+    vignette.disabled = true;
+    const src = await adresse();
+    vignette.disabled = false;
+    if (!src) { sous.textContent = "le fichier n'est plus là"; return; }
+    lecteur = document.createElement("video");
+    lecteur.className = "rendu-lecteur";
+    lecteur.src = src;
+    lecteur.controls = true;
+    lecteur.playsInline = true;
+    lecteur.preload = "metadata";
+    if (image) lecteur.poster = image;
+    lecteur.style.cssText = "width:100%;border-radius:10px;display:block;background:#000;margin-top:10px";
+    carte.append(lecteur);
+    vignette.innerHTML = icone("pause");
+    lecteur.play().catch(() => { /* l'appareil demandera un second geste */ });
   });
-  return voir;
+
+  carte.append(vignette, titre, gestes);
+  return carte;
 }
 
 function carteRendu(rendu, apres) {
-  const carte = document.createElement("div");
-  carte.className = "lecteur-meta";
-  carte.style.cssText = "border:1px solid var(--trait);border-radius:12px;padding:10px;margin-bottom:8px";
-
-  const dit = document.createElement("div");
-  dit.textContent = direRendu(rendu);
-  dit.style.marginBottom = "8px";
-  carte.append(dit);
-
-  const gestes = document.createElement("div");
-  gestes.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;align-items:center";
-
-  // L'aperçu se lit directement du grenier, par tranches : rien à recevoir
-  // d'avance pour voir le début.
-  const voir = boutonApercu(carte, () => adresseRendu(rendu));
-  const telecharger = boutonEnregistrer(
-    () => fetch(adresseRendu(rendu), { cache: "no-store" })
+  return carteDeRendu(rendu, {
+    octets: () => fetch(adresseRendu(rendu), { cache: "no-store" })
       .then((r) => (r.ok ? r.blob() : null)),
-    rendu.nom, rendu.projet || rendu.nom,
-  );
-
-  const jeter = document.createElement("button");
-  jeter.type = "button";
-  jeter.className = "archive-action danger";
-  jeter.textContent = "Supprimer";
-  jeter.addEventListener("click", async () => {
-    if (!confirm(`Supprimer « ${rendu.projet || rendu.nom} » du grenier ? La vidéo sera perdue, ici comme sur les autres appareils.`)) return;
-    jeter.disabled = true;
-    await fetch(`/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(rendu.nom)}`,
-      { method: "DELETE" }).catch(() => null);
-    apres?.();
+    // Lu par tranches : la lecture démarre sans avoir reçu les quatre-vingt-
+    // treize mégaoctets.
+    adresse: () => adresseRendu(rendu),
+    supprimer: async (bouton) => {
+      if (!confirm(`Supprimer « ${rendu.projet || rendu.nom} » du grenier ?`
+        + " La vidéo sera perdue, ici comme sur les autres appareils.")) return;
+      bouton.disabled = true;
+      await fetch(`/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(rendu.nom)}`,
+        { method: "DELETE" }).catch(() => null);
+      apres?.();
+    },
   });
-
-  gestes.append(voir, telecharger, jeter);
-  carte.append(gestes);
-  return carte;
 }
 
 function lienGrenier(rendu) {
