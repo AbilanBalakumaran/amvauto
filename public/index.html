@@ -1946,7 +1946,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 18:35";
+const VERSION_PAGE = "2026-09-15 19:29";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4336,6 +4336,9 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
+  automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
+  casesAttendues: (p) => casesAttendues(p), amvDe: (p) => amvDe(p), sauver: () => sauver(),
+  noterCandidat: (...a) => noterCandidat(...a), automate: () => automate,
   projetActif: () => projetActif(), cleSegment: (p) => cleSegment(p),
   segmentDe: (p) => segmentDe(p), entreeLue: (p) => entreeLue(p),
   estLocal: (p) => estLocal(p), locales: () => locales, segments: () => segments,
