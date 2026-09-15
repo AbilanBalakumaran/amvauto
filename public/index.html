@@ -724,15 +724,39 @@ main {
    sa taille dans les deux cas — une vidéo qu'on masque est une vidéo que le
    navigateur cesse de servir en priorité. */
 .moniteur.derriere { z-index: 1; }
-.bandeau-version {
+/* Les bandeaux qui restent — nouvelle version, place qui manque — se posent au
+   ras de la barre d'onglets, plus en haut de l'écran.
+
+   En haut, ils recouvraient le titre et les deux boutons de l'application : on
+   ne pouvait plus ni exporter ni ouvrir les réglages tant qu'on ne les avait
+   pas écartés, et le pouce n'allait pas les chercher là. Au-dessus de la barre
+   d'onglets, ils sont là où le pouce se trouve déjà.
+
+   Une pile, et non deux bandeaux fixés au même bord : le contrôle de version et
+   l'alerte de place peuvent parler en même temps, et l'un recouvrait l'autre
+   exactement. Empilés, ils se lisent tous les deux. */
+.bandeaux {
   position: fixed;
-  top: 0;
   left: 0;
   right: 0;
+  bottom: calc(var(--nav-h) + min(env(safe-area-inset-bottom, 0px), 24px) + 1px);
   z-index: 200;
   display: flex;
+  flex-direction: column;
+}
+/* Le message prend sa ligne, les gestes la suivante.
+
+   Tout tenait sur une seule rangée : sur quatre cent quatorze points, les deux
+   boutons en prenaient trois cents et il restait cent soixante-dix points au
+   texte, qui descendait sur huit lignes. Le bandeau faisait alors cent soixante-
+   dix points de haut — le cinquième de l'écran pour une phrase. Dès qu'il n'y a
+   pas place pour les deux, le texte garde sa largeur entière. */
+.bandeau-version {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--e3);
+  justify-content: flex-end;
+  gap: var(--e2) var(--e3);
   padding: var(--e3) var(--e4);
   background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff;
@@ -789,8 +813,16 @@ main {
   font: 600 0.82rem/1 system-ui, sans-serif;
   cursor: pointer;
 }
+/* Le message tient une rangée entière, les gestes la suivante, groupés à droite.
+
+   Une largeur de base partagée les séparait : le message et le premier bouton
+   tenaient sur la première rangée, la croix tombait seule sur la seconde, et
+   elle s'y rangeait à gauche. Deux rangées franches, et le compte est le même
+   à toutes les largeurs. Au-delà de sept cents points, tout revient sur une
+   ligne : il y a la place. */
+.bandeau-version > span { flex: 1 1 100%; min-width: 0; }
+@media (min-width: 700px) { .bandeau-version > span { flex: 1 1 auto; } }
 .bandeau-version button {
-  margin-left: auto;
   flex: none;
   padding: 7px 12px;
   border-radius: 8px;
@@ -1558,6 +1590,8 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
     grid-template-areas: "nav vue" "nav outils";
   }
 
+  .bandeaux { bottom: auto; top: 0; left: var(--rail); }
+
   /* --- la navigation, à gauche et nommée --- */
   .bottom-nav {
     grid-area: nav;
@@ -1906,7 +1940,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 18:22";
+const VERSION_PAGE = "2026-09-15 18:30";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2019,12 +2053,27 @@ function verifierVersion(reste = 2) {
     .catch(() => { if (reste > 0) setTimeout(() => verifierVersion(reste - 1), 5000); });
 }
 
+/* Tous les bandeaux persistants vivent dans la même pile, créée au besoin.
+   Fixés chacun de leur côté, deux d'entre eux se recouvraient. */
+function pileBandeaux() {
+  let pile = document.querySelector(".bandeaux");
+  if (!pile) {
+    pile = document.createElement("div");
+    pile.className = "bandeaux";
+    document.body.append(pile);
+  }
+  return pile;
+}
+
 /* Le bandeau de mise à jour : discret, et c'est l'utilisateur qui décide.
 
    Un seul à la fois — le worker et le contrôle de version peuvent le demander
-   tous les deux, et deux bandeaux empilés ne disent rien de plus. */
+   tous les deux, et deux bandeaux de mise à jour ne disent rien de plus. Une
+   alerte de place, elle, ne l'empêche plus : elles s'empilent désormais au lieu
+   de se recouvrir, et taire la mise à jour parce qu'un disque est plein n'avait
+   de sens que tant qu'elles se disputaient le même bord. */
 function signalerVersion(texte) {
-  if (document.querySelector(".bandeau-version")) return;
+  if (document.querySelector(".bandeau-version:not(.alerte)")) return;
   const bandeau = document.createElement("div");
   bandeau.className = "bandeau-version";
   const mot = document.createElement("span");
@@ -2041,7 +2090,7 @@ function signalerVersion(texte) {
   plusTard.textContent = "Plus tard";
   plusTard.addEventListener("click", () => bandeau.remove());
   bandeau.append(mot, recharger, plusTard);
-  document.body.prepend(bandeau);
+  pileBandeaux().append(bandeau);
 }
 verifierVersion();
 const PAR_PAGE = 100;
@@ -2756,7 +2805,7 @@ function sauver() {
   return !stockagePlein;
 }
 
-/* Un bandeau en haut de l'écran. Réservé à ce qui ne peut pas attendre que
+/* Un bandeau au ras de la barre d'onglets. Réservé à ce qui ne peut pas attendre que
    l'utilisateur ouvre un panneau : une sauvegarde qui ne se fait pas, un
    montage qu'on va perdre. */
 function avertir(texte, nomAction, action) {
@@ -2778,7 +2827,7 @@ function avertir(texte, nomAction, action) {
   fermer.textContent = "×";
   fermer.addEventListener("click", () => bandeau.remove());
   bandeau.append(fermer);
-  document.body.prepend(bandeau);
+  pileBandeaux().append(bandeau);
 }
 
 // Historique du montage : une pile d'états successifs du projet courant, dans
@@ -4280,6 +4329,7 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
+  signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
   projetActif: () => projetActif(), cleSegment: (p) => cleSegment(p),
   segmentDe: (p) => segmentDe(p), entreeLue: (p) => entreeLue(p),
   estLocal: (p) => estLocal(p), locales: () => locales, segments: () => segments,
