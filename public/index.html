@@ -916,7 +916,14 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 }
 .preparation.discret button,
 .preparation.discret .transferts { display: none; }
-.preparation button {
+/* Les gestes de ce bandeau sont des carrés verts, comme partout ailleurs.
+
+   La règle qui vivait ici — une pilule bordée, fond blanc translucide — battait
+   « .action-carree » par sa spécificité : les boutons gardaient leur ancienne
+   allure alors que le reste de l'application avait changé. On ne garde que ce
+   qui est propre à cet endroit : l'espacement, et le fait qu'un bandeau ne doit
+   pas les coller au texte. */
+.preparation button:not(.action-carree) {
   margin-top: 5px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -927,11 +934,12 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   font-size: 0.72rem;
   cursor: pointer;
 }
-.preparation button.on {
+.preparation button:not(.action-carree).on {
   border-color: var(--vert-fonce);
   background: var(--vert-fonce);
   color: #fff;
 }
+.preparation .action-carree { margin-top: 6px; }
 
 .transport { display: flex; align-items: center; gap: var(--e3); }
 .lecture {
@@ -1099,6 +1107,16 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .rendu-titre span { font-size: .74rem; color: var(--doux); }
 .rendu-gestes { display: flex; gap: 6px; align-items: center; }
 .rendu-lecteur { grid-column: 1 / -1; }
+
+/* Un nombre qu'aucun dessin ne porte, posé sur le coin du carré. */
+.action-carree { position: relative; }
+.carre-compte {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 999px; background: #C1121F; color: #fff;
+  font: 700 .64rem/17px system-ui, sans-serif; text-align: center;
+}
+
 .projet-vignette {
   flex: none;
   display: grid;
@@ -1194,12 +1212,11 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 /* Les trois gestes du chargement, sous le bandeau : suspendre, reprendre,
    arrêter. Petits, côte à côte, et toujours atteignables au pouce. */
 .transferts { display: inline-flex; gap: 6px; margin-left: 8px; vertical-align: middle; }
-.transferts button {
-  border: 1px solid var(--trait); border-radius: 999px; padding: 3px 10px;
-  background: #1b1b1b; color: var(--texte); font: 600 0.68rem/1 system-ui, sans-serif;
-  cursor: pointer; min-height: 26px;
-}
-.transferts button.on { background: linear-gradient(135deg, var(--vert), var(--vert-fonce)); border-color: var(--vert-fonce); }
+/* Ces trois gestes sont des carrés verts comme partout ailleurs : la règle de
+   « .action-carree » suffit, et celle qui vivait ici — une pilule bordée sur
+   fond sombre — la battait par sa spécificité sans rien apporter. On ne garde
+   que ce qui est propre à cet endroit : l'état « suspendu », qui doit se voir. */
+.transferts .action-carree.on { background: linear-gradient(135deg, #C1121F, #7d0c15); }
 .transferts[hidden] { display: none; }
 /* La piste gelée : une seule image à la place de cent vingt blocs.
 
@@ -1385,6 +1402,20 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 }
 .son-ajout svg { width: 16px; height: 16px; }
 .son-ajout:hover { border-color: var(--vert); color: var(--vert); }
+/* Une fois la musique en place, ce bouton n'invite plus : il informe et permet
+   de changer. Il devient donc plein, dans le vert de l'application, et se
+   réduit à ce qu'il a à dire — le tempo, ou rien du tout. */
+.son-ajout.charge {
+  flex: none;
+  border: none;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff;
+  padding: 0 14px; height: 40px;
+}
+.son-ajout.charge:hover { color: #fff; }
+.son-ajout.charge.sans-texte { padding: 0; width: 40px; }
+.son-ajout.charge.sans-texte span { display: none; }
+.son-ajout.charge svg { width: 18px; height: 18px; }
 .son-retirer {
   flex: none; display: grid; place-items: center;
   width: 36px; height: 36px; border-radius: 9px;
@@ -1848,7 +1879,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 15:14";
+const VERSION_PAGE = "2026-09-15 15:22";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2023,6 +2054,8 @@ const TRAITS = {
   attente: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
   garder: '<path d="M5 4h11l3 3v13H5z"/><path d="M9 4v5h6V4"/><path d="M8 20v-6h8v6"/>',
   valide: '<path d="M5 13l4 4 10-10" stroke-width="2.4"/>',
+  reessayer: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>',
+  cloche: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
   pause: '<path d="M8 5v14M16 5v14" stroke-width="2.6"/>',
   plein: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
   plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
@@ -8767,10 +8800,23 @@ function boutonSon(projet) {
   bouton.type = "button";
   bouton.className = "son-ajout";
   bouton.innerHTML = `${icone("son")}<span></span>`;
-  const tempo = projet.rythme ? ` · ${Math.round(projet.rythme.bpm)} BPM` : "";
-  bouton.querySelector("span").textContent = projet.audio
-    ? (lecture.audio ? `Remplacer la musique${tempo}` : `Rouvrir le fichier${tempo}`)
+  /* Le libellé disait ce que fait le bouton ; l'icône le dit déjà. Ce qui reste
+     écrit est ce qu'aucun dessin ne porte : le tempo, et le fait qu'un fichier
+     choisi la dernière fois doit être rouvert — une chose à faire, pas un nom
+     de commande. */
+  const tempo = projet.rythme ? `${Math.round(projet.rythme.bpm)} BPM` : "";
+  const dit = projet.audio
+    ? (lecture.audio ? tempo : `Rouvrir le fichier${tempo ? ` · ${tempo}` : ""}`)
+    : "Ajouter une musique";
+  bouton.querySelector("span").textContent = dit;
+  bouton.title = projet.audio
+    ? (lecture.audio ? "Remplacer la musique" : "Rouvrir le fichier de musique")
     : "Ajouter une musique ou un SFX";
+  bouton.setAttribute("aria-label", bouton.title);
+  // Plein et vert dès qu'une musique est là ; réduit à son icône s'il n'a
+  // plus rien à écrire.
+  bouton.classList.toggle("charge", Boolean(projet.audio));
+  bouton.classList.toggle("sans-texte", !dit);
 
   const champ = document.createElement("input");
   champ.type = "file";
@@ -12927,6 +12973,7 @@ function boutonsTransfert() {
   const pause = document.createElement("button");
   pause.type = "button";
   pause.id = "btn-transfert-pause";
+  pause.className = "action-carree";
   pause.addEventListener("click", () => {
     if (transfert.suspendu) reprendreTransferts();
     else suspendreTransferts();
@@ -12942,6 +12989,7 @@ function boutonsTransfert() {
   const reprise = document.createElement("button");
   reprise.type = "button";
   reprise.id = "btn-transfert-reprise";
+  reprise.className = "action-carree";
   reprise.addEventListener("click", () => {
     const repris = relancerPerdus(true);
     transfert.suspendu = false;
@@ -12953,7 +13001,10 @@ function boutonsTransfert() {
   const stop = document.createElement("button");
   stop.type = "button";
   stop.id = "btn-transfert-stop";
-  stop.textContent = "Arrêter";
+  stop.className = "action-carree danger";
+  stop.title = "Arrêter le chargement";
+  stop.setAttribute("aria-label", "Arrêter le chargement");
+  stop.innerHTML = icone("croix");
   stop.addEventListener("click", async () => {
     const projet = projetActif();
     const { total, prets } = projet ? resteAImporter(projet) : { total: 0, prets: 0 };
@@ -12967,10 +13018,22 @@ function boutonsTransfert() {
   return boite;
 }
 
+/* Ces gestes n'ont plus de texte : ils l'avaient, et trois libellés côte à côte
+   au-dessus du moniteur mangeaient l'image qu'on est venu regarder. Le sens ne
+   se perd pas pour autant — il passe dans l'infobulle et dans l'étiquette
+   d'accessibilité, que les lecteurs d'écran lisent et que le texte ne leur
+   donnait pas mieux. */
+const direCarre = (bouton, quoi, dessin) => {
+  bouton.title = quoi;
+  bouton.setAttribute("aria-label", quoi);
+  bouton.innerHTML = icone(dessin);
+};
+
 function majBoutonsTransfert() {
   const pause = $("btn-transfert-pause");
   if (pause) {
-    pause.textContent = transfert.suspendu ? "Reprendre" : "Suspendre";
+    direCarre(pause, transfert.suspendu ? "Reprendre le chargement" : "Suspendre le chargement",
+      transfert.suspendu ? "play" : "pause");
     pause.classList.toggle("on", transfert.suspendu);
   }
   const reprise = $("btn-transfert-reprise");
@@ -12978,7 +13041,14 @@ function majBoutonsTransfert() {
     // Il n'apparaît que s'il a quelque chose à faire.
     const perdus = importsRates.size;
     reprise.hidden = !perdus;
-    reprise.textContent = `Réessayer (${perdus})`;
+    /* Le nombre reste écrit : ce n'est pas un libellé, c'est une information
+       qu'aucun dessin ne porte. Il tient dans une pastille. */
+    direCarre(reprise, `Réessayer ${perdus} plan${perdus > 1 ? "s" : ""} abandonné${perdus > 1 ? "s" : ""}`,
+      "reessayer");
+    const compte = document.createElement("span");
+    compte.className = "carre-compte";
+    compte.textContent = String(perdus);
+    reprise.append(compte);
   }
   /* Suspendre et arrêter n'ont de sens que s'il reste du travail. Quand il ne
      reste que des abandons, seul « Réessayer » a quelque chose à dire. */
@@ -12993,6 +13063,7 @@ function boutonVeille() {
   const bouton = document.createElement("button");
   bouton.type = "button";
   bouton.id = "btn-veille";
+  bouton.className = "action-carree";
   bouton.addEventListener("click", basculerVeille);
   return bouton;
 }
@@ -13001,9 +13072,9 @@ function majBoutonVeille() {
   const bouton = $("btn-veille");
   if (!bouton) return;
   bouton.classList.toggle("on", sentinelle.voulue);
-  bouton.textContent = sentinelle.voulue
+  direCarre(bouton, sentinelle.voulue
     ? "Je préviens quand c'est prêt — garde le téléphone allumé"
-    : "Me prévenir quand c'est prêt";
+    : "Me prévenir quand c'est prêt", "cloche");
 }
 
 async function basculerVeille() {
