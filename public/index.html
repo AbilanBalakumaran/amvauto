@@ -1897,7 +1897,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 17:35";
+const VERSION_PAGE = "2026-09-15 17:48";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2076,7 +2076,6 @@ const TRAITS = {
   cloche: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
   ranger: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M12 12v5"/><path d="M9.5 14.5 12 17l2.5-2.5"/>',
   ressortir: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M12 18v-5"/><path d="M9.5 15.5 12 13l2.5 2.5"/>',
-  ouvrir: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   pause: '<path d="M8 5v14M16 5v14" stroke-width="2.6"/>',
   plein: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
   plus: '<path d="M12 5v14M5 12h14" stroke-width="2.4"/>',
@@ -3552,16 +3551,28 @@ function rendreHistoire() {
     const gestes = document.createElement("span");
     gestes.className = "archive-gestes";
 
-    /* Quatre libellés côte à côte sur une carte étroite passaient à la ligne et
-       repoussaient tout vers le bas. Ils disent chacun un geste que son dessin
-       dit mieux : le sens part dans l'infobulle et dans l'étiquette, que les
-       lecteurs d'écran lisent. */
-    const ouvrir = document.createElement("button");
-    ouvrir.type = "button";
-    ouvrir.className = "action-carree";
-    direCarre(ouvrir, "Ouvrir ce montage", "ouvrir");
-    ouvrir.addEventListener("click", () => {
-      if (range) archiver(projet, false);
+    /* Les libellés disaient chacun un geste que son dessin dit mieux : le sens
+       part dans l'infobulle et dans l'étiquette, que les lecteurs d'écran
+       lisent.
+
+       « Ouvrir » et « Ranger » n'en font plus qu'un. C'étaient deux boutons
+       pour un seul état, et sur un montage rangé ils faisaient presque la même
+       chose : l'un et l'autre le ressortaient. Un seul bouton dit maintenant
+       où en est le montage, et le fait passer de l'autre côté.
+
+       Ce que chaque état appelle n'est pas le même geste. Un montage ouvert vit
+       déjà dans la barre des projets, en haut de l'atelier : pour y aller, on
+       l'y touche. Ici, le geste qui manque est de l'en retirer. Un montage
+       rangé, lui, n'est nulle part ailleurs — le ressortir et l'ouvrir sont le
+       même mouvement, et le bouton les fait d'un coup. */
+    const etat = document.createElement("button");
+    etat.type = "button";
+    etat.className = "action-carree";
+    direCarre(etat, range ? "Ressortir et ouvrir ce montage" : "Ranger ce montage",
+      range ? "ressortir" : "ranger");
+    etat.addEventListener("click", () => {
+      if (!range) { archiver(projet, true); return; }
+      archiver(projet, false);
       changerProjet(projet.id);
       rendreProjet();
       rendre();
@@ -3574,13 +3585,6 @@ function rendreHistoire() {
     direCarre(renommer, "Renommer ce montage", "renommer");
     renommer.addEventListener("click", () => renommerProjet(projet));
 
-    const ranger = document.createElement("button");
-    ranger.type = "button";
-    ranger.className = "action-carree";
-    direCarre(ranger, range ? "Ressortir ce montage" : "Ranger ce montage",
-      range ? "ressortir" : "ranger");
-    ranger.addEventListener("click", () => { archiver(projet, !range); rendreHistoire(); });
-
     const jeter = document.createElement("button");
     jeter.type = "button";
     jeter.className = "action-carree danger";
@@ -3591,12 +3595,12 @@ function rendreHistoire() {
       rendreHistoire();
     });
 
-    gestes.append(ouvrir, renommer, ranger, jeter);
+    gestes.append(etat, renommer, jeter);
     carte.append(vignette, texte, gestes);
     liste.append(carte);
   }
   morceaux.push(liste);
-  morceaux.push(note("Ranger — la flèche qui rentre dans la boîte — retire un montage de la barre des projets sans rien perdre : ses plans, ses coupes et sa musique l'attendent. La flèche qui en ressort le remet en place."));
+  morceaux.push(note("La flèche qui rentre dans la boîte range un montage : il quitte la barre des projets sans rien perdre, et ses plans, ses coupes et sa musique l'attendent. La flèche qui en ressort le remet en place et l'ouvre."));
   vue.replaceChildren(...morceaux);
   peindreRendusEnLigne().catch(() => {});
 }
