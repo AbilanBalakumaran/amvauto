@@ -1950,7 +1950,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 15:39";
+const VERSION_PAGE = "2026-09-16 19:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3169,6 +3169,59 @@ const lecture = { index: 0, jouant: false, boucle: null, echelle: 15, audio: nul
 
 const largeurClip = (plan) => Math.max(2, duree(plan) * lecture.echelle);
 const xDeSeconde = (valeur) => valeur * lecture.echelle;
+
+/* Le temps sous un point de la piste.
+
+   La conversion inverse — x ÷ échelle — suppose qu'un bloc occupe exactement sa
+   durée. C'est faux dès qu'un bloc tombe sous le plancher de deux points :
+   « largeurClip » l'élargit pour qu'il reste touchable au doigt, la piste
+   s'allonge d'autant, et l'écart s'accumule bloc après bloc.
+
+   Mesuré sur un montage de trois cent dix-sept plans, où tous les blocs sont au
+   plancher : toucher le bloc 300 en sélectionnait 298. Plus la piste est dense,
+   plus on se trompe de voisin — et c'est sur les pistes denses qu'on vise le
+   plus mal.
+
+   On parcourt donc les blocs comme ils sont posés, et l'on interpole dans
+   celui qui contient le point. */
+function tempsDeX(clientX, plans, debuts = null) {
+  const liste = plans || [];
+  const rail = $("rail");
+  if (rail && liste.length) {
+    /* Le bloc réellement sous le doigt, demandé à la page.
+
+       Recalculer les largeurs ne suffit pas : la mise en page arrondit, et
+       l'écart — mesuré à sept dixièmes de pour cent par bloc — s'accumule.
+       Sur trois cent dix-sept plans, le calcul plaçait le point à 417,8 s là où
+       le bloc visé commence à 420. C'est la page qui sait où sont ses blocs. */
+    const cadre = rail.getBoundingClientRect();
+    const bloc = document.elementFromPoint(clientX, cadre.top + cadre.height / 2)?.closest?.(".clip");
+    const rang = bloc ? Number(bloc.dataset.index) : -1;
+    if (rang >= 0 && liste[rang]) {
+      const r = bloc.getBoundingClientRect();
+      const part = r.width > 0 ? Math.max(0, Math.min(1, (clientX - r.left) / r.width)) : 0;
+      const tous = debuts || offsets(liste);
+      return (tous[rang] || 0) + part * duree(liste[rang]);
+    }
+  }
+  /* Hors de la piste — avant le premier bloc, après le dernier, ou pendant un
+     remplissage par fournées où le bloc n'est pas encore posé : on retombe sur
+     le parcours des largeurs, qui vaut mieux que rien. */
+  const gaucheRail = rail ? rail.getBoundingClientRect().left : 0;
+  let gauche = 0;
+  let temps = 0;
+  for (const plan of liste) {
+    const large = largeurClip(plan);
+    const tenue = duree(plan);
+    if (clientX - gaucheRail < gauche + large) {
+      return temps + (large > 0
+        ? Math.max(0, Math.min(1, (clientX - gaucheRail - gauche) / large)) * tenue : 0);
+    }
+    gauche += large;
+    temps += tenue;
+  }
+  return temps;
+}
 
 /* Couper un plan ne touche pas au fichier : on déplace deux bornes dans la
    source. C'est le principe du montage non destructif — le même rush peut
@@ -4454,6 +4507,7 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
+  tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
   automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
   casesAttendues: (p) => casesAttendues(p), amvDe: (p) => amvDe(p), sauver: () => sauver(),
@@ -8966,7 +9020,11 @@ function demarrerScrub(evt) {
     const ligne = $("ligne");
     const cadre = $("piste");
     if (!ligne) return;
-    const viser = (x) => allerA(Math.max(0, x - ligne.getBoundingClientRect().left) / lecture.echelle);
+    /* Les débuts se calculent une fois pour tout le geste : ils ne changent pas
+       tant qu'on fait glisser le doigt. */
+    const plans = projetActif()?.plans || [];
+    const debuts = offsets(plans);
+    const viser = (x) => allerA(tempsDeX(x, plans, debuts));
     lecture.scrub = true;
     debutGeste();
     viser(evt.clientX);
@@ -10234,6 +10292,31 @@ function viser(video, temps, plan) {
    aussi la secousse qui donne l'image au repos. Les deux disent la même chose,
    « on veut voir quelque chose ». */
 let gesteMontage = false;
+
+/* Et l'on peut le rendormir.
+
+   Une préparation lancée ne s'arrêtait plus : le bouton rouge du bandeau ne
+   coupait que les téléchargements de fichiers, pendant que la fabrique
+   continuait de découper et que la file d'extraits continuait de tirer. Sur un
+   téléphone qui chauffe, c'est justement ce qu'on veut pouvoir arrêter.
+
+   Tout s'arrête donc ensemble, et rien ne repart tout seul : le témoin retombe,
+   et il faudra redemander — appuyer sur lecture, toucher la piste. C'est la
+   même porte que celle du démarrage, dans l'autre sens. */
+async function endormirAtelier() {
+  gesteMontage = false;
+  // Le travailleur, qui découpe : on ne lui demande pas d'arrêter, on l'arrête.
+  try { fabrique.fil?.terminate(); } catch { /* déjà mort */ }
+  fabrique.fil = null;
+  fabrique.encours = null;
+  // La file d'extraits, vidée de ce qui n'est pas encore parti.
+  fileExtraits.length = 0;
+  // Les téléchargements de fichiers, et les morceaux partiels qu'ils laissaient.
+  await arreterTransferts();
+  const projet = projetActif();
+  if (projet) majPreparation(projet);
+  majImports();
+}
 
 function reveillerAtelier() {
   if (gesteMontage) return;
@@ -13501,15 +13584,21 @@ function boutonsTransfert() {
   stop.type = "button";
   stop.id = "btn-transfert-stop";
   stop.className = "action-carree danger";
-  stop.title = "Arrêter le chargement";
-  stop.setAttribute("aria-label", "Arrêter le chargement");
-  stop.innerHTML = icone("croix");
+  /* Ce bouton n'arrêtait que les téléchargements. Il arrête maintenant toute la
+     préparation — la fabrique comprise —, parce que c'est ce qu'on lui demande
+     quand on appuie dessus : que le téléphone se taise. */
+  stop.title = "Arrêter la préparation";
+  stop.setAttribute("aria-label", "Arrêter la préparation de l'aperçu");
+  stop.innerHTML = icone("stop");
   stop.addEventListener("click", async () => {
     const projet = projetActif();
     const { total, prets } = projet ? resteAImporter(projet) : { total: 0, prets: 0 };
-    if (!confirm(`Arrêter le chargement ?\n\n${prets}/${total} plans sont déjà sur l'appareil et y restent.`
-      + " Ce qui n'est arrivé qu'à moitié sera effacé.")) return;
-    await arreterTransferts();
+    const faits = projet ? (bilanApercu(projet).faits || 0) : 0;
+    if (!confirm("Arrêter la préparation de l'aperçu ?\n\n"
+      + `${prets}/${total} plans et ${faits} bloc${faits > 1 ? "s" : ""} déjà prêts le restent.`
+      + " Ce qui n'est arrivé qu'à moitié sera effacé.\n\n"
+      + "Rien ne repartira tout seul : appuie sur lecture, ou touche la piste, pour reprendre.")) return;
+    await endormirAtelier();
     majBoutonsTransfert();
   });
 
@@ -13553,8 +13642,15 @@ function majBoutonsTransfert() {
      reste que des abandons, seul « Réessayer » a quelque chose à dire. */
   const travail = fileImport.length || arretsImport.size || attentesImport.size;
   if (pause) pause.hidden = !travail && !transfert.suspendu;
+  /* Le bouton d'arrêt ne se montrait que s'il restait des FICHIERS à charger.
+     Or la fabrique peut découper longtemps après que le dernier octet soit
+     arrivé, et c'est justement là qu'on veut l'arrêter — un téléphone qui
+     chauffe sans qu'aucun téléchargement ne soit en cours. Il se montre donc
+     dès que l'atelier travaille, quelle que soit la sorte de travail. */
+  const prepare = gesteMontage
+    && (fabrique.fil || fileExtraits.length || extraitsEnCours.size);
   const stop = $("btn-transfert-stop");
-  if (stop) stop.hidden = !travail;
+  if (stop) stop.hidden = !travail && !prepare;
   majBoutonVeille();
 }
 
