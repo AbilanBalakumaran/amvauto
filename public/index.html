@@ -1135,6 +1135,9 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
    inversion de la grammaire, et elle ne sert qu'à cela. */
 .action-carree.on { background: #fff; color: var(--vert-fonce); }
 .action-carree.danger { background: linear-gradient(135deg, #C1121F, #7d0c15); }
+/* Un rond qui arrête porte la même couleur qu'un carré qui arrête. */
+.rond.danger { border-color: rgba(193, 18, 31, .55); color: #ff9aa2; }
+.rond.danger:hover, .rond.danger:focus-visible { border-color: #C1121F; color: #fff; background: #C1121F; }
 
 /* La carte d'un rendu : une vignette, ce qu'il est, et ses gestes.
 
@@ -1950,7 +1953,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 19:31";
+const VERSION_PAGE = "2026-09-16 19:45";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -8516,9 +8519,27 @@ function transport() {
     return bouton;
   };
 
+  /* Arrêter : un seul bouton, et il est ici.
+
+     Le bandeau de l'aperçu en portait un second, avec sa propre lecture et son
+     propre arrêt, à quelques points au-dessus de ceux-ci. Deux « play » et deux
+     « stop » qui ne voulaient pas dire la même chose, l'un sur l'autre : on ne
+     savait plus lequel arrêtait quoi.
+
+     Celui-ci arrête tout — la lecture si elle tourne, et la préparation dans
+     tous les cas. Ce qui est arrivé à moitié est gardé : reprendre ne
+     recommence pas de zéro. */
+  const arret = rond("stop", "Tout arrêter — la lecture et la préparation", async () => {
+    if (lecture.demande || lecture.jouant) basculerLecture();
+    await endormirAtelier();
+    majBoutonsTransfert();
+  }, "btn-arret");
+  arret.classList.add("danger");
+  arret.hidden = true;
+
   const gauche = document.createElement("span");
   gauche.className = "transport-cote";
-  gauche.append(rond("plein", "Plein écran", pleinEcran));
+  gauche.append(rond("plein", "Plein écran", pleinEcran), arret);
 
   const jouer = document.createElement("button");
   jouer.type = "button";
@@ -10311,8 +10332,13 @@ async function endormirAtelier() {
   fabrique.encours = null;
   // La file d'extraits, vidée de ce qui n'est pas encore parti.
   fileExtraits.length = 0;
-  // Les téléchargements de fichiers, et les morceaux partiels qu'ils laissaient.
-  await arreterTransferts();
+  /* Les téléchargements s'arrêtent, mais ce qui est arrivé à moitié est GARDÉ.
+
+     L'ancien arrêt effaçait les morceaux partiels. C'était juste quand il
+     s'agissait de renoncer ; ça ne l'est plus quand il s'agit de faire taire le
+     téléphone une minute. Reprendre ne recommence donc pas de zéro. La place
+     occupée n'est pas perdue non plus : la purge la reprend quand elle manque. */
+  await arreterTransferts(false);
   const projet = projetActif();
   if (projet) majPreparation(projet);
   majImports();
@@ -13286,17 +13312,20 @@ function reprendreTransferts() {
   majNotificationTransfert();
 }
 
-async function arreterTransferts() {
+async function arreterTransferts(effacer = true) {
   transfert.suspendu = true;
   for (const arret of arretsImport.values()) arret.abort();
   const restants = fileImport.splice(0, fileImport.length);
   for (const attente of attentesImport.values()) restants.push(attente.plan);
   attentesImport.clear();
-  // Les morceaux partiels n'ont plus de raison d'être : on rend la place.
-  const adresses = new Set(restants.map((plan) => mediaDe(plan)).filter(Boolean));
-  for (const arret of arretsImport.keys()) adresses.add(arret);
-  for (const adresse of adresses) {
-    await effacerBase(cleParticelle(adresse)).catch(() => {});
+  /* Les morceaux partiels : jetés quand on renonce, gardés quand on met
+     simplement en pause. */
+  if (effacer) {
+    const adresses = new Set(restants.map((plan) => mediaDe(plan)).filter(Boolean));
+    for (const arret of arretsImport.keys()) adresses.add(arret);
+    for (const adresse of adresses) {
+      await effacerBase(cleParticelle(adresse)).catch(() => {});
+    }
   }
   essaisImport.clear();
   majImports();
@@ -13552,16 +13581,6 @@ function boutonsTransfert() {
   boite.className = "transferts";
   boite.id = "transferts";
 
-  const pause = document.createElement("button");
-  pause.type = "button";
-  pause.id = "btn-transfert-pause";
-  pause.className = "action-carree";
-  pause.addEventListener("click", () => {
-    if (transfert.suspendu) reprendreTransferts();
-    else suspendreTransferts();
-    majBoutonsTransfert();
-  });
-
   /* Reprendre ce qui a été abandonné, à la main.
 
      La relance automatique existe, mais elle attend deux minutes et laisse de
@@ -13580,29 +13599,12 @@ function boutonsTransfert() {
     if (!repris) alert("Aucun plan abandonné à reprendre : tout ce qui manque est déjà en file.");
   });
 
-  const stop = document.createElement("button");
-  stop.type = "button";
-  stop.id = "btn-transfert-stop";
-  stop.className = "action-carree danger";
-  /* Ce bouton n'arrêtait que les téléchargements. Il arrête maintenant toute la
-     préparation — la fabrique comprise —, parce que c'est ce qu'on lui demande
-     quand on appuie dessus : que le téléphone se taise. */
-  stop.title = "Arrêter la préparation";
-  stop.setAttribute("aria-label", "Arrêter la préparation de l'aperçu");
-  stop.innerHTML = icone("stop");
-  stop.addEventListener("click", async () => {
-    const projet = projetActif();
-    const { total, prets } = projet ? resteAImporter(projet) : { total: 0, prets: 0 };
-    const faits = projet ? (bilanApercu(projet).faits || 0) : 0;
-    if (!confirm("Arrêter la préparation de l'aperçu ?\n\n"
-      + `${prets}/${total} plans et ${faits} bloc${faits > 1 ? "s" : ""} déjà prêts le restent.`
-      + " Ce qui n'est arrivé qu'à moitié sera effacé.\n\n"
-      + "Rien ne repartira tout seul : appuie sur lecture, ou touche la piste, pour reprendre.")) return;
-    await endormirAtelier();
-    majBoutonsTransfert();
-  });
-
-  boite.append(pause, reprise, stop);
+  /* Il ne reste ici que ce qui n'existe nulle part ailleurs : reprendre les
+     plans abandonnés, et se faire prévenir. La lecture et l'arrêt étaient un
+     second jeu de commandes à quelques points du vrai — deux boutons « play »
+     et deux « stop » qui ne voulaient pas dire la même chose, posés l'un
+     au-dessus de l'autre. Ils ont rejoint le transport. */
+  boite.append(reprise);
   return boite;
 }
 
@@ -13618,12 +13620,6 @@ const direCarre = (bouton, quoi, dessin) => {
 };
 
 function majBoutonsTransfert() {
-  const pause = $("btn-transfert-pause");
-  if (pause) {
-    direCarre(pause, transfert.suspendu ? "Reprendre le chargement" : "Suspendre le chargement",
-      transfert.suspendu ? "play" : "pause");
-    pause.classList.toggle("on", transfert.suspendu);
-  }
   const reprise = $("btn-transfert-reprise");
   if (reprise) {
     // Il n'apparaît que s'il a quelque chose à faire.
@@ -13638,20 +13634,23 @@ function majBoutonsTransfert() {
     compte.textContent = String(perdus);
     reprise.append(compte);
   }
-  /* Suspendre et arrêter n'ont de sens que s'il reste du travail. Quand il ne
-     reste que des abandons, seul « Réessayer » a quelque chose à dire. */
-  const travail = fileImport.length || arretsImport.size || attentesImport.size;
-  if (pause) pause.hidden = !travail && !transfert.suspendu;
-  /* Le bouton d'arrêt ne se montrait que s'il restait des FICHIERS à charger.
-     Or la fabrique peut découper longtemps après que le dernier octet soit
-     arrivé, et c'est justement là qu'on veut l'arrêter — un téléphone qui
-     chauffe sans qu'aucun téléchargement ne soit en cours. Il se montre donc
-     dès que l'atelier travaille, quelle que soit la sorte de travail. */
-  const prepare = gesteMontage
-    && (fabrique.fil || fileExtraits.length || extraitsEnCours.size);
-  const stop = $("btn-transfert-stop");
-  if (stop) stop.hidden = !travail && !prepare;
   majBoutonVeille();
+  majBoutonArret();
+}
+
+/* L'arrêt vit dans le transport, à côté de la lecture.
+
+   Il ne se montre que s'il y a quelque chose à arrêter : des fichiers en vol,
+   ou la fabrique qui découpe. Cette seconde condition compte autant que la
+   première — la fabrique travaille longtemps après l'arrivée du dernier octet,
+   et c'est justement là qu'un téléphone chauffe sans qu'aucun téléchargement
+   ne soit en cours. */
+function majBoutonArret() {
+  const bouton = $("btn-arret");
+  if (!bouton) return;
+  const travail = fileImport.length || arretsImport.size || attentesImport.size;
+  const prepare = gesteMontage && (fabrique.fil || fileExtraits.length || extraitsEnCours.size);
+  bouton.hidden = !travail && !prepare;
 }
 
 function boutonVeille() {
@@ -14022,6 +14021,8 @@ function positionCourante() {
 
 function majTransport() {
   const projet = projetActif();
+  // L'arrêt suit le travail : il apparaît quand il y en a, disparaît sinon.
+  majBoutonArret();
   if (!enPleinEcran()) retirerTransportPlein();
   if (!projet || !$("timecode")) return;
   const position = positionCourante();
