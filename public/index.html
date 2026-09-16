@@ -1950,7 +1950,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 15:08";
+const VERSION_PAGE = "2026-09-16 15:39";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6195,6 +6195,8 @@ async function fabriquerParLecteur(suite, cadre) {
 }
 
 async function fabriquerSuivant() {
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
+  if (!gesteMontage) return;
   if (fabrique.encours || fabrique.lecteurEnCours || rendu.encours || rendu.parImage) return;
   /* On a renoncé à l'accélération : il n'y a plus rien à fabriquer.
      Sans cette porte, la fabrique continuait de produire des blocs que plus
@@ -6524,6 +6526,8 @@ async function reprendreSegments(projet) {
 const EPREUVES_RESTAUREES = 2;
 
 async function eprouverBlocsRestaures() {
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
+  if (!gesteMontage) return;
   if (lecture.demande) return;
   const aVoir = [...segments.entries()]
     .filter(([, quoi]) => quoi?.restaure && !quoi.eprouve)
@@ -7893,6 +7897,8 @@ function viderAttenteImagettes() {
    visibles et rien ne change ; zoomé serré, seul ce qu'on regarde se prépare, et
    le défilement prépare la suite. */
 function prechaufferVisible() {
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
+  if (!gesteMontage) return;
   const projet = projetActif();
   const cadre = $("piste");
   if (!projet || !cadre) return;
@@ -9984,6 +9990,8 @@ function partirALaPremiereImage(video) {
 }
 
 function basculerLecture() {
+  // Appuyer sur lecture, c'est la demande la plus claire qui soit.
+  reveillerAtelier();
   const projet = projetActif();
   const video = elementActif();
   if (!video || !projet) return;
@@ -10209,7 +10217,44 @@ function viser(video, temps, plan) {
    démarre rien tant que l'application n'a pas été touchée. Ensuite la secousse
    reprend son office, parce que c'est elle qui donne l'image d'un plan qu'on
    vient de viser à la main. */
+/* L'atelier dort tant qu'on ne lui a rien demandé.
+
+   Ouvrir l'onglet Montage suffisait à lancer TOUTE la préparation de l'aperçu.
+   Mesuré sur un projet de cent vingt plans, sans le moindre geste : quarante
+   extraits demandés, quarante lots d'images-clés, un travailleur lancé, et le
+   bandeau annonçant « Fichiers 0/40 · 702 Mo · Aperçu 0/117 préparés ». Sept
+   cents mégaoctets planifiés pour avoir simplement regardé sa piste.
+
+   Rien ne part donc plus tout seul. Le réveil vient d'une intention : appuyer
+   sur lecture, toucher la piste ou un bloc, lancer l'automatisation. À cet
+   instant, tout ce qui dormait se met en route d'un coup — la file, la
+   fabrique, la pellicule — et l'application se comporte comme avant.
+
+   Un seul témoin pour les deux règles : ce qui autorise la préparation autorise
+   aussi la secousse qui donne l'image au repos. Les deux disent la même chose,
+   « on veut voir quelque chose ». */
 let gesteMontage = false;
+
+function reveillerAtelier() {
+  if (gesteMontage) return;
+  gesteMontage = true;
+  // Ce qui a été refusé pendant le sommeil se redemande maintenant.
+  try {
+    lancerImport();
+    fabriquerSuivant().catch(() => {});
+    prechaufferVisible();
+    majImports();
+    /* Et l'on repose la tête là où elle est.
+
+       C'est « viser » qui finit par appeler la secousse, celle qui produit
+       l'image sous le curseur. Elle partait au démarrage, avant tout geste —
+       c'était le défaut. Maintenant qu'elle n'y part plus, il faut la demander
+       ici, sinon le moniteur resterait noir jusqu'à la première lecture :
+       vérifié au banc, la secousse ne revenait pas après un geste sur la
+       piste. */
+    allerA(lecture.position || 0);
+  } catch { /* l'atelier n'est pas encore monté : le prochain tour suffira */ }
+}
 /* Et le geste doit porter sur le montage, pas sur l'application.
 
    Une première version levait la garde au premier geste, quel qu'il soit :
@@ -10222,7 +10267,7 @@ let gesteMontage = false;
    gestionnaires avant d'atteindre le document. */
 document.addEventListener("pointerdown", (evt) => {
   if (gesteMontage) return;
-  if (evt.target?.closest?.("#piste, .transport, .clip, #lecture, .poignee")) gesteMontage = true;
+  if (evt.target?.closest?.("#piste, .transport, .clip, #lecture, .poignee")) reveillerAtelier();
 }, { passive: true, capture: true });
 
 function secouer(video) {
@@ -11287,6 +11332,8 @@ const extraitPrevu = (plan) => {
 
 function planifierExtrait(plan) {
   compteExtraits.appels += 1;
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
+  if (!gesteMontage) return false;
   if (serveurPossible === false) { compteExtraits.impossible += 1; return false; }
   const cle = cleSegment(plan);
   if (!cle || plan.youtube || segments.has(cle) || extraitsRefuses.has(cle)) {
@@ -11301,6 +11348,8 @@ function planifierExtrait(plan) {
 }
 
 async function servirExtraits() {
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
+  if (!gesteMontage) return;
   while (extraitsEnCours.size < EXTRAITS_PARALLELES && fileExtraits.length) {
     /* Le plus proche de la tête d'abord.
 
@@ -11591,6 +11640,8 @@ function planifierImport(plan) {
 }
 
 async function lancerImport() {
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
+  if (!gesteMontage) return;
   // Suspendu : la file reste en place, elle ne se vide simplement plus.
   if (transfert.suspendu) return;
   if (importsEnCours >= IMPORTS_PARALLELES) return;
@@ -12056,6 +12107,20 @@ function majPreparation(projet) {
   if (!etat.restentFichiers) {
     finirVeille(etat.prets, etat.total);
     if (etat.bilan.fini) annoncerApercuPret(projet, etat.bilan.concernes);
+  }
+
+  /* Tant que l'atelier dort, le bandeau disait ce qu'il y AURAIT à faire —
+     « Fichiers 0/40 · 720 Mo · Aperçu 0/120 préparés · 0 % » — alors que rien
+     ne part et que rien ne se prépare. Un compte à zéro qui ne bouge pas se lit
+     comme une panne. Il dit maintenant ce qui est vrai, et ce qu'il faut faire
+     pour que cela change. */
+  if (!gesteMontage) {
+    dit.textContent = "Aperçu en veille — appuie sur lecture, ou touche la piste,"
+      + " et les plans se préparent.";
+    bandeau.hidden = false;
+    bandeau.classList.remove("discret");
+    majNotificationTransfert();
+    return;
   }
 
   dit.textContent = etat.texte;
@@ -17081,6 +17146,8 @@ function planifierCles(plan) {
 }
 
 function servirCles() {
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
+  if (!gesteMontage) return;
   while (clesEnVol.size < CLES_PARALLELES && fileCles.length) {
     const plan = fileCles.shift();
     const adresse = mediaDe(plan);
@@ -18491,6 +18558,8 @@ async function automatiserAmv(bouton) {
 
   automate.encours = true;
   automate.arret = false;
+  // Lancer l'automatisation, c'est demander à voir : l'atelier se réveille.
+  reveillerAtelier();
   const avant = bouton.textContent;
   bouton.textContent = "Arrêter";
   bouton.classList.add("stop");
