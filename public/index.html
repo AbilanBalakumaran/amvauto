@@ -1948,12 +1948,42 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 <script type="module">
 const $ = (id) => document.getElementById(id);
 
+/* Une capture d'écran n'est pas un départ.
+
+   Sur iPhone, le flash de la capture fait passer la page par « caché » puis
+   « visible » en quelques centaines de millisecondes. Cinq gestionnaires se
+   déclenchaient alors d'un coup au retour : le moniteur se réveillait, la file
+   d'imports repartait, le verrou de veille était repris, le panneau des
+   réglages se redessinait. Pour un clignement d'œil, l'application sursautait —
+   et la lecture avec elle.
+
+   On mesure donc combien de temps on est parti. En dessous d'une seconde et
+   demie, ce n'est pas un départ : c'est une capture d'écran, une bannière de
+   notification, un appel qui s'affiche. On ne fait rien, et la lecture ne
+   s'aperçoit de rien.
+
+   Le dépôt au coffre, lui, n'est pas retardé : perdre un montage coûte plus
+   cher qu'un envoi de trop, et « sendBeacon » ne bloque pas le fil principal. */
+const CLIGNEMENT = 1500;
+const absence = { depuis: 0, duree: 0 };
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { absence.depuis = performance.now(); return; }
+  absence.duree = absence.depuis ? performance.now() - absence.depuis : Infinity;
+  absence.depuis = 0;
+}, { capture: true });
+
+/* Vrai quand on vient de rentrer d'une absence trop courte pour être un
+   départ. Les gestionnaires de retour s'en servent pour ne rien faire. */
+const clignement = () => absence.duree < CLIGNEMENT;
+
+
 // L'écran de démarrage, allumé ou éteint. On le rallume juste avant un
 // rechargement : sans cela l'application se montre une fraction de seconde,
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 19:45";
+const VERSION_PAGE = "2026-09-16 20:00";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -1983,6 +2013,8 @@ if ("serviceWorker" in navigator) {
       let derniereVerif = Date.now();
       const verifierAuRetour = () => {
         if (document.hidden) return;
+        // Ni pour un clignement : une capture d'écran n'est pas un retour.
+        if (clignement()) return;
         if (Date.now() - derniereVerif < 30000) return;
         derniereVerif = Date.now();
         enregistrement.update().catch(() => {});
@@ -4510,6 +4542,7 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
+  clignement: () => clignement(), absence: () => absence,
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
   automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
@@ -6844,7 +6877,9 @@ function battreMoniteur() {
   apercu.veille = setTimeout(battreMoniteur, moniteurUtile() ? 250 : 1000);
 }
 
-document.addEventListener("visibilitychange", () => { if (!document.hidden) reveillerMoniteur(); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !clignement()) reveillerMoniteur();
+});
 
 /* Chien de garde de l'aperçu.
 
@@ -10883,6 +10918,8 @@ setInterval(() => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
+  // Un clignement ne relance rien : la file n'a pas eu le temps de s'endormir.
+  if (clignement()) return;
   const maintenant = performance.now();
   for (const adresse of progres.keys()) progres.set(adresse, maintenant);
   /* Le temps passé en veille compte pour les reprises : c'est même là qu'il
@@ -13719,6 +13756,9 @@ document.addEventListener("visibilitychange", () => {
     majNotificationTransfert();
     return;
   }
+  // Le verrou de veille n'est pas relâché pour un clignement, et le panneau
+  // des réglages n'a rien appris qui mérite un redessin.
+  if (clignement()) return;
   prendreVeille();
   sentinelle.autorisee = permissionNotifs() === "granted";
   majReglages();
