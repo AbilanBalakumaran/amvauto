@@ -1946,7 +1946,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-15 19:29";
+const VERSION_PAGE = "2026-09-16 08:16";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -16956,6 +16956,48 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
   const budgets = new Map();
   const montage = [];
 
+  /* ---- Une scène, une seule fois, dans tout l'AMV -------------------------
+
+     C'était une pénalité de cent points : très lourde, mais franchissable quand
+     il ne restait rien d'autre. Mesuré sur une musique de 1:43 à 134 BPM —
+     quatre-vingt-sept cases : au-dessus de quatre-vingt-sept sources, zéro
+     doublon déjà ; à soixante sources, vingt-sept coupes en double et une scène
+     vue quatre fois ; à quarante, quarante-sept doublons et jusqu'à cinq
+     emplois. Le barème n'était donc pas en cause : l'arithmétique l'était.
+     Quatre-vingt-sept cases et quarante scènes ne peuvent pas être toutes
+     distinctes.
+
+     La règle devient dure — une scène employée sort du vivier — et c'est alors
+     le nombre de cases qui suit le vivier, jamais l'inverse. */
+  const dejaPris = new Set();
+
+  /* Ce que chaque section voudrait, si les scènes ne manquaient pas. */
+  const voulues = sections.map((section) => {
+    const tenue = Math.min((TEMPS_PAR_PLAN[section.energie] ?? 8) * periode, TENUE_MAX);
+    return Math.max(1, Math.round((section.fin - section.debut) / tenue));
+  });
+  const totalVoulu = voulues.reduce((a, b) => a + b, 0);
+  const budgetCases = Math.min(totalVoulu, sources.length);
+
+  /* Réparti au prorata, avec les plus forts restes d'abord : la somme doit
+     tomber juste sur le budget, sinon le doublon rentre par la petite porte. */
+  const exact = voulues.map((n) => (n * budgetCases) / totalVoulu);
+  const partages = exact.map((x) => Math.floor(x));
+  const manquantes = budgetCases - partages.reduce((a, b) => a + b, 0);
+  exact
+    .map((x, i) => [x - Math.floor(x), i])
+    .sort((a, b) => b[0] - a[0])
+    .slice(0, Math.max(0, manquantes))
+    .forEach(([, i]) => { partages[i] += 1; });
+  /* Aucune section ne reste muette : elle laisserait un trou dans la bande-son.
+     La plus fournie lui cède une case. */
+  partages.forEach((part, i) => {
+    if (part > 0) return;
+    let riche = 0;
+    partages.forEach((autre, j) => { if (autre > partages[riche]) riche = j; });
+    if (partages[riche] > 1) { partages[riche] -= 1; partages[i] += 1; }
+  });
+
   sections.forEach((section, rangSection) => {
     const accord = projet.accords?.[rangSection] || projet.accords?.[String(rangSection)] || null;
     const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
@@ -16969,7 +17011,8 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
        six secondes et un de huit dixièmes, dans un passage calme, c'est un
        éclair au milieu du silence. */
     const span = section.fin - section.debut;
-    const cases = Math.max(1, Math.round(span / tenue));
+    const cases = partages[rangSection] || 0;
+    if (!cases) return;
     const pas = span / cases;
 
     let curseur = section.debut;
@@ -16990,18 +17033,24 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
            AMV chronologique veut dire — parcourir, pas illustrer. */
         for (let saut = 0; saut < suite.length; saut += 1) {
           const candidat = suite[(rangSuite + saut) % suite.length];
+          if (dejaPris.has(String(idRush(candidat)))) continue;
           if ((budgets.get(cleEpisode(candidat)) || 0) < BUDGET_EPISODE) {
             choix = candidat;
             rangSuite += saut + 1;
             break;
           }
         }
-        // Tous au-dessus du budget : on reprend le tour normal plutôt que de
-        // s'arrêter — un montage court serait pire qu'un épisode un peu long.
-        if (!choix) { choix = suite[rangSuite % suite.length]; rangSuite += 1; }
+        /* Tous au-dessus du budget d'épisode : on reprend le tour normal, mais
+           toujours sans reprendre une scène déjà posée — un épisode qui
+           s'attarde vaut mieux qu'une scène qui revient. */
+        if (!choix) {
+          choix = suite.find((candidat) => !dejaPris.has(String(idRush(candidat)))) || null;
+        }
       } else {
         let meilleure = Infinity;
         for (const plan of sources) {
+          // La règle dure : une scène posée n'est plus un candidat.
+          if (dejaPris.has(String(idRush(plan)))) continue;
           /* Deux blocs de suite venus du même rush, c'est le plan d'origine qui
              réapparaît : exactement ce qu'un mashup doit éviter. La règle est
              dure, pas une pénalité — sauf s'il n'y a rien d'autre. */
@@ -17053,6 +17102,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
         __famille: undefined,
       });
       choix.__pris = (choix.__pris || 0) + 1;
+      dejaPris.add(String(idRush(choix)));
       vus.set(choix.id, rang);
       const cle = cleEpisode(choix);
       budgets.set(cle, (budgets.get(cle) || 0) + pose);
@@ -18001,6 +18051,23 @@ function ouvrirAssistant(etape = "musique") {
    retire pas à chaque appel de « poser ». */
 const nouvelleGraine = () => (Math.floor(Math.random() * 0xffffffff) || 1) >>> 0;
 
+/* Ce que le vivier ne couvre pas, il faut le dire.
+
+   Une scène ne servant qu'une fois et aucune coupe ne dépassant quatre
+   secondes, un vivier de douze scènes ne peut porter que quarante-huit
+   secondes : sur une musique de 1:43, il en reste cinquante-cinq sans image.
+   Ce n'est pas un défaut à cacher — c'est le prix de l'unicité, et celui qui
+   monte doit savoir qu'il lui faut chercher plus large, ou raccourcir. */
+function phraseCouverture(projet) {
+  const musique = projet?.rythme?.duree || 0;
+  if (!musique) return "";
+  const couvert = (projet.plans || []).reduce((t, x) => t + Math.max(0, duree(x)), 0);
+  if (couvert >= musique - 2) return "";
+  return `\n${horloge(musique - couvert)} de musique restent sans image :`
+    + " chaque scène ne servant qu'une fois, il en faudrait davantage."
+    + " Élargis la recherche à un autre animé, ou raccourcis la piste.";
+}
+
 const automate = { encours: false, arret: false };
 
 function arreterAutomate() { automate.arret = true; }
@@ -18134,7 +18201,8 @@ async function automatiserAmv(bouton) {
     const complet = poser();
     if (complet && !amv.lire) {
       const sources = new Set(projetActif()?.plans.map((x) => String(idRush(x)))).size;
-      dire(`${complet} coupes sur ${sources} scènes différentes.`);
+      dire(`${complet} coupes, ${sources} scènes, aucune deux fois.`
+        + phraseCouverture(projetActif()));
     }
 
     if (!amv.lire) return;
@@ -18706,7 +18774,12 @@ function blocCodeAmvauto(apres) {
     creer.textContent = "Créer mon code";
     creer.addEventListener("click", () => {
       coffre.code = nouveauCode();
+      /* Il manquait ceci : le bouton donnait un code et laissait la sauvegarde
+         éteinte. On repartait avec un laissez-passer pour un coffre où rien ne
+         montait jamais. */
+      coffre.actif = true;
       noterCoffre();
+      planifierDepot();
       apres?.();
     });
     bloc.append(creer);
@@ -18780,15 +18853,35 @@ const DEPOT_REPOS = 10000;      // le calme après le dernier geste
 const DEPOT_ESPACE = 30000;     // l'intervalle minimum entre deux écritures
 const DEPOT_MAX = 60000;        // le retard maximum toléré, même sans répit
 
+/* La sauvegarde en ligne est allumée d'office, et son code se crée tout seul.
+
+   Elle existait déjà — dépôt différé, envoi de secours quand l'application passe
+   à l'arrière-plan, relecture au démarrage, fusion par date — mais elle
+   attendait qu'on aille l'allumer dans un panneau. Personne n'y allait. Ce que
+   l'on rencontrait à la place, c'était l'avertissement du stockage plein et son
+   bouton « Sauvegarde dans un fichier », qui sur un iPhone ouvre le sélecteur de
+   dossier : on demandait de ranger soi-même ce que l'application savait déjà
+   mettre à l'abri.
+
+   Le code de vingt caractères n'a plus à être demandé non plus : un appareil
+   neuf s'en donne un. Il reste visible et copiable — c'est lui qu'on recopie
+   sur le deuxième appareil —, mais on n'a rien à faire pour être sauvegardé.
+
+   « actif !== false » et non « Boolean(actif) » : celui qui a coupé la
+   sauvegarde exprès la retrouve coupée. */
 function chargerCoffre() {
   try {
     const garde = JSON.parse(localStorage.getItem(CLE_COFFRE) || "{}");
     if (garde.code && codeValide(garde.code)) {
       coffre.code = garde.code;
-      coffre.actif = Boolean(garde.actif);
+      coffre.actif = garde.actif !== false;
       coffre.dernier = garde.dernier || null;
+      return;
     }
-  } catch { /* rien de sauvegardé, ou illisible : on repart de zéro */ }
+  } catch { /* illisible : on repart de zéro, donc d'un code neuf */ }
+  coffre.code = nouveauCode();
+  coffre.actif = true;
+  noterCoffre();
 }
 
 function noterCoffre() {
