@@ -771,6 +771,10 @@ main {
 /* Même bandeau, autre ton : celui-ci annonce une perte possible, pas une
    nouveauté. */
 .bandeau-version.alerte { background: linear-gradient(135deg, #C2352F, #7A1410); }
+/* Le troisième ton : une information. Le vert dit « du neuf », le rouge « tu
+   vas perdre quelque chose » ; une copie en ligne qui manque n'est ni l'un ni
+   l'autre. */
+.bandeau-version.coffre { background: linear-gradient(135deg, #37424d, #232a31); }
 /* Sur un écran de 320 points, « Export » et « Setting » poussaient l'en-tête
    au-delà de la fenêtre et toute la page défilait latéralement. Le titre cède la
    place avant les boutons, et les boutons se resserrent plutôt que de sortir. */
@@ -1946,7 +1950,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 08:47";
+const VERSION_PAGE = "2026-09-16 13:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2079,7 +2083,7 @@ function pileBandeaux() {
    de se recouvrir, et taire la mise à jour parce qu'un disque est plein n'avait
    de sens que tant qu'elles se disputaient le même bord. */
 function signalerVersion(texte) {
-  if (document.querySelector(".bandeau-version:not(.alerte)")) return;
+  if (document.querySelector(".bandeau-version:not(.alerte):not(.coffre)")) return;
   const bandeau = document.createElement("div");
   bandeau.className = "bandeau-version";
   const mot = document.createElement("span");
@@ -2809,6 +2813,26 @@ function sauver() {
   majBadge();
   planifierDepot();
   return !stockagePlein;
+}
+
+/* Le coffre qui ne passe plus : une information, pas une alarme. Un seul à la
+   fois, et il s'efface dès que le dépôt suivant réussit. */
+function signalerCoffre(texte) {
+  document.querySelector(".bandeau-version.coffre")?.remove();
+  const bandeau = document.createElement("div");
+  bandeau.className = "bandeau-version coffre";
+  const message = document.createElement("span");
+  message.textContent = texte;
+  const voir = document.createElement("button");
+  voir.type = "button";
+  voir.textContent = "Voir";
+  voir.addEventListener("click", () => { bandeau.remove(); ouvrirCoffre(); });
+  const fermer = document.createElement("button");
+  fermer.type = "button";
+  fermer.textContent = "×";
+  fermer.addEventListener("click", () => bandeau.remove());
+  bandeau.append(message, voir, fermer);
+  pileBandeaux().append(bandeau);
 }
 
 /* Un bandeau au ras de la barre d'onglets. Réservé à ce qui ne peut pas attendre que
@@ -3630,6 +3654,9 @@ let histoireFace = "rendus";
 function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
+  /* La liste se reconstruit : le lecteur qui y vivait part avec elle, et il
+     faut lui retirer sa source avant, sinon il garde son décodeur. */
+  lecteurHistoire?.();
   const morceaux = [];
   /* Du plus récent au plus ancien, et rien d'autre.
 
@@ -4686,7 +4713,27 @@ function empreinteNombre(texte) {
   return a >>> 0;
 }
 
-const empreinte = (texte) => empreinteNombre(texte).toString(36);
+/* Mémoïsée. L'empreinte d'une adresse ne change jamais, et « cleSegment »
+   la recalcule pour chaque plan à chaque redessin. Profilé sur un montage de
+   trois cent dix-sept plans, processeur bridé au niveau d'un iPhone XR :
+   « cleSegment » 377 ms, « empreinteNombre » 190 ms, « empreinte » 170 ms —
+   sept cent trente-sept millisecondes de hachage d'adresses de cent
+   caractères, à l'ouverture, pour un résultat toujours identique.
+
+   Le cache est borné : un montage change de plans, et une carte sans limite
+   finirait par tenir toutes les adresses jamais vues. Deux mille suffisent
+   largement pour un projet, et au-delà on repart à zéro plutôt que de trier. */
+const empreintesVues = new Map();
+const EMPREINTES_MAX = 2000;
+
+const empreinte = (texte) => {
+  const vue = empreintesVues.get(texte);
+  if (vue !== undefined) return vue;
+  const valeur = empreinteNombre(texte).toString(36);
+  if (empreintesVues.size >= EMPREINTES_MAX) empreintesVues.clear();
+  empreintesVues.set(texte, valeur);
+  return valeur;
+};
 
 /* Recopier ou réencoder : le choix appartient au montage, pas au bloc.
 
@@ -4721,18 +4768,38 @@ function modeCopie(projet) {
   return valeur;
 }
 
+/* La clé d'un plan, retenue tant que rien de ce qui la compose n'a bougé.
+
+   Elle se recalculait à chaque appel : deux « toFixed(3) », un hachage et une
+   concaténation, pour une valeur qui ne change qu'aux bornes du plan ou au
+   changement de montage. « surSegment » l'appelle pour chaque plan dans une
+   boucle sur tous les plans — profilé sur trois cent dix-sept plans, processeur
+   bridé au niveau d'un iPhone XR, c'était le premier poste du démarrage.
+
+   Le jeton de validité est le numéro de montage, qui couvre le cadre et le mode
+   de copie, plus les trois valeurs propres au plan qui entrent dans la clé.
+   Une carte faible : un plan retiré du montage s'en va avec son entrée. */
+const clesVues = new WeakMap();
+
 function cleSegment(plan) {
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return "";
+  const vue = clesVues.get(plan);
+  if (vue && vue.version === versionMontage && vue.entree === plan.entree
+    && vue.sortie === plan.sortie && vue.duree === plan.duree) return vue.cle;
   const cadre = cadreApercu(projetActif());
   /* La version de fabrication fait partie de la clé.
 
      Le cadre y était déjà, mais pas le débit : un segment fabriqué avant la
      correction serait ressorti du cache tel quel, avec ses blocs, et l'on aurait
      conclu que rien n'avait changé. Changer ce numéro refait tout. */
-  return `seg:${empreinte(adresse)}:${entreeDe(plan).toFixed(3)}-${sortieDe(plan).toFixed(3)}`
+  const cle = `seg:${empreinte(adresse)}:${entreeDe(plan).toFixed(3)}-${sortieDe(plan).toFixed(3)}`
     + `:${cadre.large}x${cadre.haut}@${IMAGES_PAR_SECONDE}v${VERSION_SEGMENT}`
     + (modeCopie(projetActif()) ? "c1" : "c0");
+  clesVues.set(plan, {
+    version: versionMontage, entree: plan.entree, sortie: plan.sortie, duree: plan.duree, cle,
+  });
+  return cle;
 }
 
 const segmentDe = (plan) => {
@@ -8984,6 +9051,9 @@ function brancherPincement(cadre) {
     requestAnimationFrame(() => {
       prevu = false;
       redessinerBandes();
+      // Les jauges d'import ne sont peintes que sur la partie visible : ce qui
+      // vient d'entrer dans le cadre n'a pas encore la sienne.
+      peindreImports();
       // Ce qui vient d'entrer dans le cadre prépare sa réserve à son tour.
       prechaufferVisible();
     });
@@ -10025,9 +10095,43 @@ function viser(video, temps, plan) {
 // il ne charge même pas. Le seul moyen fiable de lui faire produire l'image
 // sous le curseur est de le lancer une fraction de seconde en sourdine, puis de
 // le remettre en pause.
+/* Aucune lecture avant que l'utilisateur n'ait touché l'application.
+
+   La secousse lance la vidéo en sourdine une fraction de seconde pour en tirer
+   l'image sous le curseur. Sur un ordinateur cela ne se voit pas. Dans une PWA
+   iOS, une vidéo muette et « playsinline » a le droit de démarrer seule : la
+   secousse EST une lecture automatique, elle prend une session de décodage
+   matériel — WebKit n'en accorde qu'une poignée — et sur un montage de trois
+   cent dix-sept plans elle part à l'ouverture, avant le moindre geste.
+
+   Mesuré : un appel à « play() » sur « lecteur-a » au chargement de l'onglet
+   Montage, venu de « viser » → « appliquerCible » → « secouer », sans que
+   personne n'ait appuyé sur quoi que ce soit.
+
+   Un seul geste suffit à lever la garde, et c'est le sens de la règle : on ne
+   démarre rien tant que l'application n'a pas été touchée. Ensuite la secousse
+   reprend son office, parce que c'est elle qui donne l'image d'un plan qu'on
+   vient de viser à la main. */
+let gesteMontage = false;
+/* Et le geste doit porter sur le montage, pas sur l'application.
+
+   Une première version levait la garde au premier geste, quel qu'il soit :
+   toucher l'onglet « Montage » suffisait, et la secousse repartait aussitôt
+   derrière — c'est-à-dire exactement le cas qu'on voulait supprimer. Ce qui
+   autorise à faire bouger le moniteur, c'est d'avoir touché la piste, un bloc
+   ou le transport : là, on demande à voir une image.
+
+   En capture, parce qu'un geste sur un bloc est arrêté par ses propres
+   gestionnaires avant d'atteindre le document. */
+document.addEventListener("pointerdown", (evt) => {
+  if (gesteMontage) return;
+  if (evt.target?.closest?.("#piste, .transport, .clip, #lecture, .poignee")) gesteMontage = true;
+}, { passive: true, capture: true });
+
 function secouer(video) {
   // Jamais pendant une lecture demandée : la secousse la mettrait en pause.
   if (lecture.demande || lecture.secousse || !video || !video.paused || lecture.jouant) return;
+  if (!gesteMontage) return;
   // La secousse déclenche les événements « lecture » et « pause ». Sans ce
   // drapeau, ils passeraient pour une vraie lecture et la position du montage
   // repartirait du fichier.
@@ -13416,9 +13520,29 @@ function peindreImports() {
   const projet = projetActif();
   const rail = $("rail");
   if (!projet || !rail) return;
+  /* Seulement les blocs qu'on voit.
+
+     La boucle passait sur les trois cent dix-sept blocs à chaque rafraîchissement
+     du bandeau — et le bandeau se rafraîchit à chaque événement d'import. Pour
+     chacun, « avancement » et « estLocal » interrogent la file, la réserve et la
+     base : c'est l'évaluation de métadonnées la plus chère de l'application.
+     Profilé sur trois cent dix-sept plans, processeur bridé au niveau d'un
+     iPhone XR : 347 ms, presque tous dépensés pour des blocs hors de l'écran.
+
+     La fenêtre visible se calcule comme celle de la pellicule, en cumulant les
+     largeurs — aucune lecture de mise en page, donc aucun recalcul forcé. Ce
+     qui entre dans le cadre est repeint par le défilement. */
+  const cadre = $("piste");
+  const gaucheVue = cadre ? cadre.scrollLeft - MARGE_BANDE : -Infinity;
+  const droiteVue = cadre ? cadre.scrollLeft + cadre.clientWidth + MARGE_BANDE : Infinity;
+  let x = 0;
   [...rail.children].forEach((bloc, index) => {
     const plan = projet.plans[index];
     if (!plan) return;
+    const large = largeurClip(plan);
+    const gauche = x;
+    x += large;
+    if (gauche + large < gaucheVue || gauche > droiteVue) return;
     const barre = bloc.querySelector(".clip-import");
     const part = avancement(plan);
     if (part === undefined) {
@@ -15635,6 +15759,9 @@ function imageDuRendu(rendu) {
    sans la recevoir en entier — le grenier sert par tranches, un fichier local
    passe par une adresse d'objet. Le reste est commun, et doit l'être : deux
    listes qui se ressemblent ne doivent pas se manipuler autrement. */
+/* Le lecteur ouvert dans l'historique, s'il y en a un. Un seul à la fois. */
+let lecteurHistoire = null;
+
 function carteDeRendu(rendu, { octets, adresse, supprimer }) {
   const carte = document.createElement("div");
   carte.className = "rendu-carte";
@@ -15670,12 +15797,30 @@ function carteDeRendu(rendu, { octets, adresse, supprimer }) {
   /* Le lecteur prend toute la largeur, sous la ligne : une vidéo coincée dans
      une colonne de soixante-douze points ne se regarde pas. */
   let lecteur = null;
+  /* Refermer proprement : une balise retirée du document continue de tenir sa
+     session de décodage tant qu'elle garde sa source. Sur iOS, WebKit n'en
+     accorde qu'une poignée, et deux cartes ouvertes suffisaient à en manquer. */
+  const refermer = () => {
+    if (!lecteur) return;
+    lecteur.pause();
+    lecteur.removeAttribute("src");
+    lecteur.load();
+    lecteur.remove();
+    lecteur = null;
+    vignette.innerHTML = icone("play");
+    if (lecteurHistoire === refermer) lecteurHistoire = null;
+  };
   vignette.addEventListener("click", async () => {
-    if (lecteur) { lecteur.remove(); lecteur = null; vignette.innerHTML = icone("play"); return; }
+    if (lecteur) { refermer(); return; }
+    /* Un seul lecteur ouvert dans toute la liste : celui d'avant se referme.
+       Ils s'empilaient — on ouvrait trois rendus, trois vidéos chargeaient et
+       jouaient en même temps. */
+    lecteurHistoire?.();
     vignette.disabled = true;
     const src = await adresse();
     vignette.disabled = false;
     if (!src) { sous.textContent = "le fichier n'est plus là"; return; }
+    lecteurHistoire = refermer;
     lecteur = document.createElement("video");
     lecteur.className = "rendu-lecteur";
     lecteur.src = src;
@@ -19108,10 +19253,27 @@ async function deposer() {
       headers: { "x-coffre": coffre.code, "content-type": "application/json" },
       body: JSON.stringify({ projets: state.projets, supprimes: state.supprimes }),
     });
-    if (!reponse.ok) throw new Error(String(reponse.status));
+    if (!reponse.ok) {
+      /* Le code HTTP seul n'apprend rien. Le coffre dit pourquoi il refuse —
+         poids, plafond — et c'est cela qu'il faut garder : « 413 » laissait
+         chercher, « 413 — contenu trop lourd (1261 Ko, plafond 4000 Ko) » se
+         règle tout de suite. */
+      const dit = await reponse.text().catch(() => "");
+      let detail = dit.slice(0, 120);
+      try {
+        const corps = JSON.parse(dit);
+        detail = corps.erreur || detail;
+        if (corps.octets) {
+          detail += ` (${Math.round(corps.octets / 1024)} Ko`
+            + (corps.plafond ? `, plafond ${Math.round(corps.plafond / 1024)} Ko` : "") + ")";
+        }
+      } catch { /* le serveur a répondu en texte simple */ }
+      throw new Error(`${reponse.status}${detail ? ` — ${detail}` : ""}`);
+    }
     coffre.dernier = Date.now();
     coffre.etat = "";
     coffre.echecs = 0;
+    document.querySelector(".bandeau-version.coffre")?.remove();
     noterCoffre();
   } catch (erreur) {
     /* Hors ligne, ou serveur muet : le montage reste sur l'appareil et le dépôt
@@ -19123,8 +19285,22 @@ async function deposer() {
     coffre.etat = `dernier envoi refusé (${erreur.message})`;
     coffre.enAttente = true;
     if (coffre.echecs === 3) {
-      avertir("La sauvegarde en ligne ne passe plus — tes montages ne sont que sur cet appareil.",
-        "Sauvegarder dans un fichier", exporterProjets);
+      /* Deux situations très différentes portaient le même bandeau rouge.
+
+         Quand le stockage de l'appareil fonctionne, le montage est intact : la
+         copie en ligne manque, ce qui mérite d'être su, pas d'être crié. Le
+         rouge était réservé à la perte de données, et l'employer ici le vidait
+         de son sens — on finit par ne plus le lire.
+
+         Quand le stockage de l'appareil est plein AUSSI, alors le montage n'est
+         nulle part, et c'est exactement le cas que le rouge doit annoncer. */
+      if (stockagePlein) {
+        avertir(`Ni en ligne ni sur l'appareil : ce montage n'est nulle part (${erreur.message}).`,
+          "Sauvegarder dans un fichier", exporterProjets);
+      } else {
+        signalerCoffre(`Sauvegarde en ligne interrompue : ${erreur.message}.`
+          + " Tes montages restent entiers sur cet appareil.");
+      }
     }
   }
   majPanneauCoffre();

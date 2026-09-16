@@ -20,7 +20,18 @@
 // 0, ou qui forme un mot par accident. Un code se recopie à la main.
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const LONGUEUR = 20;      // 18 caractères tirés au sort + 2 de contrôle
-const POIDS_MAX = 1_000_000;   // un montage n'atteint pas 1 Mo, de loin
+/* Le plafond du dépôt.
+
+   Il valait un mégaoctet, avec en commentaire « un montage n'atteint pas 1 Mo,
+   de loin ». C'était vrai des montages de soixante plans. Mesuré depuis, sur un
+   compte ordinaire : un plan pèse 625 octets, un projet de trois cent dix-sept
+   plans 255 Ko, et le dépôt porte TOUS les projets d'un coup — deux gros et dix
+   petits font 1261 Ko. Le coffre refusait donc par 413, toutes les trente
+   secondes, et l'application affichait « la sauvegarde en ligne ne passe plus ».
+
+   Quatre mégaoctets laissent de la marge sans approcher la limite d'une valeur
+   KV, qui est de vingt-cinq mébioctets. */
+const POIDS_MAX = 4_000_000;
 
 // Somme de contrôle : deux caractères déduits des dix-huit premiers. La même
 // fonction, mot pour mot, existe dans la page — les deux doivent s'accorder.
@@ -103,7 +114,16 @@ export async function coffre(request, url, env) {
      arrière-plan — le moment où l'on risque justement de tout perdre. */
   if (request.method === "PUT" || request.method === "POST") {
     const texte = await request.text();
-    if (texte.length > POIDS_MAX) return new Response("contenu trop lourd", { status: 413 });
+    if (texte.length > POIDS_MAX) {
+      /* Dire le poids et le plafond, pas seulement « trop lourd » : c'est la
+         seule façon de savoir, depuis le téléphone, s'il faut ranger un projet
+         ou si le serveur a un défaut. */
+      return new Response(JSON.stringify({
+        erreur: "contenu trop lourd",
+        octets: texte.length,
+        plafond: POIDS_MAX,
+      }), { status: 413, headers: entetes });
+    }
     let contenu;
     try {
       contenu = JSON.parse(texte);
