@@ -1137,6 +1137,14 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .action-carree.danger { background: linear-gradient(135deg, #C1121F, #7d0c15); }
 /* Un rond qui arrête porte la même couleur qu'un carré qui arrête. */
 .rond.danger { border-color: rgba(193, 18, 31, .55); color: #ff9aa2; }
+/* Un rond armé — la cloche qui veille — se remplit du vert de l'application.
+   Sous sa forme carrée elle s'inversait ; un rond bordé n'a pas de fond à
+   inverser, il en prend un. */
+.rond.on {
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  border-color: var(--vert-fonce);
+  color: #fff;
+}
 .rond.danger:hover, .rond.danger:focus-visible { border-color: #C1121F; color: #fff; background: #C1121F; }
 
 /* La carte d'un rendu : une vignette, ce qu'il est, et ses gestes.
@@ -1983,7 +1991,7 @@ const clignement = () => absence.duree < CLIGNEMENT;
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 20:00";
+const VERSION_PAGE = "2026-09-16 20:11";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4016,7 +4024,7 @@ function editeur(projet) {
      souple les met sur la même horizontale, quoi qu'ils contiennent. */
   const gestesPreparation = document.createElement("span");
   gestesPreparation.className = "preparation-gestes";
-  gestesPreparation.append(boutonsTransfert(), boutonVeille());
+  gestesPreparation.append(boutonsTransfert());
   preparation.append(preparationDit, gestesPreparation);
 
   ecran.append(moniteur, ...lecteurs, vide, preparation);
@@ -8588,6 +8596,7 @@ function transport() {
   const droite = document.createElement("span");
   droite.className = "transport-cote fin";
   droite.append(
+    boutonVeille(),
     rond("annuler", "Annuler la dernière modification", () => parcourirHistoire(-1), "btn-annuler"),
     rond("retablir", "Rétablir la modification annulée", () => parcourirHistoire(1), "btn-retablir"),
   );
@@ -13690,11 +13699,21 @@ function majBoutonArret() {
   bouton.hidden = !travail && !prepare;
 }
 
+/* La cloche a quitté le bandeau pour le transport.
+
+   Le bandeau vit PAR-DESSUS l'image : tout ce qu'on y pose mange ce qu'on est
+   venu regarder. « Me prévenir quand c'est prêt » n'est pas une commande de
+   l'aperçu, c'est une commande de l'application — elle a sa place en dessous,
+   avec le plein écran, l'arrêt et les deux retours en arrière.
+
+   Elle prend donc la forme d'un rond, comme ses voisines, et non plus celle
+   d'un carré vert. */
 function boutonVeille() {
   const bouton = document.createElement("button");
   bouton.type = "button";
   bouton.id = "btn-veille";
-  bouton.className = "action-carree";
+  bouton.className = "rond";
+  bouton.hidden = true;
   bouton.addEventListener("click", basculerVeille);
   return bouton;
 }
@@ -13706,6 +13725,13 @@ function majBoutonVeille() {
   direCarre(bouton, sentinelle.voulue
     ? "Je préviens quand c'est prêt — garde le téléphone allumé"
     : "Me prévenir quand c'est prêt", "cloche");
+  /* Se faire prévenir n'a de sens que pendant une attente. Hors de là, le
+     bouton n'aurait rien à annoncer — et une commande qui ne sert à rien est
+     une commande qu'on lit quand même. Elle suit donc l'arrêt : présente tant
+     qu'il y a du travail, absente sinon. */
+  const travail = fileImport.length || arretsImport.size || attentesImport.size;
+  const prepare = gesteMontage && (fabrique.fil || fileExtraits.length || extraitsEnCours.size);
+  bouton.hidden = !travail && !prepare && !sentinelle.voulue;
 }
 
 async function basculerVeille() {
@@ -14061,8 +14087,11 @@ function positionCourante() {
 
 function majTransport() {
   const projet = projetActif();
-  // L'arrêt suit le travail : il apparaît quand il y en a, disparaît sinon.
+  // L'arrêt et la cloche suivent le travail : ils apparaissent quand il y en a,
+  // disparaissent sinon. Et c'est ici que la cloche reçoit son dessin, puisque
+  // c'est le transport qui la porte désormais.
   majBoutonArret();
+  majBoutonVeille();
   if (!enPleinEcran()) retirerTransportPlein();
   if (!projet || !$("timecode")) return;
   const position = positionCourante();
