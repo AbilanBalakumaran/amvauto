@@ -1946,7 +1946,7 @@ const $ = (id) => document.getElementById(id);
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 08:16";
+const VERSION_PAGE = "2026-09-16 08:47";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3038,7 +3038,7 @@ function mesurerSuivant() {
     clearTimeout(abandon);
     if (Number.isFinite(sonde.duration) && sonde.duration > 0) {
       retenirDuree(plan, Math.round(sonde.duration * 100) / 100);
-      sauver();
+      sauverBientot();
       if (!$("vue-projet").hidden && !lecture.jouant) {
         // Les durées changent la longueur du montage : sans réajuster, la piste
         // garde l'échelle calculée sur des durées encore inconnues et le
@@ -3172,6 +3172,98 @@ const dureeSource = (plan) => {
   const adresse = plan && mediaDe(plan);
   return (adresse && dureesConnues.get(adresse)) || DUREE_DEFAUT;
 };
+
+/* La même chose, mais qui sait dire « je ne sais pas ».
+
+   « dureeSource » répond deux secondes quand elle ignore. Tout test de la forme
+   « dureeSource(plan) >= PLAN_MINI » — un sixième de seconde — est donc toujours
+   vrai, et les gardes qui s'appuyaient dessus ne gardaient rien. Mesuré au
+   moment où l'automatisation posait son premier montage : aucun des
+   quatre-vingt-onze blocs n'avait de durée lue, et tous les quatre-vingt-onze
+   finissaient avant 2,01 s — taillés dans une source imaginaire de deux
+   secondes, cinquante-quatre d'entre eux à l'image zéro du fichier. */
+const dureeConnue = (plan) => {
+  if (plan?.duree > 0) return plan.duree;
+  const adresse = plan && mediaDe(plan);
+  return (adresse && dureesConnues.get(adresse)) || null;
+};
+
+/* ---- La durée se lit dans l'en-tête, pas dans le fichier entier ----------
+
+   Une sonde « video » ouvre une session de décodage, ne tourne qu'une à la fois
+   et attend jusqu'à douze secondes par plan : quatre-vingt-huit rushs, c'est un
+   quart d'heure dans le meilleur des cas. Le « moov » d'un MP4 tient presque
+   toujours dans ses premiers cent vingt-huit kilo-octets ; une requête par
+   plage suffit, six à la fois, sans toucher au décodeur ni à la mémoire vidéo. */
+const TETE_DUREE = 128 * 1024;
+
+/* mvhd : version et drapeaux sur quatre octets, puis création, modification,
+   échelle de temps et durée — sur quatre octets chacun en version 0, les deux
+   dates sur huit en version 1. La durée du film est le quotient des deux
+   derniers champs. */
+function dureeDuMvhd(octets) {
+  for (let i = 0; i + 36 < octets.length; i += 1) {
+    if (octets[i] !== 0x6d || octets[i + 1] !== 0x76
+      || octets[i + 2] !== 0x68 || octets[i + 3] !== 0x64) continue;
+    try {
+      const vue = new DataView(octets.buffer, octets.byteOffset + i + 4);
+      const version = vue.getUint8(0);
+      const echelle = version === 1 ? vue.getUint32(20) : vue.getUint32(12);
+      const duree = version === 1 ? Number(vue.getBigUint64(24)) : vue.getUint32(16);
+      if (echelle > 0 && duree > 0) return duree / echelle;
+    } catch { /* la boîte est tronquée : on continue de chercher */ }
+  }
+  return 0;
+}
+
+async function dureeParEntete(plan) {
+  const deja = dureeConnue(plan);
+  if (deja) return deja;
+  const adresse = mediaDe(plan);
+  if (!adresse || plan.youtube) return null;
+  try {
+    const reponse = await fetch(adresse, { headers: { Range: `bytes=0-${TETE_DUREE - 1}` } });
+    if (reponse.ok) {
+      const secondes = dureeDuMvhd(new Uint8Array(await reponse.arrayBuffer()));
+      if (secondes > 0.2) {
+        retenirDuree(plan, Math.round(secondes * 100) / 100);
+        sauverBientot();
+        return secondes;
+      }
+    }
+  } catch { /* hors ligne, ou le serveur ne sert pas de plages */ }
+  /* Repli sur la sonde d'avant, pour les seuls plans que l'en-tête n'a pas su
+     lire — quelques-uns, pas quatre-vingt-huit. */
+  mesurerDuree(plan);
+  return null;
+}
+
+/* Six de front : au-delà, un lien mobile met les requêtes en file et l'on
+   n'avance pas plus vite, on remplit seulement la mémoire d'attentes. */
+async function mesurerEnTetes(plans, largeur = 6, aChaque = null) {
+  const file = [...plans];
+  let faits = 0;
+  await Promise.all(Array.from({ length: Math.min(largeur, file.length) }, async () => {
+    while (file.length && !automate.arret) {
+      await dureeParEntete(file.shift());
+      faits += 1;
+      aChaque?.(faits, plans.length);
+    }
+  }));
+  return plans.filter((plan) => dureeConnue(plan)).length;
+}
+
+/* Une rafale de mesures ne mérite qu'une écriture.
+
+   Mesuré dans la demi-minute qui suit un clic sur « Automatiser l'AMV » : deux
+   cent soixante-treize sérialisations complètes du projet, quatre-vingt-dix
+   kilo-octets chacune, vingt-cinq mégaoctets écrits en tout — et sous Safari
+   chaque écriture dans le stockage local est synchrone. */
+let sauvegardeDue = 0;
+function sauverBientot() {
+  if (sauvegardeDue) return;
+  sauvegardeDue = setTimeout(() => { sauvegardeDue = 0; sauver(); }, 400);
+}
 
 /* Une mesure vaut pour tous les blocs qui viennent du même fichier, et pour le
    vivier : un rush coupé en cinq morceaux n'est mesuré qu'une fois. */
@@ -16852,6 +16944,9 @@ function morceauxDe(plan, tenue, graine = 0) {
   return plan.__morceaux;
 }
 
+/* Ce qu'on laisse voir avant l'impact : un souffle, pas une approche. */
+const ELAN_AVANT_PIC = 0.18;
+
 function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
   const source = dureeSource(plan);
   if (!(source > 0) || source < PLAN_MINI) return null;
@@ -16871,7 +16966,14 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
   const pic = plan.lecture?.pic;
   if (viserLePic && typeof pic === "number" && pic > 0 && pic < source) {
     plan.__picVu = true;
-    const entree = Math.max(0, Math.min(pic - tenue / 2, source - tenue));
+    /* Le pic tombait au MILIEU du bloc. Or le bloc commence sur un temps : à
+       134 BPM et huit temps par plan, le milieu arrive 1,8 s après le kick,
+       soit quatre temps de retard. C'est très exactement le décalage qu'on
+       entend entre la frappe et le choc à l'image.
+
+       Le pic doit tomber SUR la transitoire, donc au début du bloc — avec juste
+       assez d'élan devant pour que l'œil voie arriver le coup. */
+    const entree = Math.max(0, Math.min(pic - ELAN_AVANT_PIC, source - tenue));
     /* Le pic est l'instant qu'on est venu chercher : on ne le déplace que si
        une image-clé tombe assez près pour que l'œil n'y voie rien. */
     const proches = clesUtiles(plan, tenue);
@@ -17202,15 +17304,28 @@ async function chercherPartout(voulues) {
   return melange;
 }
 
-async function chercherRushs(animes, secondes, cases = 0) {
+async function chercherRushs(animes, secondes, cases = 0, elargir = false) {
   /* Autant de sources que de cases, quand on les connaît : c'est la seule façon
      qu'une scène n'apparaisse jamais deux fois. À défaut, une par tranche de
      cinq secondes, ce qui suffisait tant qu'on acceptait les redites. */
   const voulues = Math.max(12, cases || Math.ceil(secondes / 5));
-  // Aucun animé : c'est l'AMV mixte au sens propre — on cherche partout.
+  /* Aucun animé : c'est l'AMV mixte au sens propre — on cherche partout, et
+     l'on insiste tant qu'on n'a pas le compte. Chaque scène ne servant qu'une
+     fois, un vivier trop court laisse de la musique sans image : mieux vaut
+     demander deux fois qu'une. On s'arrête dès que la source est à sec — elle
+     rend alors moins que ce qu'on lui demande, et insister ne donnerait rien. */
   if (!animes.length) {
-    const partout = await chercherPartout(voulues);
-    return [...new Map(partout.map((r) => [String(r.id), r])).values()].slice(0, RUSHS_MAX);
+    const pris = new Map();
+    for (let tour = 0; tour < 3 && pris.size < voulues; tour += 1) {
+      const large = voulues * (tour + 1) * 2;
+      const lot = await chercherPartout(large);
+      for (const rush of lot) {
+        if (pris.size >= RUSHS_MAX) break;
+        if (!pris.has(String(rush.id))) pris.set(String(rush.id), rush);
+      }
+      if (lot.length < large) break;
+    }
+    return [...pris.values()].slice(0, RUSHS_MAX);
   }
   const parAnime = Math.ceil(voulues / Math.max(1, animes.length));
   const trouves = [];
@@ -17227,6 +17342,25 @@ async function chercherRushs(animes, secondes, cases = 0) {
   }
   // Un même plan peut sortir de deux recherches : on ne le garde qu'une fois.
   const uniques = [...new Map(trouves.map((r) => [String(r.id), r])).values()];
+
+  /* Le complément, en mixte seulement.
+
+     Les séries nommées ne tiennent pas toujours le compte : une série avec
+     quarante scènes taggées ne peut pas en fournir quatre-vingt-sept, et depuis
+     que l'unicité est une règle dure, ce qui manque au vivier manque à l'écran.
+     En mixte, aller chercher ailleurs est dans l'esprit du mode. En « un seul
+     animé », ce serait dénaturer le projet : on n'y touche pas, et l'on dit
+     seulement ce qui reste sans image. */
+  if (elargir && uniques.length < voulues) {
+    const connus = new Set(uniques.map((r) => String(r.id)));
+    const appoint = await chercherPartout((voulues - uniques.length) * 2);
+    for (const rush of appoint) {
+      if (uniques.length >= RUSHS_MAX) break;
+      if (connus.has(String(rush.id))) continue;
+      connus.add(String(rush.id));
+      uniques.push(rush);
+    }
+  }
   return uniques.slice(0, RUSHS_MAX);
 }
 
@@ -18068,6 +18202,22 @@ function phraseCouverture(projet) {
     + " Élargis la recherche à un autre animé, ou raccourcis la piste.";
 }
 
+/* Les octets viennent après le montage, jamais avant, et sous forme d'extraits.
+
+   L'extrait existe déjà et pèse dix fois moins qu'un rush — mais il lui faut des
+   bornes, donc un montage. C'est toute l'inversion : on montait après avoir
+   téléchargé, on télécharge maintenant après avoir monté. Et pas tout : les
+   premières coupes suffisent à lancer l'écoute, la suite se demande en avançant.
+
+   « planifierExtrait » fait déjà le tri — ce qui est déjà là, ce qui est déjà en
+   file, ce que le serveur a refusé — et rend la main aussitôt. */
+function demanderLesExtraits(projet, combien = 12) {
+  for (const plan of (projet?.plans || []).slice(0, combien)) {
+    if (plan.sortie == null || !mediaDe(plan)) continue;
+    planifierExtrait(plan);
+  }
+}
+
 const automate = { encours: false, arret: false };
 
 function arreterAutomate() { automate.arret = true; }
@@ -18112,9 +18262,24 @@ async function automatiserAmv(bouton) {
   projet.__graine = graine;
   const poser = () => {
     /* Le socle est le vivier des sources, une par rush — pas un par morceau
-       déjà posé, sinon un montage refait partirait de ses propres coupes. */
-    if (!socle) socle = [...new Map(projet.plans.map((plan) => [String(idRush(plan)), plan])).values()];
-    const montage = construireMontage(projet, { ordre: amv.ordre, depuis: socle, graine });
+       déjà posé, sinon un montage refait partirait de ses propres coupes.
+
+       Et le vivier est « projet.rushs », pas « projet.plans » : dès le premier
+       montage posé, « plans » ne contient plus que les coupes retenues. Le
+       reconstruire depuis là, c'est repartir de ses propres coupes — mesuré, le
+       second montage restait bloqué sur les douze sources du premier alors que
+       le vivier en comptait quatre-vingt-huit, et l'AMV s'arrêtait à 48 s. */
+    if (!socle) {
+      const vivier = projet.rushs?.length ? projet.rushs : projet.plans;
+      socle = [...new Map(vivier.map((plan) => [String(idRush(plan)), plan])).values()];
+    }
+    /* Et l'on ne monte que sur des durées LUES. Un rush dont on ignore la
+       longueur n'est pas un candidat, c'est une supposition : le prendre
+       revenait à tailler chaque coupe dans une source imaginaire de deux
+       secondes. */
+    const surs = socle.filter((plan) => dureeConnue(plan));
+    if (!surs.length) return 0;
+    const montage = construireMontage(projet, { ordre: amv.ordre, depuis: surs, graine });
     if (!montage) return 0;
     projet.plans = montage;
     sauver();
@@ -18143,13 +18308,21 @@ async function automatiserAmv(bouton) {
 
     {
       dire("Recherche des plans…");
-      const trouves = await chercherRushs(animes, projet.rythme.duree || 120, casesAttendues(projet));
+      /* En mixte, les animés nommés sont une préférence, pas une clôture : si
+         elles ne fournissent pas de quoi couvrir la musique, on complète
+         ailleurs. « Un seul animé » garde son périmètre — c'est ce qu'il veut
+         dire — et se contente de dire ce qui manque. */
+      const trouves = await chercherRushs(animes, projet.rythme.duree || 120,
+        casesAttendues(projet), amv.portee !== "unique");
       const connus = new Set(projet.plans.map((p) => String(idRush(p))));
+      /* Aucun rush n'est rapatrié ici. C'était quatre-vingt-huit fichiers de
+         dix-huit mégaoctets — un gigaoctet et demi — demandés avant même qu'un
+         montage existe, pour des coupes d'une seconde et demie. Mesuré : cinq
+         cent soixante-dix-huit requêtes média dans les trente secondes qui
+         suivaient la fin de la fonction. Les octets viendront après le montage,
+         et sous forme d'extraits, qui pèsent dix fois moins. */
       trouves.filter((r) => !connus.has(String(r.id))).forEach((rush) => {
-        const plan = { ...rush, duree: null, entree: 0, sortie: null };
-        projet.plans.push(plan);
-        preparerLocal(plan);
-        mesurerDuree(plan);
+        projet.plans.push({ ...rush, duree: null, entree: 0, sortie: null });
       });
       /* Le vivier complet est mis de côté avant que le montage ne remplace la
          piste : sans cela, les scènes non retenues seraient perdues, et les
@@ -18165,40 +18338,43 @@ async function automatiserAmv(bouton) {
       return;
     }
 
-    /* Les durées se lisent dans les fichiers, et rien ne peut être découpé
-       avant. On n'attend pas qu'elles soient toutes là : huit suffisent pour un
-       premier montage, les autres arriveront pour le second. */
-    dire("Mesure des plans…");
-    for (let attente = 0; attente < 30 && !automate.arret; attente += 1) {
-      const prets = projet.plans.filter((plan) => dureeSource(plan) >= PLAN_MINI).length;
-      if (prets >= Math.min(projet.plans.length, 8)) break;
-      await new Promise((suite) => setTimeout(suite, 300));
-    }
+    /* Assez de durées pour monter, et pas une de plus.
+
+       Ces deux étapes étaient deux boucles d'attente qui n'attendaient rien :
+       leur condition — « dureeSource(plan) >= PLAN_MINI » — était toujours vraie,
+       puisque la durée de repli vaut deux secondes et le minimum un sixième. Le
+       montage se posait donc sur zéro durée lue, et l'automatisation rendait la
+       main en soixante-quatorze millisecondes avec quatre-vingt-onze coupes
+       taillées dans du vide.
+
+       Une lecture d'en-tête coûte cent vingt-huit kilo-octets. Douze sources,
+       c'est un mégaoctet et demi avant la première note. */
+    dire("Lecture des en-têtes…");
+    const tete = (projet.rushs || projet.plans).slice(0, 12);
+    await mesurerEnTetes(tete, 6, (n, total) => dire(`Lecture des en-têtes… ${n}/${total}`));
     if (automate.arret) return;
 
     const premier = poser();
     if (!premier) {
-      alert("Rien à monter : aucune durée n'a pu être mesurée.");
+      alert("Aucune durée n'a pu être lue : le montage ne se pose pas sur des suppositions.\n\nVérifie la connexion, puis relance.");
       return;
     }
+    /* Le montage existe : on peut enfin demander les octets — et seulement ceux
+       des premières coupes, sous forme d'extraits. */
+    demanderLesExtraits(projet, 12);
     dire(`${premier} coupes posées. Tu peux déjà écouter.` +
       (amv.lire ? "\nL'IA regarde maintenant les plans pour affiner — « Arrêter » garde ce montage-ci." : ""));
 
-    /* Le premier montage est bâti sur les huit durées déjà connues — c'est ce
-       qui le rend immédiat. Mais les autres arrivent dans la seconde qui suit,
-       et un plan dont la durée est inconnue est écarté du choix : mesuré sur
-       vingt-quatre rushs, le montage n'en employait que seize et répétait des
-       scènes alors qu'il en restait huit inutilisées. On attend donc le reste,
-       puis on repose. Avec la lecture par l'IA, cette seconde passe existe déjà
-       plus loin ; sans elle, il n'y en avait aucune. */
-    for (let attente = 0; attente < 40 && !automate.arret; attente += 1) {
-      const manquants = projet.plans.filter((plan) => dureeSource(plan) < PLAN_MINI).length;
-      if (!manquants) break;
-      dire(`${premier} coupes posées. Mesure des ${manquants} plans restants…`);
-      await new Promise((suite) => setTimeout(suite, 300));
+    /* Le reste des durées, en fond, pendant qu'on écoute le premier montage. */
+    const reste = (projet.rushs || []).filter((plan) => !dureeConnue(plan));
+    if (reste.length) {
+      await mesurerEnTetes(reste, 6, (n, total) =>
+        dire(`${premier} coupes posées — lecture des ${total - n} en-têtes restants…`));
+      if (automate.arret) return;
+      socle = null;                          // le vivier s'est élargi
     }
-    if (automate.arret) return;
     const complet = poser();
+    demanderLesExtraits(projet, 24);
     if (complet && !amv.lire) {
       const sources = new Set(projetActif()?.plans.map((x) => String(idRush(x)))).size;
       dire(`${complet} coupes, ${sources} scènes, aucune deux fois.`
