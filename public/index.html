@@ -814,7 +814,10 @@ main {
 
 /* --- le tunnel : cinq blocs à la suite ---------------------------------
    Une seule colonne, chaque bloc numéroté. On descend, on ne navigue pas. */
-.tunnel { padding: var(--e4); display: flex; flex-direction: column; gap: var(--e4); }
+/* Aucune gouttière propre : « main » en pose déjà seize points de chaque côté.
+   En ajouter seize de plus rendait ces pages plus étroites de trente-deux
+   points que la page Infos — mesuré, 350 contre 382 sur un écran de 414. */
+.tunnel { display: flex; flex-direction: column; gap: var(--e4); }
 .tunnel-bloc {
   display: flex; flex-direction: column; gap: 12px;
   padding: var(--e4);
@@ -884,7 +887,7 @@ main {
 }
 
 /* --- la veille : ce qui monte ------------------------------------------ */
-.veille { padding: var(--e4); display: flex; flex-direction: column; gap: var(--e3); }
+.veille { display: flex; flex-direction: column; gap: var(--e3); }
 .veille-tete { display: flex; flex-direction: column; gap: 4px; }
 .veille-liste { display: flex; flex-direction: column; gap: 8px; }
 .veille-carte {
@@ -2105,7 +2108,7 @@ const clignement = () => absence.duree < CLIGNEMENT;
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 07:16";
+const VERSION_PAGE = "2026-09-20 07:28";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4533,7 +4536,7 @@ function rendreHistoire() {
      et l'on voit celui qu'on cherche. */
   const bascule = document.createElement("nav");
   bascule.className = "reglages-nav";
-  bascule.style.padding = "var(--e4) var(--e4) 0";
+  bascule.style.padding = "0 0 var(--e3)";
   const faces = [["rendus", "Rendus"], ["projets", "Montages"]];
   for (const [quoi, dit] of faces) {
     const bouton = document.createElement("button");
@@ -4551,13 +4554,13 @@ function rendreHistoire() {
 
   const rendus = document.createElement("div");
   rendus.id = "histoire-rendus";
-  rendus.style.padding = "0 var(--e4)";
+  rendus.style.padding = "0";
   rendus.hidden = histoireFace !== "rendus";
   morceaux.push(rendus);
 
   const titre = document.createElement("div");
   titre.className = "lecteur-titre";
-  titre.style.padding = "var(--e4) var(--e4) 0";
+  titre.style.padding = "var(--e3) 0 0";
   titre.textContent = `Tous les montages (${tous.length})`;
   titre.hidden = histoireFace !== "projets";
   morceaux.push(titre);
