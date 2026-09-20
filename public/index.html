@@ -2137,7 +2137,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 09:35";
+const VERSION_PAGE = "2026-09-20 10:33";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3465,10 +3465,24 @@ const dureeConnue = (plan) => {
 
    Une sonde « video » ouvre une session de décodage, ne tourne qu'une à la fois
    et attend jusqu'à douze secondes par plan : quatre-vingt-huit rushs, c'est un
-   quart d'heure dans le meilleur des cas. Le « moov » d'un MP4 tient presque
-   toujours dans ses premiers cent vingt-huit kilo-octets ; une requête par
-   plage suffit, six à la fois, sans toucher au décodeur ni à la mémoire vidéo. */
-const TETE_DUREE = 128 * 1024;
+   quart d'heure dans le meilleur des cas. Une requête par plage suffit, six à la
+   fois, sans toucher au décodeur ni à la mémoire vidéo.
+
+   « Le moov tient dans les premiers cent vingt-huit kilo-octets » : c'était
+   faux, et cela coûtait le montage. Mesuré sur vingt rushs de cinq séries —
+   Chainsaw Man, Frieren, One Piece, L'Attaque des Titans, Naruto : treize ont
+   leur « moov » à la FIN du fichier, et aucun de ces treize n'avait de durée
+   lisible. Sur Chainsaw Man, dix sur dix. Sans durée, une scène est écartée du
+   montage ; quand toutes le sont, il ne reste que ce qui traînait déjà dans le
+   projet — c'est-à-dire l'animé d'avant.
+
+   On lit donc les deux bouts, dans l'ordre le moins coûteux. Une tête de seize
+   kilo-octets suffit aux fichiers « faststart » (leur mvhd est à l'octet 44) ;
+   sinon une queue de soixante-quatre, où le mvhd des treize autres se trouvait
+   entre 1,8 et 14,7 kilo-octets de la fin. Quatre-vingts kilo-octets au pire,
+   contre cent vingt-huit avant — et une durée au lieu de rien. */
+const TETE_DUREE = 16 * 1024;
+const QUEUE_DUREE = 64 * 1024;
 
 /* mvhd : version et drapeaux sur quatre octets, puis création, modification,
    échelle de temps et durée — sur quatre octets chacun en version 0, les deux
@@ -3494,17 +3508,24 @@ async function dureeParEntete(plan) {
   if (deja) return deja;
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return null;
-  try {
-    const reponse = await fetch(adresse, { headers: { Range: `bytes=0-${TETE_DUREE - 1}` } });
-    if (reponse.ok) {
+  for (const plage of [`bytes=0-${TETE_DUREE - 1}`, `bytes=-${QUEUE_DUREE}`]) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const reponse = await fetch(adresse, { headers: { Range: plage } });
+      if (!reponse.ok) continue;
+      /* Un serveur qui ignore « Range » rend le fichier entier : dix mégaoctets
+         pour lire quatre octets, et sur un forfait mobile. On ne le lit pas. */
+      const poids = Number(reponse.headers.get("content-length")) || 0;
+      if (reponse.status !== 206 && poids > 2_000_000) continue;
+      // eslint-disable-next-line no-await-in-loop
       const secondes = dureeDuMvhd(new Uint8Array(await reponse.arrayBuffer()));
       if (secondes > 0.2) {
         retenirDuree(plan, Math.round(secondes * 100) / 100);
         sauverBientot();
         return secondes;
       }
-    }
-  } catch { /* hors ligne, ou le serveur ne sert pas de plages */ }
+    } catch { /* hors ligne, ou le serveur ne sert pas de plages */ }
+  }
   /* Repli sur la sonde d'avant, pour les seuls plans que l'en-tête n'a pas su
      lire — quelques-uns, pas quatre-vingt-huit. */
   mesurerDuree(plan);
@@ -4258,14 +4279,30 @@ function blocAnime() {
     propositions.className = "suggest tunnel-suggest";
     propositions.hidden = true;
 
+    /* Dire tout de suite ce que le site a reconnu.
+
+       On tapait un titre et rien ne répondait : la liste des propositions ne
+       s'ouvre que si l'on regarde, et l'on partait générer sans savoir si
+       l'animé avait été compris. Une ligne sous le champ suffit — et quand rien
+       n'est reconnu, elle le dit avant d'avoir perdu trois minutes. */
+    const verdict = document.createElement("p");
+    verdict.className = "tunnel-dit";
+    verdict.hidden = true;
+
     let attente = null;
     const proposer = async () => {
       const cherche = champ.value.trim();
-      if (cherche.length < 2) { propositions.hidden = true; return; }
+      if (cherche.length < 2) { propositions.hidden = true; verdict.hidden = true; return; }
       try {
         const reponse = await fetch(`/api/suggest?q=${encodeURIComponent(cherche)}`);
         const { series } = await reponse.json();
         const trouves = (series || []).slice(0, 6);
+        verdict.hidden = false;
+        verdict.textContent = trouves.length
+          ? `Sakugabooru reconnaît : ${trouves[0].display}`
+            + (trouves.length > 1 ? ` (${trouves.length - 1} autre${trouves.length > 2 ? "s" : ""} possible${trouves.length > 2 ? "s" : ""})` : "")
+          : `Sakugabooru ne connaît pas « ${cherche} » : essaie le titre original,`
+            + " ou passe en animé mixte.";
         propositions.replaceChildren(...trouves.map((serie) => {
           const ligne = document.createElement("button");
           ligne.type = "button";
@@ -4279,7 +4316,7 @@ function blocAnime() {
           return ligne;
         }));
         propositions.hidden = !trouves.length;
-      } catch { propositions.hidden = true; }
+      } catch { propositions.hidden = true; verdict.hidden = true; }
     };
 
     champ.addEventListener("input", () => {
@@ -4288,7 +4325,9 @@ function blocAnime() {
       clearTimeout(attente);
       attente = setTimeout(proposer, 250);
     });
-    boite.append(champ, propositions);
+    boite.append(champ, propositions, verdict);
+    // Le champ garde son texte d'un redessin à l'autre : on redit ce qu'il vaut.
+    if (champ.value.trim().length >= 2) proposer();
   }
   return boite;
 }
@@ -4432,6 +4471,29 @@ function rendreCreer() {
    Rien de neuf sous le capot : c'est la même recherche, la même lecture des
    en-têtes et le même constructeur que l'automatisation. Ce qui change est
    l'entrée — ce ne sont plus des réglages épars, c'est une trame d'émotions. */
+/* Le projet du tunnel : un par musique, et jamais celui de quelqu'un d'autre.
+
+   Il prenait « le projet actif ». Sur un téléphone qui a déjà servi, c'est un
+   ancien montage — avec ses cent plans d'un autre animé. Le tunnel le renommait,
+   ajoutait ses scènes aux siennes, et construisait le montage sur le tout : on
+   demandait Frieren et l'on obtenait un mélange de ce qui traînait. C'est ce que
+   « il ne détecte pas l'animé que je rentre » voulait dire — l'animé était bien
+   trouvé, mais il n'était pas seul dans la pioche.
+
+   Une musique, un projet. Le régénérer remplace son montage ; un autre morceau
+   ouvre un autre projet ; les montages d'avant ne sont jamais touchés. */
+function projetDuTunnel() {
+  const musique = tunnel.fichier?.name || "";
+  const sien = state.projets.find((projet) => projet.tunnel && projet.audio?.nom === musique);
+  if (sien) {
+    state.actif = sien.id;
+    return sien;
+  }
+  const neuf = creerProjet(titreDuTunnel());
+  neuf.tunnel = true;
+  return neuf;
+}
+
 async function genererLAmv() {
   if (tunnel.occupe || !tunnel.rythme) return;
   if (tunnel.portee === "unique" && !tunnel.animes.length) return;
@@ -4443,7 +4505,7 @@ async function genererLAmv() {
   try {
     /* Le projet est le support du montage : il porte la musique, la trame et
        les plans. Il reste invisible dans le tunnel — on ne le montre plus. */
-    const projet = projetActif() || creerProjet(titreDuTunnel());
+    const projet = projetDuTunnel();
     projet.nom = titreDuTunnel();
     /* Chaque passage prend l'énergie de son émotion : c'est par là que le choix
        de l'étiquette atteint le choix des scènes. */
@@ -4467,36 +4529,51 @@ async function genererLAmv() {
       .catch(() => {});
 
     dire("Recherche des scènes…");
+    const journal = { resolus: [] };
     const trouves = await chercherRushs(tunnel.animes, tunnel.rythme.duree,
-      casesAttendues(projet), tunnel.portee !== "unique");
+      casesAttendues(projet), tunnel.portee !== "unique", journal);
     if (!trouves.length) {
-      dire("Aucune scène trouvée. Vérifie l'orthographe, ou passe en animé mixte.");
+      dire(`${phraseResolution(journal)}Aucune scène trouvée.`
+        + " Vérifie l'orthographe, ou passe en animé mixte.");
       return;
     }
-    const connus = new Set(projet.plans.map((x) => String(idRush(x))));
-    projet.plans.push(...trouves
-      .filter((r) => !connus.has(String(r.id)))
-      .map((rush) => ({ ...rush, duree: null, entree: 0, sortie: null })));
-    projet.rushs = [...new Map(projet.plans.map((plan) => [String(idRush(plan)),
-      { ...plan, id: idRush(plan), rush: undefined, entree: 0, sortie: null }])).values()];
+    /* Le titre porte le nom du site, pas la frappe : « chainsaw man » devient
+       « Chainsaw Man », et c'est lui qui partira sur YouTube. */
+    const reconnus = journal.resolus.filter((x) => x.trouve).map((x) => x.trouve);
+    if (tunnel.portee === "unique" && reconnus.length) {
+      tunnel.animes = [reconnus[0]];
+      projet.amv.animes = [...tunnel.animes];
+      projet.nom = titreDuTunnel();
+    }
+    /* La pioche est remplacée, pas complétée : ce que le tunnel demande
+       maintenant est tout ce qu'il doit y avoir dedans. */
+    projet.plans = [];
+    projet.rushs = [...new Map(trouves.map((rush) => [String(idRush(rush)),
+      { ...rush, id: idRush(rush), rush: undefined, duree: null, entree: 0, sortie: null }])).values()];
 
-    dire(`${projet.rushs.length} scènes trouvées. Lecture de leurs en-têtes…`);
+    dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
+      + " Lecture de leurs en-têtes…");
     await mesurerEnTetes(projet.rushs, 6, (n, total) =>
-      dire(`${projet.rushs.length} scènes trouvées. Lecture des en-têtes… ${n}/${total}`));
+      dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
+        + ` Lecture des en-têtes… ${n}/${total}`));
 
     const surs = projet.rushs.filter((plan) => dureeConnue(plan));
     if (!surs.length) {
-      dire("Aucune durée n'a pu être lue : le montage ne se pose pas sur des suppositions.");
+      dire(`${phraseResolution(journal)}Aucune durée n'a pu être lue :`
+        + " le montage ne se pose pas sur des suppositions.");
       return;
     }
     const montage = construireMontage(projet, { ordre: "libre", depuis: surs, graine: nouvelleGraine() });
-    if (!montage?.length) { dire("Le montage n'a pas pu être construit."); return; }
+    if (!montage?.length) {
+      dire(`${phraseResolution(journal)}Le montage n'a pas pu être construit.`);
+      return;
+    }
     projet.plans = montage;
     tunnel.montage = montage;
     sauver();
     enregistrer(projet);
-    dire(`${montage.length} coupes sur ${surs.length} scènes, aucune deux fois.`
-      + phraseCouverture(projet));
+    dire(`${phraseResolution(journal)}${montage.length} coupes sur ${surs.length} scènes,`
+      + ` aucune deux fois.${phraseCouverture(projet)}`);
   } catch (erreur) {
     dire(`Génération interrompue : ${erreur.message}`);
   } finally {
@@ -5502,6 +5579,10 @@ window.__banc = {
   clignement: () => clignement(), absence: () => absence,
   retirerLaPastille: () => retirerLaPastille(), marquerPastille: (n) => marquerPastille(n),
   ecoute: () => ecoute, arreterEcoute: () => arreterEcoute(),
+  chercherRushs: (...a) => chercherRushs(...a), phraseResolution: (j) => phraseResolution(j),
+  mesurerEnTetes: (...a) => mesurerEnTetes(...a), dureeParEntete: (x) => dureeParEntete(x),
+  dureeConnue: (x) => dureeConnue(x), dureeDuMvhd: (o) => dureeDuMvhd(o),
+  projetDuTunnel: () => projetDuTunnel(), genererLAmv: () => genererLAmv(), etat: () => state,
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
   automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
@@ -18747,7 +18828,22 @@ async function chercherPartout(voulues) {
   return melange;
 }
 
-async function chercherRushs(animes, secondes, cases = 0, elargir = false) {
+/* Ce que le site a reconnu, en une phrase.
+
+   « L'outil ne détecte pas l'animé que je rentre » : il le détectait, mais rien
+   ne le disait. On écrit donc ce qu'on a demandé, ce qui a répondu, et combien
+   de scènes cela représente — c'est la seule façon de voir qu'une faute de
+   frappe est partie chercher autre chose. */
+function phraseResolution(journal) {
+  const dits = (journal?.resolus || []).map((x) => {
+    if (!x.trouve) return `« ${x.demande} » est introuvable sur Sakugabooru`;
+    if (x.trouve.toLowerCase() !== x.demande.toLowerCase()) return `« ${x.demande} » → ${x.trouve}`;
+    return `${x.trouve} · ${x.total} scènes au catalogue`;
+  });
+  return dits.length ? `${dits.join(" · ")}. ` : "";
+}
+
+async function chercherRushs(animes, secondes, cases = 0, elargir = false, journal = null) {
   /* Autant de sources que de cases, quand on les connaît : c'est la seule façon
      qu'une scène n'apparaisse jamais deux fois. À défaut, une par tranche de
      cinq secondes, ce qui suffisait tant qu'on acceptait les redites. */
@@ -18778,8 +18874,14 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false) {
       const reponse = await fetch(cible);
       const contenu = await reponse.json();
       if (!reponse.ok) throw new Error(contenu?.error || `le serveur a répondu ${reponse.status}`);
-      (contenu.rushes || []).forEach((rush) => trouves.push({ ...rush, anime }));
+      /* Le nom qui compte est celui que le site a reconnu, pas celui qu'on a
+         tapé : « chainsaw » doit s'écrire « Chainsaw Man » — sur les plans
+         comme dans le titre de l'AMV. */
+      const reconnu = contenu.anime || anime;
+      journal?.resolus.push({ demande: anime, trouve: reconnu, total: contenu.total || 0 });
+      (contenu.rushes || []).forEach((rush) => trouves.push({ ...rush, anime: rush.anime || reconnu }));
     } catch (erreur) {
+      journal?.resolus.push({ demande: anime, trouve: "", total: 0 });
       console.warn(`aucun rush pour « ${anime} » :`, erreur.message);
     }
   }
