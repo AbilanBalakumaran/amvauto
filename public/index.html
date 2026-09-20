@@ -862,10 +862,14 @@ main {
    La barre de couleur dit l'intensité d'un coup d'œil, sans avoir à lire. */
 .tunnel-trame { display: flex; flex-direction: column; gap: 6px; }
 .trame-ligne {
-  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px;
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
   padding: 10px 12px; border-radius: 10px;
   background: #101010; border-left: 3px solid var(--trait);
 }
+/* Le bouton d'écoute garde la taille des autres boutons ronds : il se prend
+   avec un doigt, et rogner quatre points de hauteur de ligne ne vaut pas une
+   cible qu'on rate. Seule sa couleur change quand il joue. */
+.trame-ecoute.joue { border-color: var(--vert); color: var(--vert); }
 .trame-ligne[data-emotion="calme"] { border-left-color: #3d6f8e; }
 .trame-ligne[data-emotion="emotion"] { border-left-color: #7a5ba6; }
 .trame-ligne[data-emotion="tension"] { border-left-color: #b8863b; }
@@ -2133,7 +2137,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 07:44";
+const VERSION_PAGE = "2026-09-20 07:52";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2411,6 +2415,9 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     $("btn-export").hidden = onglet !== "projet" || !projetActif();
     if (onglet === "projet") rendreProjet();
     else arreter();
+    // Quitter le tunnel coupe l'écoute : une musique qui continue sur une autre
+    // page, on ne sait plus d'où elle vient ni comment l'arrêter.
+    if (onglet !== "creer") arreterEcoute();
     if (onglet === "histoire") rendreHistoire();
     // La permission a pu changer dans les réglages du système pendant que
     // l'application était derrière : on relit l'état plutôt que de l'affirmer.
@@ -4013,6 +4020,10 @@ function blocMusique() {
     tunnel.rythme = null;
     tunnel.etiquettes = [];
     tunnel.montage = null;
+    arreterEcoute();
+    // Le geste qui choisit le fichier est aussi celui qui autorise la lecture :
+    // on fabrique le lecteur maintenant, il aura son en-tête avant la trame.
+    lecteurDeMusique();
     rendreCreer();
   });
   champ.addEventListener("click", () => entree.click());
@@ -4052,6 +4063,7 @@ function blocMusique() {
 
 async function analyserLaMusique() {
   if (!tunnel.fichier || tunnel.occupe) return;
+  arreterEcoute();
   tunnel.occupe = "musique";
   rendreCreer();
   try {
@@ -4068,6 +4080,92 @@ async function analyserLaMusique() {
   } finally {
     tunnel.occupe = "";
     rendreCreer();
+  }
+}
+
+/* Écouter un passage avant de lui donner une émotion.
+
+   Choisir « tension » pour la deuxième minute d'un morceau qu'on n'a pas en
+   tête, c'est deviner. Chaque ligne de la trame peut donc se jouer, de son
+   début à sa fin — et une seule à la fois : sur un iPhone, deux sons qui se
+   superposent, c'est déjà un de trop.
+
+   Un seul élément audio pour toute la trame, fabriqué dès que le fichier est
+   choisi : le geste qui ouvre le sélecteur est aussi celui qui autorise la
+   lecture, et l'en-tête a tout le temps de descendre pendant l'analyse. */
+const ecoute = { lecteur: null, url: "", fichier: null, rang: -1, fin: 0 };
+
+function lecteurDeMusique() {
+  if (!tunnel.fichier) return null;
+  // Un autre fichier : l'ancienne adresse ne vaut plus rien, et la garder
+  // retiendrait le fichier entier en mémoire.
+  if (ecoute.fichier !== tunnel.fichier) {
+    ecoute.lecteur?.pause();
+    ecoute.rang = -1;
+    if (ecoute.url) URL.revokeObjectURL(ecoute.url);
+    ecoute.url = URL.createObjectURL(tunnel.fichier);
+    ecoute.fichier = tunnel.fichier;
+    if (ecoute.lecteur) ecoute.lecteur.src = ecoute.url;
+  }
+  if (!ecoute.lecteur) {
+    const audio = new Audio();
+    audio.preload = "metadata";
+    audio.src = ecoute.url;
+    /* Un passage s'arrête à sa fin, pas à la fin du morceau. « timeupdate »
+       suffit : il arrive quatre fois par seconde, et l'oreille ne reproche pas
+       un quart de seconde de trop. */
+    audio.addEventListener("timeupdate", () => {
+      if (ecoute.rang >= 0 && audio.currentTime >= ecoute.fin) arreterEcoute();
+    });
+    audio.addEventListener("ended", () => arreterEcoute());
+    /* Une pause qui ne vient pas de nous — un appel qui arrive, un casque qu'on
+       débranche — laisserait un bouton « en train de jouer » sur du silence. */
+    audio.addEventListener("pause", () => {
+      if (ecoute.rang < 0) return;
+      ecoute.rang = -1;
+      majBoutonsEcoute();
+    });
+    ecoute.lecteur = audio;
+  }
+  return ecoute.lecteur;
+}
+
+function arreterEcoute() {
+  if (ecoute.rang < 0 && !ecoute.lecteur) return;
+  ecoute.rang = -1;
+  ecoute.lecteur?.pause();
+  majBoutonsEcoute();
+}
+
+/* L'état se lit sur les boutons présents, pas sur ceux qu'on croit avoir posés :
+   la trame est reconstruite à chaque redessin du tunnel. */
+function majBoutonsEcoute() {
+  for (const bouton of document.querySelectorAll(".trame-ecoute")) {
+    const joue = Number(bouton.dataset.rang) === ecoute.rang;
+    bouton.classList.toggle("joue", joue);
+    bouton.innerHTML = icone(joue ? "pause" : "play");
+    bouton.title = joue ? "Arrêter l'écoute" : "Écouter ce passage";
+    bouton.setAttribute("aria-label", bouton.title);
+  }
+}
+
+async function ecouterPassage(rang, section) {
+  if (ecoute.rang === rang) { arreterEcoute(); return; }
+  const audio = lecteurDeMusique();
+  if (!audio) return;
+  ecoute.rang = rang;
+  ecoute.fin = section.fin;
+  majBoutonsEcoute();
+  /* On joue d'abord, on se place ensuite : sur iPhone, l'autorisation tient au
+     geste et attendre l'en-tête avant « play » la ferait perdre. Si l'en-tête
+     n'est pas encore là, la position est posée dès qu'il arrive. */
+  const viser = () => { try { audio.currentTime = section.debut; } catch { /* pas encore */ } };
+  try {
+    if (audio.readyState >= 1) viser();
+    else audio.addEventListener("loadedmetadata", viser, { once: true });
+    await audio.play();
+  } catch {
+    arreterEcoute();
   }
 }
 
@@ -4103,7 +4201,16 @@ function blocNarration() {
     });
     ligne.dataset.emotion = tunnel.etiquettes[rang];
 
-    ligne.append(quand, choix);
+    const ecouter = document.createElement("button");
+    ecouter.type = "button";
+    ecouter.className = "rond trame-ecoute";
+    ecouter.dataset.rang = String(rang);
+    ecouter.innerHTML = icone("play");
+    ecouter.title = "Écouter ce passage";
+    ecouter.setAttribute("aria-label", ecouter.title);
+    ecouter.addEventListener("click", () => { ecouterPassage(rang, section).catch(() => {}); });
+
+    ligne.append(ecouter, quand, choix);
     liste.append(ligne);
   });
 
@@ -4289,6 +4396,8 @@ function rendreCreer() {
   if (tunnel.rythme) morceaux.push(blocNarration(), blocAnime(), blocGenerer());
   if (tunnel.montage?.length) morceaux.push(blocResultat());
   vue.replaceChildren(...morceaux);
+  // Les boutons d'écoute viennent de naître : ils ignorent ce qui joue déjà.
+  majBoutonsEcoute();
 }
 
 /* Le montage, depuis ce que le tunnel a recueilli.
@@ -5355,6 +5464,7 @@ window.__banc = {
   fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
   clignement: () => clignement(), absence: () => absence,
   retirerLaPastille: () => retirerLaPastille(), marquerPastille: (n) => marquerPastille(n),
+  ecoute: () => ecoute, arreterEcoute: () => arreterEcoute(),
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
   automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
@@ -20461,7 +20571,13 @@ function deposerAvantDeQuitter() {
     .catch(() => {});
 }
 
-document.addEventListener("visibilitychange", () => { if (document.hidden) deposerAvantDeQuitter(); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) return;
+  deposerAvantDeQuitter();
+  // L'écoute d'un passage est un geste de travail : elle n'a rien à faire en
+  // arrière-plan, où l'on croirait à un lecteur de musique oublié.
+  arreterEcoute();
+});
 window.addEventListener("pagehide", deposerAvantDeQuitter);
 
 async function recuperer(code) {
