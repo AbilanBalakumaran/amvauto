@@ -2283,7 +2283,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 21:02";
+const VERSION_PAGE = "2026-09-20 21:09";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -14631,7 +14631,7 @@ sentinelle.autorisee = permissionNotifs() === "granted";
 /* Où en est l'abonnement aux poussées. Déclaré ici, avant le panneau qui le
    lit : les réglages sont dessinés pendant le chargement, bien avant que
    l'abonnement soit tenté. */
-let poussees = { etat: "", endpoint: "", code: "" };
+let poussees = { etat: "", endpoint: "", code: "", appareils: 0 };
 
 function majReglages() {
   const bouton = $("btn-notifs");
@@ -14658,8 +14658,9 @@ function majReglages() {
     else if (!reglages.notifications) etat.textContent = "Coupées\u00a0: l'application n'affiche plus rien, même pendant un chargement.";
     else if (permission === "default") etat.textContent = "L'autorisation n'a pas encore été demandée — elle le sera au premier chargement.";
     else if (poussees.etat === "abonné") {
-      etat.textContent = "L'appareil autorise, et tu seras prévenu même application fermée.";
-    } else etat.textContent = `L'appareil autorise${poussees.etat ? ` — mais pas application fermée : ${poussees.etat}` : ""}.`;
+      etat.textContent = "L'appareil autorise, et tu seras prévenu même application fermée"
+        + `\u00a0— ${poussees.appareils || 1} appareil(s) inscrit(s).`;
+    } else etat.textContent = `L'appareil autorise${poussees.etat ? ` — mais pas application fermée\u00a0: ${poussees.etat}` : ""}.`;
   }
 
   const note = $("note-notifs");
@@ -16348,7 +16349,7 @@ async function abonnerAuxPoussees() {
   /* Déjà fait pour ce code : « noterCoffre » passe par ici à chaque dépôt, et
      deux requêtes par sauvegarde pour rien, c'est une sauvegarde plus lente. */
   if (poussees.etat === "abonné" && poussees.code === coffre.code) return true;
-  poussees = { etat: "", endpoint: "", code: "" };
+  poussees = { etat: "", endpoint: "", code: "", appareils: 0 };
   if (!reglages.notifications) { poussees.etat = "réglage coupé"; return false; }
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
     poussees.etat = "ce navigateur ne sait pas être prévenu application fermée";
@@ -16378,11 +16379,17 @@ async function abonnerAuxPoussees() {
       body: JSON.stringify({ endpoint: dit.endpoint, keys: dit.keys }),
     });
     if (!reponse.ok) { poussees.etat = `le serveur a refusé l'abonnement (${reponse.status})`; return false; }
-    poussees = { etat: "abonné", endpoint: dit.endpoint, code: coffre.code };
+    const compte = await reponse.json().catch(() => ({}));
+    poussees = { etat: "abonné", endpoint: dit.endpoint, code: coffre.code,
+      appareils: compte.abonnes || 1 };
     return true;
   } catch (erreur) {
     poussees.etat = `abonnement impossible (${erreur?.name || "erreur"})`;
     return false;
+  } finally {
+    /* Le panneau des réglages a pu être dessiné avant que tout cela aboutisse :
+       il annonçait alors un état d'attente qui ne bougeait plus. */
+    if ($("etat-notifs")) majReglages();
   }
 }
 
@@ -16571,6 +16578,12 @@ function garderLesCourses() {
   } catch { /* stockage plein : le suivi vit alors le temps de la page */ }
 }
 
+function tourDesCourses() {
+  for (const suivi of [...courses.values()]) {
+    if (!suivi.occupe) tourDeCourse(suivi).catch(() => { suivi.occupe = false; });
+  }
+}
+
 function battreLesCourses() {
   if (!courses.size) {
     clearInterval(battement);
@@ -16578,12 +16591,19 @@ function battreLesCourses() {
     return;
   }
   if (battement) return;
-  battement = setInterval(() => {
-    for (const suivi of [...courses.values()]) {
-      if (!suivi.occupe) tourDeCourse(suivi).catch(() => { suivi.occupe = false; });
-    }
-  }, RYTHME_COURSE);
+  battement = setInterval(tourDesCourses, RYTHME_COURSE);
 }
+
+/* Au retour, tout de suite.
+
+   Le téléphone verrouillé suspend les minuteurs de la page : pendant tout ce
+   temps, personne ne demande où en est la course. En attendant le battement
+   suivant, l'écran rallumé montrait encore « en cours » sur un rendu terminé
+   depuis un quart d'heure — cinq secondes de plus à ne rien comprendre, juste
+   là où l'on vient voir si c'est fini. */
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && courses.size) tourDesCourses();
+});
 
 /* Rendre la main au bouton, et cesser de suivre : deux choses différentes.
 
@@ -16657,6 +16677,30 @@ async function tourDeCourse(suivi) {
   } finally {
     suivi.occupe = false;
   }
+}
+
+/* Ce qu'on peut promettre à quelqu'un qui va verrouiller son téléphone.
+
+   « On dirait que le rendu ne continue pas quand l'écran est éteint. » Il
+   continue : il se fait sur un serveur, et le téléphone n'y prend aucune part.
+   Ce qui s'arrête, c'est la page — iOS suspend ses minuteurs dès qu'elle passe
+   derrière —, donc la notification qu'ELLE pose n'arrive qu'au déverrouillage.
+   La seule qui traverse l'écran verrouillé est celle que le serveur pousse, et
+   elle demande un abonnement.
+
+   Ces deux choses se confondaient, faute de le dire. On le dit maintenant à
+   l'endroit et au moment où ça compte : quand le rendu part. */
+function motDesPoussees() {
+  if (poussees.etat === "abonné") {
+    return "Tu peux verrouiller le téléphone et fermer l'application :"
+      + " une notification te préviendra dès que le fichier est prêt.";
+  }
+  if (permissionNotifs() !== "granted") {
+    return "Il continue même écran verrouillé — mais rien ne te préviendra tant que"
+      + " les notifications ne sont pas autorisées : c'est dans Infos.";
+  }
+  return "Il continue même écran verrouillé. La notification, elle, n'arrivera qu'à ta"
+    + ` prochaine ouverture (${poussees.etat || "abonnement absent"}).`;
 }
 
 /* Dire que c'est prêt à quelqu'un qui n'est pas devant l'écran.
@@ -16740,7 +16784,9 @@ function montrerCourse(course, etat, depuis = Date.now(), termine = null, quoi =
   courses.set(suivi.id, suivi);
   garderLesCourses();
   battreLesCourses();
-  dire(`${quoi} en cours sur GitHub — compte deux à quatre minutes.`);
+  dire(`${quoi} en cours sur GitHub — compte deux à quatre minutes.\n${motDesPoussees()}`);
+  noter(`${quoi} lancé sur GitHub · ${poussees.etat === "abonné"
+    ? "prévenu même application fermée" : `pas de poussée (${poussees.etat || "abonnement absent"})`}`);
 }
 
 /* Reprendre les courses d'avant : une application rouverte doit finir ce qu'elle
