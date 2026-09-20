@@ -906,6 +906,20 @@ main {
 }
 .archive-pied .fiche-seo { margin: 0; padding: 0; border: 0; background: none; width: 100%; }
 .tunnel-sorties { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Le journal : une fenêtre qui défile, assez haute pour qu'on suive et assez
+   basse pour ne pas manger la page. */
+.journal {
+  max-height: 210px; overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--trait); background: #0d0d0d;
+  font: 400 0.74rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  -webkit-overflow-scrolling: touch;
+}
+.journal-ligne { margin: 0 0 2px; display: flex; gap: 8px; color: var(--texte); }
+.journal-quand { flex: none; color: var(--doux); }
+.journal-alerte { color: #ffb4a2; }
+.journal-fait { color: var(--vert); }
 .fiche-seo {
   display: flex; flex-direction: column; gap: 8px;
   margin: -6px 0 0; padding: 10px 12px 12px;
@@ -2229,7 +2243,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 18:47";
+const VERSION_PAGE = "2026-09-20 19:20";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4921,6 +4935,93 @@ function blocAnime() {
 }
 
 /* --- 4. Générer ------------------------------------------------------- */
+/* ---- Le journal du montage en cours -------------------------------------
+
+   La ligne d'état disait une chose à la fois, et chaque étape effaçait la
+   précédente : quand le montage finissait par « 52 coupes sur 80 scènes », on
+   ne savait plus combien de scènes avaient été trouvées, combien de durées
+   avaient été lues, ni pourquoi telle recherche n'avait rien donné. Ce qui
+   s'était passé n'existait plus.
+
+   Le journal garde tout, horodaté, sous le bouton qui l'a déclenché. Il vaut
+   pour la séance : il raconte le projet en cours, d'une génération à l'autre, et
+   repart à zéro quand l'onglet est fermé.
+
+   Il n'y a pas de niveau « debug » : chaque ligne est écrite pour être lue. Ce
+   qui n'a pas d'intérêt pour celui qui monte n'y est pas. */
+const JOURNAL_MAX = 150;
+const journalTunnel = [];
+
+const horodate = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+    + `:${String(d.getSeconds()).padStart(2, "0")}`;
+};
+
+function noter(texte, niveau = "") {
+  if (!texte) return;
+  journalTunnel.push({ quand: horodate(), texte: String(texte), niveau });
+  if (journalTunnel.length > JOURNAL_MAX) journalTunnel.splice(0, journalTunnel.length - JOURNAL_MAX);
+  majJournal();
+}
+
+/* Écrire sans tout redessiner : le journal se remplit pendant que l'utilisateur
+   regarde, et rebâtir le tunnel à chaque ligne lui arracherait ce qu'il touche
+   — c'est exactement ce qui est arrivé avec les paroles. */
+function majJournal() {
+  const liste = document.getElementById("tunnel-journal");
+  if (!liste) return;
+  const bas = liste.scrollHeight - liste.scrollTop - liste.clientHeight < 24;
+  liste.replaceChildren(...journalTunnel.map((ligne) => {
+    const p = document.createElement("p");
+    p.className = `journal-ligne${ligne.niveau ? ` journal-${ligne.niveau}` : ""}`;
+    const quand = document.createElement("span");
+    quand.className = "journal-quand";
+    quand.textContent = ligne.quand;
+    const quoi = document.createElement("span");
+    quoi.textContent = ligne.texte;
+    p.append(quand, quoi);
+    return p;
+  }));
+  // On reste en bas tant qu'on y était : c'est là que la suite s'écrit.
+  if (bas) liste.scrollTop = liste.scrollHeight;
+}
+
+const journalEnTexte = () => journalTunnel.map((l) => `${l.quand}  ${l.texte}`).join("\n");
+
+/* Le journal, sous le bouton qui l'a déclenché. Il n'apparaît qu'une fois qu'il
+   a quelque chose à dire. */
+function blocJournal() {
+  const boite = blocTunnel("·", "Journal", "Ce que l'outil a fait, dans l'ordre.");
+
+  const liste = document.createElement("div");
+  liste.className = "journal";
+  liste.id = "tunnel-journal";
+  boite.append(liste);
+
+  const gestes = document.createElement("div");
+  gestes.className = "tunnel-sorties";
+  const copier = document.createElement("button");
+  copier.type = "button";
+  copier.className = "archive-action";
+  copier.textContent = "Copier le journal";
+  copier.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(journalEnTexte());
+      copier.textContent = "Copié";
+      setTimeout(() => { copier.textContent = "Copier le journal"; }, 1600);
+    } catch { copier.textContent = "Copie refusée"; }
+  });
+  const vider = document.createElement("button");
+  vider.type = "button";
+  vider.className = "archive-action";
+  vider.textContent = "Vider";
+  vider.addEventListener("click", () => { journalTunnel.length = 0; rendreCreer(); });
+  gestes.append(copier, vider);
+  boite.append(gestes);
+  return boite;
+}
+
 function blocGenerer() {
   const boite = blocTunnel(4, "L'AMV", "Les scènes sont choisies, coupées et posées sur les temps.");
 
@@ -5148,8 +5249,11 @@ function rendreCreer() {
   if (!vue) return;
   const morceaux = [blocMusique()];
   if (tunnel.rythme) morceaux.push(blocNarration(), blocAnime(), blocGenerer());
+  // Le journal juste sous le bouton qui l'écrit, et seulement s'il a commencé.
+  if (journalTunnel.length) morceaux.push(blocJournal());
   if (tunnel.montage?.length) morceaux.push(blocResultat());
   vue.replaceChildren(...morceaux);
+  majJournal();
   // Les boutons d'écoute viennent de naître : ils ignorent ce qui joue déjà.
   majBoutonsEcoute();
 }
@@ -5187,6 +5291,11 @@ async function genererLAmv() {
   if (tunnel.portee === "unique" && !tunnel.animes.length) return;
   tunnel.occupe = "montage";
   tunnel.montage = null;
+  journalTunnel.length = 0;
+  noter(`Génération demandée · ${tunnel.portee === "unique"
+    ? nomAnime(tunnel.animes[0]) || "un animé" : "animé mixte"}`
+    + ` · ${Math.round(tunnel.rythme.duree)} s de musique`
+    + ` · instrument ${nomDeBande(tunnel.rythme.instrument).split(" ")[0].toLowerCase()}`);
   rendreCreer();
   const dire = direTunnel;
 
@@ -5224,10 +5333,23 @@ async function genererLAmv() {
     const journal = { resolus: [] };
     const trouves = await chercherRushs(tunnel.animes, tunnel.rythme.duree,
       casesAttendues(projet), tunnel.portee !== "unique", journal, tunnel.etiquettes);
+    for (const x of journal.resolus) {
+      noter(x.trouve
+        ? `« ${x.demande} » → ${x.trouve} · ${x.total} scènes au catalogue`
+        : `« ${x.demande} » est introuvable sur Sakugabooru`, x.trouve ? "" : "alerte");
+    }
     if (!trouves.length) {
+      noter("Aucune scène trouvée : rien à monter.", "alerte");
       dire(`${phraseResolution(journal)}Aucune scène trouvée.`
         + " Vérifie l'orthographe, ou passe en animé mixte.");
       return;
+    }
+    {
+      const parSource = {};
+      for (const r of trouves) parSource[r.provider || "?"] = (parSource[r.provider || "?"] || 0) + 1;
+      noter(`Pioche : ${trouves.length} scènes · `
+        + Object.entries(parSource).map(([quoi, combien]) => `${combien} ${quoi}`).join(", ")
+        + ` · ${casesAttendues(projet)} coupes attendues`);
     }
     /* Le titre porte le nom du site, pas la frappe : « chainsaw man » devient
        « Chainsaw Man », et c'est lui qui partira sur YouTube. */
@@ -5266,6 +5388,13 @@ async function genererLAmv() {
        montage les écarte de lui-même. On ne va donc PAS lire leurs en-têtes une à
        une depuis le téléphone — c'était le cas quand le serveur échouait sur
        quelques fichiers, ce n'est plus le cas quand on s'arrête volontairement. */
+    {
+      const lues = projet.rushs.filter((plan) => dureeConnue(plan)).length;
+      const cartes = projet.rushs.filter((plan) => clesConnues.get(mediaDe(plan))?.mouvement).length;
+      noter(`Scènes lues : ${lues}/${projet.rushs.length} durées`
+        + ` · ${cartes} courbes de mouvement · ${clesRefusees.size} illisibles`,
+        lues ? "" : "alerte");
+    }
     const muettes = projet.rushs.filter((plan) => !dureeConnue(plan)
       && clesRefusees.has(mediaDe(plan)));
     if (muettes.length) {
@@ -5276,12 +5405,14 @@ async function genererLAmv() {
 
     const surs = projet.rushs.filter((plan) => dureeConnue(plan));
     if (!surs.length) {
+      noter("Aucune durée lisible : le montage ne se pose pas sur des suppositions.", "alerte");
       dire(`${phraseResolution(journal)}Aucune durée n'a pu être lue :`
         + " le montage ne se pose pas sur des suppositions.");
       return;
     }
     const montage = construireMontage(projet, { ordre: "libre", depuis: surs, graine: nouvelleGraine() });
     if (!montage?.length) {
+      noter("Le montage n'a pas pu être construit.", "alerte");
       dire(`${phraseResolution(journal)}Le montage n'a pas pu être construit.`);
       return;
     }
@@ -5292,9 +5423,22 @@ async function genererLAmv() {
     projet.seo = ficheDuTunnel();
     sauver();
     enregistrer(projet);
+    {
+      const couvert = montage.reduce((t, x) => t + ((x.sortie || 0) - (x.entree || 0)), 0);
+      const moments = new Set(montage.map((x) => `${x.rush}@${(x.entree || 0).toFixed(2)}`)).size;
+      const longueurs = montage.map((x) => (x.sortie || 0) - (x.entree || 0)).sort((a, b) => a - b);
+      noter(`Montage : ${montage.length} coupes · ${Math.round(couvert)} s sur`
+        + ` ${Math.round(tunnel.rythme.duree)} s · ${moments} moments distincts`);
+      noter(`Plans : du plus court ${longueurs[0].toFixed(2)} s au plus long`
+        + ` ${longueurs[longueurs.length - 1].toFixed(2)} s`
+        + ` · médian ${longueurs[Math.floor(longueurs.length / 2)].toFixed(2)} s`, "fait");
+      const trou = Math.round(tunnel.rythme.duree - couvert);
+      if (trou > 1) noter(`${trou} s de musique restent sans image.`, "alerte");
+    }
     dire(`${phraseResolution(journal)}${montage.length} coupes sur ${surs.length} scènes,`
       + ` aucune deux fois.${phraseCouverture(projet)}`);
   } catch (erreur) {
+    noter(`Génération interrompue : ${erreur.message}`, "alerte");
     dire(`Génération interrompue : ${erreur.message}`);
   } finally {
     tunnel.occupe = "";
@@ -6398,6 +6542,7 @@ window.__banc = {
   profilDe: (...a) => profilDe(...a), ecartDIntention: (...a) => ecartDIntention(...a),
   tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
   majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
+  journal: () => journalTunnel, noter: (t, n) => noter(t, n),
   rendreHistoire: () => rendreHistoire(),
   parolesDuPassage: (a, b) => parolesDuPassage(a, b),
   grilleDeCoupes: (...a) => grilleDeCoupes(...a), attendreCles: (...a) => attendreCles(...a),
@@ -6418,7 +6563,7 @@ window.__banc = {
   blocsRefuses: () => blocsRefuses, noterBloc: (c, q) => noterBloc(c, q),
   ecrireBase: (c, b) => ecrireBase(c, b), reprendreSegments: (p) => reprendreSegments(p),
   condamnerBloc: (u, q) => condamnerBloc(u, q), lireBlocs: () => lireBlocs(),
-  journal: () => journal, veillerCoherence: (v, p) => veillerCoherence(v, p),
+  journalLecteur: () => journal, veillerCoherence: (v, p) => veillerCoherence(v, p),
   tranches: () => tranchesEnMemoire, positionCible: () => positionCible(),
   laisserAuReseau: (p) => laisserAuReseau(p), elementActif: () => elementActif(),
   mediaDe: (p) => mediaDe(p), extraitsRefuses: () => extraitsRefuses,
@@ -8787,7 +8932,7 @@ function veillerCoherence(video, plan) {
   if (maintenant - veille.depuis < 800 || maintenant - veille.dernier < 1500) return;
   veille.depuis = 0;
   veille.dernier = maintenant;
-  noter(`désaccord corrigé (plan ${bonPlan ? "bon" : "faux"})`, video);
+  noterLecteur(`désaccord corrigé (plan ${bonPlan ? "bon" : "faux"})`, video);
   poserPlan(cible.index, cible.dans);
 }
 
@@ -12158,11 +12303,12 @@ function allerA(secondesCible) {
   }
 }
 
-// Journal de bord : les dernières demandes de position et ce que le lecteur en
-// a fait. Consultable dans Setting, pour diagnostiquer un comportement qu'on ne
-// peut pas reproduire ailleurs.
+// Journal du lecteur : les dernières demandes de position et ce que le lecteur
+// en a fait. Consultable dans Setting, pour diagnostiquer un comportement qu'on
+// ne peut pas reproduire ailleurs. À ne pas confondre avec journalTunnel, qui
+// raconte la génération.
 const journal = [];
-function noter(quoi, video) {
+function noterLecteur(quoi, video) {
   journal.unshift({
     quand: new Date().toLocaleTimeString("fr-FR"),
     quoi,
@@ -12185,7 +12331,7 @@ function viser(video, temps, plan) {
   // Les deux mécanismes visent le même instant : sans cela, celui qui aboutit en
   // dernier ramènerait le lecteur sur une position périmée.
   demanderPosition(video, temps);
-  noter("cible posée", video);
+  noterLecteur("cible posée", video);
   appliquerCible(video);
 }
 
@@ -12331,7 +12477,7 @@ function appliquerCible(video) {
   // aucun support sur lequel s'appliquer.
   if (video.readyState < 1) { secouer(video); return; }
   if (Math.abs(video.currentTime - cible.temps) <= 0.4) {
-    noter("atteinte", video);
+    noterLecteur("atteinte", video);
     lecture.cible = null;
     if (video.readyState < 2) secouer(video);
     return;
@@ -12348,11 +12494,11 @@ function appliquerCible(video) {
      qui peine, c'est-à-dire précisément celui qu'on cherche à soulager, c'est un
      rechargement au milieu d'un plan. */
   if (!video.paused && video.currentTime > cible.temps) {
-    noter("dépassée en jouant", video);
+    noterLecteur("dépassée en jouant", video);
     lecture.cible = null;
     return;
   }
-  if (cible.essais >= 12 || performance.now() > cible.limite) { noter("abandon", video); lecture.cible = null; return; }
+  if (cible.essais >= 12 || performance.now() > cible.limite) { noterLecteur("abandon", video); lecture.cible = null; return; }
   cible.essais += 1;
   try {
     video.currentTime = Math.min(cible.temps, video.duration || cible.temps);
@@ -12365,7 +12511,7 @@ function appliquerCible(video) {
      réparer une position que la lecture est en train d'atteindre elle-même. */
   if (cible.essais >= 4 && !cible.fragment && cible.url && video.paused) {
     cible.fragment = true;
-    noter("repli fragment", video);
+    noterLecteur("repli fragment", video);
     video.src = `${cible.url}#t=${cible.temps.toFixed(2)}`;
     video.load();
   }
@@ -18417,6 +18563,14 @@ $("btn-setting").addEventListener("click", () => {
     ...(journal.length
       ? journal.map((l) => `  ${l.quand} ${l.quoi} — visé ${l.vise ?? "—"} s, réel ${l.reel ?? "—"} s, état ${l.pret}/4, ${l.essais ?? 0} essai(s)`)
       : ["  (aucune pour l'instant)"]),
+    "",
+    /* Le journal du montage se lit en direct sous « Générer l'AMV ». On le
+       recopie ici pour que le diagnostic qu'on envoie porte aussi le récit de
+       la génération, et pas seulement l'état du lecteur. */
+    "Journal du montage :",
+    ...(journalTunnel.length
+      ? journalTunnel.map((l) => `  ${l.quand} ${l.texte}`)
+      : ["  (aucun montage lancé dans cette séance)"]),
   ].join("\n");
   meta.style.whiteSpace = "pre-line";
 
