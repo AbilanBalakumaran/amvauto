@@ -15,8 +15,34 @@
 import { codeValide } from "./coffre.js";
 import { compter } from "./quota.js";
 
-const PAR_JOUR = 30;
-const MODELES = ["@cf/openai/whisper-large-v3-turbo", "@cf/openai/whisper"];
+/* Quatre-vingt-dix écoutes par jour : une analyse en demande jusqu'à quatre —
+   une par tranche de quatre-vingt-dix secondes —, ce qui laisse une vingtaine de
+   morceaux analysés par jour. Whisper coûte peu de neurones ; c'est le nombre
+   d'appels qu'il faut borner, pas le budget. */
+const PAR_JOUR = 90;
+/* Deux modèles, et ils ne prennent PAS la même entrée.
+
+   « whisper-large-v3-turbo » veut le son en base64 ; l'ancien « whisper » veut un
+   tableau d'octets. Envoyer un tableau au turbo le fait échouer, et l'on retombait
+   toujours sur l'ancien — mesuré : vingt-neuf secondes pour quarante-cinq secondes
+   de musique, et un texte qui boucle sur la même phrase vingt fois. Le turbo est
+   plus rapide et ne part pas en boucle ; encore faut-il lui parler sa langue. */
+const MODELES = [
+  { nom: "@cf/openai/whisper-large-v3-turbo", entree: "base64" },
+  { nom: "@cf/openai/whisper", entree: "octets" },
+];
+
+/* Le base64 par tranches : « String.fromCharCode(...octets) » épuise la pile
+   au-delà de quelques dizaines de milliers d'octets, et l'on en envoie des
+   millions. */
+function enBase64(octets) {
+  let texte = "";
+  const pas = 8192;
+  for (let i = 0; i < octets.length; i += pas) {
+    texte += String.fromCharCode(...octets.subarray(i, Math.min(octets.length, i + pas)));
+  }
+  return btoa(texte);
+}
 const POIDS_MAX = 24_000_000;
 
 const nettoyer = (brut) => String(brut || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
@@ -74,13 +100,24 @@ export async function ecoute(request, url, env) {
   let derniere = "";
   for (const modele of MODELES) {
     try {
+      const charge = modele.entree === "base64"
+        ? { audio: enBase64(octets), task: "transcribe" }
+        : { audio: [...octets] };
       // eslint-disable-next-line no-await-in-loop
-      const dit = await env.AI.run(modele, { audio: [...octets] });
+      const dit = await env.AI.run(modele.nom, charge);
+      /* Le turbo rend des segments, l'ancien des mots. Les deux disent la même
+         chose : un texte et des instants. */
       const mots = dit?.words || dit?.word_segments || [];
-      const lignes = mots.length ? enVers(mots) : [];
-      const texte = String(dit?.text || "").trim();
+      const lignes = mots.length
+        ? enVers(mots)
+        : (dit?.segments || []).map((s) => ({
+          debut: Math.round(Number(s.start || 0) * 100) / 100,
+          fin: Math.round(Number(s.end || s.start || 0) * 100) / 100,
+          texte: String(s.text || "").trim(),
+        })).filter((l) => l.texte);
+      const texte = String(dit?.text || dit?.transcription_info?.text || "").trim();
       if (!texte && !lignes.length) { derniere = "le modèle n'a rien entendu"; continue; }
-      return json({ modele, texte, lignes, reste });
+      return json({ modele: modele.nom, texte, lignes, reste });
     } catch (erreur) {
       derniere = String(erreur?.message || erreur).slice(0, 200);
     }

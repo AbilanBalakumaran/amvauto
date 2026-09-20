@@ -2206,7 +2206,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 13:57";
+const VERSION_PAGE = "2026-09-20 14:51";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4290,19 +4290,18 @@ async function analyserLaMusique() {
   if (!tunnel.fichier || tunnel.occupe) return;
   arreterEcoute();
   tunnel.occupe = "musique";
+  tunnel.message = "";
   rendreCreer();
   try {
     const octets = await tunnel.fichier.arrayBuffer();
-    const rythme = await analyserRythme(octets);
+    // Dire où l'on en est : trois minutes de musique demandent plusieurs
+    // secondes, et un bouton muet pendant ce temps-là ressemble à une panne.
+    const rythme = await analyserRythme(octets, (ou) => direTunnel(`Analyse : ${ou}…`));
     if (!rythme) throw new Error("ce fichier n'a pas pu être décodé");
     tunnel.rythme = rythme;
     /* Une étiquette par passage, proposée d'après l'énergie mesurée. */
     tunnel.etiquettes = rythme.sections.map((section) => emotionSuggeree(section.energie));
-    /* Et les paroles, s'il y en a. Elles ne conditionnent rien : sans elles le
-       montage se fait sur l'énergie et le mouvement, comme avant. C'est pour
-       cela qu'on ne s'arrête pas sur un échec, et qu'on ne le montre pas comme
-       une panne. */
-    await ecouterLesParoles().catch(() => {});
+    direTunnel("");
   } catch (erreur) {
     alert(`La musique n'a pas pu être analysée : ${erreur.message}.\n\n`
       + "Si c'est un morceau de la bibliothèque Musique, il est protégé et aucune "
@@ -4311,6 +4310,18 @@ async function analyserLaMusique() {
     tunnel.occupe = "";
     rendreCreer();
   }
+  /* Les paroles APRÈS, et sans attendre.
+
+     Elles étaient attendues avant de rendre la main : « l'analyse prend du temps,
+     elle ne se termine jamais ». Éprouvé au banc avec une transcription qui ne
+     répond pas — l'analyse ne finissait effectivement jamais, et le bouton restait
+     bloqué sur « Analyse en cours… » pour toujours. Or les paroles ne
+     conditionnent rien : sans elles, le montage se fait sur l'énergie et le
+     mouvement, comme avant.
+
+     La trame s'affiche donc dès que le rythme est lu, et les vers viennent s'y
+     poser à mesure qu'ils arrivent. */
+  ecouterLesParoles().catch(() => {});
 }
 
 /* ---- Un seul lecteur, une seule barre ------------------------------------
@@ -4495,26 +4506,91 @@ async function ecouterPassage(rang, section) {
    écoute. Il rend les vers avec leurs instants, et rien n'est conservé de
    l'audio. Sans code de coffre, on ne demande rien — c'est le laissez-passer de
    tout ce qui coûte du quota. */
-async function ecouterLesParoles() {
-  tunnel.paroles = [];
-  if (!tunnel.fichier || !coffre.code) return;
-  direTunnel("Écoute des paroles…");
+/* L'écoute se fait par tranches, et chacune a son compte à rebours.
+
+   Un morceau entier, c'est plusieurs mégaoctets à téléverser sur un forfait
+   mobile et un modèle qui travaille d'autant plus longtemps. Rien ne garantit
+   qu'il réponde : il faut donc une borne, et elle doit être dans la page — un
+   « fetch » sans « AbortController » attend indéfiniment.
+
+   Quatre-vingt-dix secondes par appel, trois appels au plus : de quoi couvrir
+   quatre minutes et demie de chanson. Chaque tranche est un morceau du fichier,
+   et ses instants sont décalés d'autant. Les vers se posent dans la trame à
+   mesure qu'ils arrivent, ce qui rend l'attente visible au lieu d'être vide. */
+const ECOUTE_TRANCHE = 90;
+/* Quatre tranches : six minutes de chanson, ce qui dépasse tout AMV. Mesuré avec
+   le modèle turbo, une tranche de quatre-vingt-dix secondes revient en six
+   secondes et demie — contre vingt-neuf pour l'ancien modèle, qui bouclait en
+   plus sur la même phrase vingt fois. */
+const ECOUTE_TRANCHES = 4;
+const ECOUTE_DELAI = 45000;
+
+async function ecouterUneTranche(morceau, depuis, type) {
+  const arret = new AbortController();
+  const minuteur = setTimeout(() => arret.abort(), ECOUTE_DELAI);
   try {
     const reponse = await fetch("/api/ecoute", {
       method: "POST",
-      headers: { "x-coffre": coffre.code, "content-type": tunnel.fichier.type || "audio/mpeg" },
-      body: tunnel.fichier,
+      headers: { "x-coffre": coffre.code, "content-type": type || "audio/mpeg" },
+      body: morceau,
+      signal: arret.signal,
     });
     const dit = await reponse.json().catch(() => ({}));
-    if (!reponse.ok || !Array.isArray(dit.lignes)) {
-      direTunnel(dit.erreur ? `Les paroles n'ont pas pu être entendues : ${dit.erreur}` : "");
+    if (!reponse.ok || !Array.isArray(dit.lignes)) return { erreur: dit.erreur || `réponse ${reponse.status}` };
+    return {
+      lignes: dit.lignes.map((ligne) => ({
+        debut: Math.round((ligne.debut + depuis) * 100) / 100,
+        fin: Math.round((ligne.fin + depuis) * 100) / 100,
+        texte: ligne.texte,
+      })),
+    };
+  } catch (erreur) {
+    return { erreur: erreur?.name === "AbortError" ? "trop long" : "réseau" };
+  } finally {
+    clearTimeout(minuteur);
+  }
+}
+
+async function ecouterLesParoles() {
+  tunnel.paroles = [];
+  if (!tunnel.fichier || !coffre.code) return;
+  const fichier = tunnel.fichier;
+  const duree = tunnel.rythme?.duree || 0;
+  const taille = fichier.size || 0;
+  if (!(duree > 0) || !(taille > 0)) return;
+
+  /* Un WAV n'a d'en-tête qu'au début : ses tranches suivantes ne sont pas des
+     fichiers. Les formats compressés, eux, se recoupent n'importe où — un
+     décodeur se resynchronise à la trame suivante. */
+  const decoupable = !/wav|aiff/i.test(fichier.type || fichier.name || "");
+  const parSeconde = taille / duree;
+  const combien = decoupable
+    ? Math.min(ECOUTE_TRANCHES, Math.max(1, Math.ceil(duree / ECOUTE_TRANCHE)))
+    : 1;
+
+  for (let rang = 0; rang < combien; rang += 1) {
+    // Le fichier a changé pendant ce temps : ce qu'on écoutait n'a plus cours.
+    if (tunnel.fichier !== fichier) return;
+    const depuis = rang * ECOUTE_TRANCHE;
+    const a = rang === 0 ? 0 : Math.floor(depuis * parSeconde);
+    const b = Math.min(taille, Math.ceil((depuis + ECOUTE_TRANCHE) * parSeconde));
+    if (b - a < 20000) break;
+    direTunnel(rang === 0 ? "Écoute des paroles…" : `Écoute des paroles… ${depuis} s`);
+    // eslint-disable-next-line no-await-in-loop
+    const dit = await ecouterUneTranche(fichier.slice(a, b), depuis, fichier.type);
+    if (tunnel.fichier !== fichier) return;
+    if (dit.erreur) {
+      direTunnel(tunnel.paroles.length
+        ? `${tunnel.paroles.length} vers entendus (la suite n'a pas répondu : ${dit.erreur}).`
+        : `Les paroles n'ont pas pu être entendues : ${dit.erreur}.`);
       return;
     }
-    tunnel.paroles = dit.lignes;
-    direTunnel(dit.lignes.length ? `${dit.lignes.length} vers entendus.` : "Aucune parole entendue.");
-  } catch {
-    direTunnel("");
+    tunnel.paroles.push(...dit.lignes);
+    direTunnel(`${tunnel.paroles.length} vers entendus.`);
+    // Les vers se posent sous leur passage à mesure qu'ils arrivent.
+    rendreCreer();
   }
+  if (!tunnel.paroles.length) direTunnel("Aucune parole entendue.");
 }
 
 /* Ce qui se chante pendant un passage : tout vers qui le recouvre, même en
@@ -18246,7 +18322,11 @@ const BANDES = [
 
 const nomDeBande = (cle) => BANDES.find((b) => b.cle === cle)?.nom || "Tempo";
 
-function enveloppesParBande(buffer) {
+// Rendre la main au navigateur : sans cela, l'analyse d'un morceau de trois
+// minutes tient le fil principal plusieurs secondes et l'écran gèle.
+const souffler = () => new Promise((suite) => setTimeout(suite, 0));
+
+async function enveloppesParBande(buffer, avance = null) {
   const taux = buffer.sampleRate;
   const parTrame = Math.max(1, Math.round(taux / TRAMES_PAR_SECONDE));
   const trames = Math.floor(buffer.length / parTrame);
@@ -18273,7 +18353,17 @@ function enveloppesParBande(buffer) {
   const enveloppes = BANDES.map(() => new Float32Array(trames));
   const sommes = new Float64Array(BANDES.length);
 
+  /* Par tranches de deux secondes, avec une respiration entre chacune. Le calcul
+     est le même ; ce qui change est que l'écran reste vivant et qu'on peut dire où
+     l'on en est. Mesuré sur trois minutes, processeur bridé au niveau d'un
+     iPhone XR : trois secondes et demie de calcul, qui gelaient tout. */
+  const PAR_TRANCHE = TRAMES_PAR_SECONDE * 2;
   for (let t = 0; t < trames; t += 1) {
+    if (t > 0 && t % PAR_TRANCHE === 0) {
+      avance?.(t / trames);
+      // eslint-disable-next-line no-await-in-loop
+      await souffler();
+    }
     const debut = t * parTrame;
     sommes.fill(0);
     for (let i = 0; i < parTrame; i += 1) {
@@ -18693,9 +18783,10 @@ function decouperEnSections(niveau, ruptures, duree, tempo) {
   });
 }
 
-async function analyserRythme(donnees) {
+async function analyserRythme(donnees, avance = null) {
   const Contexte = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   if (!Contexte) return null;
+  avance?.("décodage du fichier");
   // 22 050 Hz suffit très largement pour repérer des frappes, et divise par deux
   // le travail de décodage comme celui du parcours.
   const ctx = new Contexte(1, 1, 22050);
@@ -18705,6 +18796,8 @@ async function analyserRythme(donnees) {
   } catch {
     return null;
   }
+  avance?.("recherche du tempo");
+  await souffler();
   const { net, niveau } = enveloppeAttaque(buffer);
   const ruptures = rupturesDuNiveau(niveau).slice(0, 24);
   const tempo = tempoDeLenveloppe(net);
@@ -18713,9 +18806,18 @@ async function analyserRythme(donnees) {
   /* Les instruments, et celui qui portera les coupes. On les garde tous : le
      choix automatique est un point de départ, pas un verdict — c'est l'oreille
      qui tranche, et elle a un sélecteur pour ça. */
-  const enveloppes = enveloppesParBande(buffer);
+  avance?.("séparation des instruments");
+  await souffler();
+  const enveloppes = await enveloppesParBande(buffer,
+    (part) => avance?.(`séparation des instruments… ${Math.round(part * 100)} %`));
+  avance?.("relevé des frappes");
+  await souffler();
   const instruments = {};
-  BANDES.forEach((bande, i) => { instruments[bande.cle] = attaquesDeBande(enveloppes[i]); });
+  for (const [i, bande] of BANDES.entries()) {
+    instruments[bande.cle] = attaquesDeBande(enveloppes[i]);
+    // eslint-disable-next-line no-await-in-loop
+    await souffler();
+  }
   const choisie = meilleureBande(instruments, buffer.duration);
 
   return {
