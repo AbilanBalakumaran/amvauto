@@ -929,16 +929,35 @@ main {
 .fiche-bascule { align-self: flex-start; }
 .fiche-contenu { display: flex; flex-direction: column; gap: 8px; }
 
-/* Ce qu'on copie pour publier. */
+/* Ce qu'on copie pour publier : le champ entier est le bouton. */
 .tunnel-sortie { display: flex; flex-direction: column; gap: 6px; }
-.tunnel-sortie-tete {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  font: 600 0.82rem/1 system-ui, sans-serif; color: var(--doux);
+.champ-copier {
+  width: 100%; text-align: left; cursor: pointer;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--trait); background: #0f0f0f;
+  font: inherit; color: inherit;
 }
+.champ-copier:active { background: #171717; }
+.champ-copier.copie { border-color: var(--vert); }
+.tunnel-sortie-tete {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font: 600 0.82rem/1.2 system-ui, sans-serif; color: var(--doux);
+}
+/* Ce que le champ attend de nous, en petit : il ne doit pas peser autant que ce
+   qu'il porte. */
+.champ-etat { font: 500 0.7rem/1.2 system-ui, sans-serif; color: var(--doux); }
+.champ-copier.copie .champ-etat { color: var(--vert); }
 .tunnel-sortie-texte {
-  width: 100%; padding: 10px 12px; border-radius: 10px; resize: vertical;
-  border: 1px solid var(--trait); background: #0f0f0f; color: var(--texte);
+  display: block; width: 100%; color: var(--texte);
   font: 400 0.84rem/1.45 system-ui, sans-serif;
+  white-space: pre-line; overflow-wrap: anywhere;
+}
+/* Une description tient en quelques lignes plutôt qu'en une page : on vient la
+   prendre, pas la lire. Ce qui dépasse s'efface au lieu d'être coupé net. */
+.tunnel-sortie-long {
+  position: relative; max-height: 7.3em; overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 5.6em, transparent);
+  mask-image: linear-gradient(#000 5.6em, transparent);
 }
 
 /* --- la veille : ce qui monte ------------------------------------------ */
@@ -2283,7 +2302,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 21:09";
+const VERSION_PAGE = "2026-09-20 21:18";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5198,31 +5217,55 @@ function blocFicheSeo(fiche, ouverte = false) {
   return bloc;
 }
 
+/* Un champ à publier : on le touche, il est copié.
+
+   Il y avait un bouton « Copier » posé à côté de chaque champ — une cible de
+   deux centimètres pour un champ qui en fait dix, et le champ lui-même, un
+   input en lecture seule, ne servait qu'à montrer le texte : le toucher plaçait
+   un curseur qui ne pouvait rien écrire. Le geste évident ne faisait rien, et
+   celui qui marchait était à côté.
+
+   Le champ EST le bouton. Son en-tête dit ce qu'il porte et ce qu'il attend —
+   « Titre · toucher pour copier » —, et il répond « Copié » en vert quand c'est
+   fait. Plus rien à viser. */
 function champCopiable(intitule, contenu, lignes = 1) {
-  const bloc = document.createElement("div");
-  bloc.className = "tunnel-sortie";
-  const haut = document.createElement("div");
+  const bloc = document.createElement("button");
+  bloc.type = "button";
+  bloc.className = "tunnel-sortie champ-copier";
+  bloc.setAttribute("aria-label", `Copier ${intitule.toLowerCase()}`);
+
+  const haut = document.createElement("span");
   haut.className = "tunnel-sortie-tete";
   const nom = document.createElement("span");
   nom.textContent = intitule;
-  const copier = document.createElement("button");
-  copier.type = "button";
-  copier.className = "archive-action";
-  copier.textContent = "Copier";
-  copier.addEventListener("click", async () => {
+  const etat = document.createElement("span");
+  etat.className = "champ-etat";
+  etat.textContent = "toucher pour copier";
+  haut.append(nom, etat);
+
+  const texte = document.createElement("span");
+  texte.className = "tunnel-sortie-texte";
+  // Les longs textes sont bornés en hauteur : on vient les prendre, pas les lire.
+  if (lignes > 1) texte.classList.add("tunnel-sortie-long");
+  texte.textContent = contenu;
+
+  let rendre = null;
+  bloc.addEventListener("click", async () => {
+    clearTimeout(rendre);
     try {
       await navigator.clipboard.writeText(contenu);
-      copier.textContent = "Copié";
-      setTimeout(() => { copier.textContent = "Copier"; }, 1600);
+      etat.textContent = "copié";
+      bloc.classList.add("copie");
     } catch {
-      copier.textContent = "Copie refusée";
+      etat.textContent = "copie refusée par l'appareil";
+      bloc.classList.remove("copie");
     }
+    rendre = setTimeout(() => {
+      etat.textContent = "toucher pour copier";
+      bloc.classList.remove("copie");
+    }, 1800);
   });
-  haut.append(nom, copier);
-  const texte = document.createElement(lignes > 1 ? "textarea" : "input");
-  texte.className = "tunnel-sortie-texte";
-  texte.readOnly = true;
-  if (lignes > 1) { texte.rows = lignes; texte.value = contenu; } else { texte.value = contenu; }
+
   bloc.append(haut, texte);
   return bloc;
 }
