@@ -2229,7 +2229,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 18:38";
+const VERSION_PAGE = "2026-09-20 18:47";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -19331,6 +19331,23 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
      déjà vue. C'est le même barème que l'accord par modèle de langue, qui sert
      quand les paroles ont été écrites par l'outil ; celui-ci sert quand elles ont
      été entendues. */
+  /* Deux plans de suite au même régime, c'est un plan qui dure deux fois plus.
+
+     Un générique alterne : un mouvement large puis un visage, un choc puis une
+     respiration. C'est ce qui donne l'impression que le montage raconte, et non
+     qu'il défile. La courbe de mouvement permet enfin de le mesurer — les
+     étiquettes ne le disaient pas —, et la pénalité reste légère : c'est une
+     préférence de grammaire, pas une règle. */
+  const contraste = (() => {
+    if (!precedent) return 0;
+    const avant = profilDe(precedent, entreeDe(precedent), sortieDe(precedent));
+    const apres = profilDe(plan, 0, dureeSource(plan));
+    if (!avant || !apres) return 0;
+    const ecartDeRegime = Math.abs(avant.moyenne - apres.moyenne);
+    if (ecartDeRegime >= 18) return -2;        // une vraie bascule : on la prend
+    return 4 * (1 - ecartDeRegime / 18);       // trop semblable : on s'en éloigne
+  })();
+
   const voulus = tagsDesParoles(section);
   let illustration = 0;
   if (voulus) {
@@ -19338,7 +19355,8 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
     illustration = porte ? -Math.min(8, 4 + porte * 2) : 0;
   }
 
-  return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole + intention + illustration
+  return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole + intention
+    + illustration + contraste
     + accordDuMouvement(precedent, plan)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -19906,7 +19924,40 @@ const parChronologie = (a, b) =>
    faibles jusqu'à ce que le compte tombe. */
 const COUPE_MINI = 0.34;
 
-function grilleDeCoupes(rythme, budget) {
+/* ---- La grammaire d'un générique d'animé --------------------------------
+
+   « Inspire-toi des openings d'animé, du montage dedans et des choix de scène. »
+   C'est une bonne référence parce qu'un générique résout, en quatre-vingt-dix
+   secondes, exactement le problème qu'on a : accorder des plans qui ne viennent
+   pas les uns des autres à une musique qui, elle, a une forme.
+
+   Quatre choses s'y répètent d'un générique à l'autre, et toutes quatre se
+   mesurent :
+
+     — Il ne commence pas sur une coupe. Un plan long tient l'ouverture — un
+       décor, un ciel, une silhouette — le temps que la musique s'installe.
+     — Le couplet respire, le refrain claque. Ce n'est pas un métronome qui coupe
+       partout au même rythme : le montage suit la phrase musicale, une frappe
+       sur quatre quand la musique se pose, toutes les frappes quand elle monte.
+     — Avant le refrain, ça accélère. Les plans raccourcissent d'un coup à
+       l'autre — une seconde, puis trois quarts, puis une demie — et le dernier,
+       le plus court, tombe sur le premier temps du refrain.
+     — Il finit sur un plan tenu. Le titre, le groupe, un regard : quelque chose
+       qui reste à l'écran pendant que la musique retombe.
+
+   Tout cela vit dans la grille des coupes, sauf le choix des plans d'ouverture
+   et de clôture, qui vit dans le barème. */
+
+// Combien de frappes on garde, selon ce que le passage demande.
+const PAS_PAR_ENERGIE = { 0: 4, 1: 2, 2: 1, 3: 1 };
+// L'ouverture et la clôture, en secondes de plan tenu.
+const OUVERTURE = 3.2;
+const CLOTURE = 3.2;
+/* L'accélération : les écarts des derniers plans avant une montée, du plus long
+   au plus court. Le dernier tombe sur le premier temps du passage qui monte. */
+const ACCELERATION = [1.15, 0.85, 0.62, 0.45, 0.32];
+
+function grilleDeCoupes(rythme, budget, sections = null) {
   const attaques = rythme?.instruments?.[rythme?.instrument] || [];
   if (attaques.length < 4) return null;
   const duree = rythme.duree || 0;
@@ -19925,6 +19976,26 @@ function grilleDeCoupes(rythme, budget) {
   }
   if (gardees.length < 4) return null;
 
+  /* 1 bis. La phrase musicale décide du débit.
+
+     Une frappe sur quatre dans un passage calme, toutes dans un passage
+     d'action. C'est ce qui distingue un couplet d'un refrain, et c'est ce qui
+     manquait : le montage coupait au même rythme d'un bout à l'autre. */
+  if (sections?.length) {
+    const tenues = [];
+    let rang = 0;
+    for (const a of gardees) {
+      const section = sections.find((x) => a.quand >= x.debut && a.quand < x.fin) || sections[0];
+      const pas = PAS_PAR_ENERGIE[section.energie] ?? 1;
+      if (rang % pas === 0) tenues.push(a);
+      rang += 1;
+      // Le compteur repart à chaque passage : une frappe sur quatre se compte
+      // depuis le début du passage, pas depuis le début du morceau.
+      if (a.quand + 0.001 >= section.fin) rang = 0;
+    }
+    if (tenues.length >= 4) gardees.length = 0, gardees.push(...tenues);
+  }
+
   // 2. Les trous : on y pose des coupes régulières, sur le temps.
   const points = [];
   let avant = 0;
@@ -19940,6 +20011,66 @@ function grilleDeCoupes(rythme, budget) {
     avant = a.quand;
   }
   points.sort((x, y) => x.quand - y.quand);
+
+  /* 2 bis. L'accélération avant une montée.
+
+     On remplace les coupes des trois dernières secondes par une suite d'écarts
+     décroissants, et l'on cale chacune sur la frappe la plus proche quand il y
+     en a une à portée : l'accélération s'entend d'autant mieux qu'elle tombe
+     sur le son. La plus courte finit sur le premier temps du passage qui monte.
+     C'est le geste le plus reconnaissable d'un générique. */
+  if (sections?.length) {
+    for (let i = 1; i < sections.length; i += 1) {
+      if ((sections[i].energie ?? 0) <= (sections[i - 1].energie ?? 0)) continue;
+      const bascule = sections[i].debut;
+      const etendue = ACCELERATION.reduce((t, x) => t + x, 0);
+      const depart = bascule - etendue;
+      if (depart <= OUVERTURE) continue;
+      for (let k = points.length - 1; k >= 0; k -= 1) {
+        if (points[k].quand > depart && points[k].quand < bascule) points.splice(k, 1);
+      }
+      let ou = depart;
+      for (const ecart of ACCELERATION) {
+        const cale = gardees.find((a) => Math.abs(a.quand - ou) < 0.12);
+        points.push({ quand: cale ? cale.quand : ou, force: cale?.force || 0, rampe: true });
+        ou += ecart;
+      }
+      points.sort((x, y) => x.quand - y.quand);
+    }
+  }
+
+  /* 2 ter. Le premier plan tient, le dernier aussi.
+
+     Un générique ne commence pas sur une coupe : un plan s'installe pendant que
+     la musique démarre. Et il ne s'arrête pas net : le dernier plan reste à
+     l'écran pendant que la musique retombe. On retire donc toute coupe des
+     premières et des dernières secondes. */
+  const ouverture = Math.min(OUVERTURE, duree / 6);
+  const cloture = Math.min(CLOTURE, duree / 6);
+  for (let k = points.length - 1; k >= 0; k -= 1) {
+    if (points[k].quand < ouverture || points[k].quand > duree - cloture) points.splice(k, 1);
+  }
+
+  /* 2 quater. Deux coupes ne se collent pas.
+
+     L'accélération pose ses points sans regarder ceux qui existent déjà : une
+     coupe de la rampe tombait parfois sur une frappe conservée, et l'écart entre
+     les deux valait zéro. Le plancher est plus bas que celui des frappes — la
+     dernière marche d'une rampe fait trois dixièmes, et c'est voulu —, mais il
+     existe. */
+  const PLANCHER_GRILLE = 0.28;
+  const propres = [];
+  for (const point of points) {
+    const avant = propres[propres.length - 1];
+    if (avant && point.quand - avant.quand < PLANCHER_GRILLE) {
+      // La rampe l'emporte : c'est elle qui porte l'intention.
+      if (point.rampe && !avant.rampe) propres[propres.length - 1] = point;
+      continue;
+    }
+    propres.push(point);
+  }
+  points.length = 0;
+  points.push(...propres);
 
   /* 3. Trop de coupes pour le vivier : on retire les plus faibles. Les frappes
         de comblement partent les premières — elles ne portent aucun son. */
@@ -20050,7 +20181,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
 
   /* Les coupes tombent sur l'instrument quand on en a un ; sinon sur la division
      régulière d'avant, qui reste juste et ne dépend de rien. */
-  const grille = grilleDeCoupes(rythme, budgetCases);
+  const grille = grilleDeCoupes(rythme, budgetCases, sections);
   const prochaineFrappe = (t) => {
     if (!grille) return null;
     for (const quand of grille) if (quand > t + COUPE_MINI) return quand;
@@ -20092,6 +20223,15 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       const vise = Math.max(PLAN_MINI, Math.min(ecart, reste, TENUE_MAX));
       const rang = montage.length;
 
+      /* Le plan d'ouverture et le plan de clôture ne se choisissent pas comme
+         les autres : un générique ouvre sur un décor qui s'installe et ferme sur
+         un plan tenu. On les juge donc au calme, quelle que soit l'énergie du
+         passage — c'est la seule fois où l'on ne suit pas la musique. */
+      const bord = rang === 0 ? "ouverture"
+        : (section === sections[sections.length - 1] && reste <= CLOTURE + 0.6) ? "cloture"
+          : "";
+      const vu = bord ? { ...section, emotion: "calme", energie: Math.min(1, section.energie) } : section;
+
       const precedent = montage[montage.length - 1];
       let choix = null;
       if (chrono) {
@@ -20127,7 +20267,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             // Un rush trop court pour la case n'est pas disqualifié — il n'y en
             // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
             const court = dureeSource(plan) < vise ? 3 : 0;
-            const note = noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie, graine) + court;
+            const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets, serie, graine) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) break;
@@ -20141,7 +20281,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       }
       if (!choix) break;
 
-      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu, graine, section,
+      const bornes = fenetreDans(choix, vise, vu.energie >= 2 && !choix.__picVu, graine, vu,
         momentsPris);
       if (!bornes) break;
       // Combien de plans d'affilée dans la même famille : c'est ce qui rend le
