@@ -2,7 +2,7 @@
 // proposition de rushs. Sakugabooru étant sans CORS, tous les appels JSON
 // passent par ici.
 
-import { themes } from "./animethemes.js";
+import { themes, themesLarges } from "./animethemes.js";
 import { coffre } from "./coffre.js";
 import { genererMusique } from "./musique.js";
 import { relayerMedia } from "./media.js";
@@ -332,7 +332,7 @@ async function handleRushes(url) {
       mood,
       total: posts.length,
       rushes: [...rank(posts, mood, top).map(serialize),
-        ...(generiquesVoulus ? await generiquesDe(nomLisible) : [])],
+        ...(generiquesVoulus ? await generiquesDe(nomLisible, posts.length) : [])],
     });
   }
 
@@ -346,15 +346,24 @@ async function handleRushes(url) {
       return json({ error: "Sakugabooru n'a rien rendu pour cette recherche." }, 502);
     }
     const series = await copyrightTags();
+    /* En mixte, les génériques viennent de partout eux aussi : c'est la seule
+       façon d'avoir une deuxième source sans nommer d'animé. La page est tirée
+       dans les douze premières pour que deux AMV mixtes ne se ressemblent pas. */
+    const largesVoulus = generiquesVoulus
+      ? await themesLarges(16, 1 + Math.floor(Math.random() * 12)).catch(() => [])
+      : [];
     return json({
       anime: "",
       tag: tagAmbiance || "order:score",
       mood,
       total: trouves.length,
-      rushes: rank(trouves, mood, top).map((entree) => ({
-        ...serialize(entree),
-        anime: serieDe(entree.post, series),
-      })),
+      rushes: [
+        ...rank(trouves, mood, top).map((entree) => ({
+          ...serialize(entree),
+          anime: serieDe(entree.post, series),
+        })),
+        ...largesVoulus.map(fromSource).map((rush) => ({ ...rush, provider: "animethemes" })),
+      ],
     });
   }
 
@@ -379,7 +388,7 @@ async function handleRushes(url) {
     mood,
     total: resolved.posts.length,
     rushes: [...rank(resolved.posts, mood, top).map(serialize),
-      ...(generiquesVoulus ? await generiquesDe(query) : [])],
+      ...(generiquesVoulus ? await generiquesDe(query, resolved.posts.length) : [])],
   });
 }
 
@@ -393,14 +402,19 @@ async function handleRushes(url) {
    mesuré : deux cent quarante scènes dans la pioche, cent une durées lues dans
    le temps imparti. */
 const GENERIQUES_MAX = 8;
+const GENERIQUES_MAX_MAIGRE = 24;
+// En dessous de cent vingt scènes montables, une série est maigre : c'est là que
+// les génériques comptent vraiment, et l'on en prend trois fois plus.
+const CATALOGUE_MAIGRE = 120;
 
-async function generiquesDe(question) {
+async function generiquesDe(question, scenes = Infinity) {
   try {
     const liste = await themes(question);
+    const combien = scenes < CATALOGUE_MAIGRE ? GENERIQUES_MAX_MAIGRE : GENERIQUES_MAX;
     return liste
       .slice()
       .sort((a, b) => (b.score || 0) - (a.score || 0))
-      .slice(0, GENERIQUES_MAX)
+      .slice(0, combien)
       .map(fromSource)
       .map((rush) => ({ ...rush, provider: "animethemes" }));
   } catch {

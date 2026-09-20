@@ -122,3 +122,56 @@ export async function themes(query) {
   // Blu-ray du même générique n'ont ni le même montage ni la même image.
   return trouves.sort((a, b) => b.score - a.score);
 }
+
+/* Les génériques, toutes séries confondues.
+
+   Pour un AMV mixte, il n'y avait qu'une source : les mieux notés de
+   Sakugabooru. Or AnimeThemes garde, pour des milliers de séries, les
+   ouvertures en 1080p Blu-ray sans crédits — la même qualité que celle qu'on
+   prend pour un animé nommé, mais sans avoir à le nommer.
+
+   On demande donc directement les vidéos qui remplissent ces trois conditions,
+   sans crédits, en 1080, tirées d'un Blu-ray : c'est le meilleur matériau du
+   site, et le filtre fait le tri côté serveur. La page est tirée au hasard dans
+   les premières, pour que deux AMV mixtes ne reçoivent pas les mêmes. */
+export async function themesLarges(combien = 12, page = 1) {
+  const params = new URLSearchParams({
+    "page[size]": String(Math.min(50, Math.max(1, combien))),
+    "page[number]": String(Math.max(1, page)),
+    "filter[nc]": "true",
+    "filter[resolution]": "1080",
+    "filter[source]": "BD",
+    include: "animethemeentries.animetheme.anime,animethemeentries.animetheme.song",
+    sort: "-id",
+  });
+  const data = await api(`/video?${params}`, 21600);
+  const trouves = [];
+  for (const video of data.videos || []) {
+    const entree = (video.animethemeentries || [])[0] || {};
+    const theme = entree.animetheme || {};
+    const anime = theme.anime || {};
+    const chanson = theme.song?.title || "";
+    if (!video.link || !anime.name) continue;
+    trouves.push({
+      id: `at-large-${video.id}`,
+      kind: String(theme.type || "").toLowerCase() === "ed" ? "ending" : "opening",
+      name: `${anime.name} · ${theme.slug || ""}${chanson ? ` · ${chanson}` : ""} (NC 1080p BD)`,
+      score: qualite(video),
+      artists: [],
+      serie: anime.name,
+      width: 1920,
+      height: video.resolution || 1080,
+      mb: video.size ? Math.round((video.size / 1e6) * 10) / 10 : 0,
+      mbRendu: video.size ? Math.round((video.size / 1e6) * 10) / 10 : 0,
+      video: video.link,
+      montage: null,
+      montageHauteur: 0,
+      montageCredite: false,
+      preview: null,
+      page: anime.slug ? `https://animethemes.moe/anime/${anime.slug}` : "https://animethemes.moe",
+      flags: ["sans crédits", "BD"],
+      episode: null,
+    });
+  }
+  return trouves.sort((a, b) => b.score - a.score);
+}
