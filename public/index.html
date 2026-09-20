@@ -916,8 +916,12 @@ main {
   font: 400 0.74rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   -webkit-overflow-scrolling: touch;
 }
-.journal-ligne { margin: 0 0 2px; display: flex; gap: 8px; color: var(--texte); }
-.journal-quand { flex: none; color: var(--doux); }
+.journal-ligne { margin: 0 0 3px; display: flex; gap: 8px; color: var(--texte); }
+.journal-quand { flex: none; color: var(--doux); min-width: 3.6em; text-align: right; }
+.journal-quoi { min-width: 0; overflow-wrap: anywhere; }
+/* Les chiffres, en dessous de la phrase et plus discrets : on les cherche quand
+   la phrase ne suffit plus, jamais avant. */
+.journal-detail { display: block; color: var(--doux); font-size: 0.92em; }
 .journal-alerte { color: #ffb4a2; }
 .journal-fait { color: var(--vert); }
 .fiche-seo {
@@ -2302,7 +2306,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 21:18";
+const VERSION_PAGE = "2026-09-20 21:28";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4990,8 +4994,11 @@ function blocAnime() {
 
    Il n'y a pas de niveau « debug » : chaque ligne est écrite pour être lue. Ce
    qui n'a pas d'intérêt pour celui qui monte n'y est pas. */
-const JOURNAL_MAX = 150;
+const JOURNAL_MAX = 300;
 const journalTunnel = [];
+// L'heure de départ de la génération en cours : c'est elle qui donne aux lignes
+// leur « depuis le début », le seul chiffre qui dise où le temps est passé.
+let departJournal = 0;
 
 const horodate = () => {
   const d = new Date();
@@ -4999,12 +5006,37 @@ const horodate = () => {
     + `:${String(d.getSeconds()).padStart(2, "0")}`;
 };
 
-function noter(texte, niveau = "") {
+/* Ce que chaque ligne porte en plus de sa phrase.
+
+   Une phrase française se lit ; elle ne se relit pas bien à six heures du matin
+   par quelqu'un qui cherche pourquoi un montage fait dix-sept secondes. Les
+   chiffres qui comptent sont donc posés à côté, en clé=valeur : c'est la forme
+   qu'un humain survole et qu'une machine découpe. */
+const enDetail = (detail) => (detail && typeof detail === "object"
+  ? Object.entries(detail)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([cle, valeur]) => `${cle}=${Array.isArray(valeur) ? valeur.join("/") : valeur}`)
+    .join(" ")
+  : String(detail || ""));
+
+function noter(texte, niveau = "", detail = null) {
   if (!texte) return;
-  journalTunnel.push({ quand: horodate(), texte: String(texte), niveau });
+  journalTunnel.push({
+    quand: horodate(),
+    /* Le temps écoulé depuis le début de la génération. C'est le chiffre qui
+       apprend quelque chose : une heure ne dit pas qu'une étape a pris vingt
+       secondes. Hors génération — une erreur de script, par exemple — il n'y a
+       pas de début, et c'est l'heure qui s'affiche. */
+    ms: departJournal ? Math.max(0, Math.round(performance.now() - departJournal)) : null,
+    texte: String(texte),
+    niveau,
+    detail: enDetail(detail),
+  });
   if (journalTunnel.length > JOURNAL_MAX) journalTunnel.splice(0, journalTunnel.length - JOURNAL_MAX);
   majJournal();
 }
+
+const depuisLeDebut = (ms) => (ms === null || ms === undefined ? "" : `+${(ms / 1000).toFixed(1)}s`);
 
 /* Écrire sans tout redessiner : le journal se remplit pendant que l'utilisateur
    regarde, et rebâtir le tunnel à chaque ligne lui arracherait ce qu'il touche
@@ -5018,9 +5050,16 @@ function majJournal() {
     p.className = `journal-ligne${ligne.niveau ? ` journal-${ligne.niveau}` : ""}`;
     const quand = document.createElement("span");
     quand.className = "journal-quand";
-    quand.textContent = ligne.quand;
+    quand.textContent = depuisLeDebut(ligne.ms) || ligne.quand;
     const quoi = document.createElement("span");
+    quoi.className = "journal-quoi";
     quoi.textContent = ligne.texte;
+    if (ligne.detail) {
+      const plus = document.createElement("span");
+      plus.className = "journal-detail";
+      plus.textContent = ligne.detail;
+      quoi.append(plus);
+    }
     p.append(quand, quoi);
     return p;
   }));
@@ -5028,12 +5067,223 @@ function majJournal() {
   if (bas) liste.scrollTop = liste.scrollHeight;
 }
 
-const journalEnTexte = () => journalTunnel.map((l) => `${l.quand}  ${l.texte}`).join("\n");
+/* ---- Les appels au serveur, pour qu'un rapport dise OÙ ça s'est arrêté ------
+
+   Une ligne « Aucune scène trouvée » ne dit pas si la requête est partie, si
+   elle a mis vingt secondes, si le serveur a répondu 500 ou si le téléphone
+   était hors ligne. Ce sont pourtant les quatre seules réponses utiles, et
+   aucune n'est devinable depuis la phrase.
+
+   On enveloppe donc « fetch » une fois pour toutes, et l'on garde les derniers
+   appels à notre propre API : méthode, chemin, statut, durée, poids. Rien de ce
+   qui sort d'ici n'est envoyé nulle part — c'est un anneau en mémoire, que le
+   rapport recopie quand on le demande.
+
+   Le code du coffre est masqué : il vaut laissez-passer pour tous les rendus
+   d'un compte, et un rapport est fait pour être collé dans une conversation. */
+const APPELS_MAX = 80;
+const appelsReseau = [];
+const sansSecret = (adresse) => String(adresse)
+  .replace(/([?&](?:code|coffre|cle|token)=)[^&]*/gi, "$1…")
+  .replace(/^https?:\/\/[^/]+/, "");
+
+/* Combien d'appels en tout, et pas seulement ceux que l'anneau a gardés : cent
+   vingt lectures de scènes ne tiennent pas dans quatre-vingts cases, et
+   « appels=80 » laisserait croire qu'il n'y en a pas eu davantage. */
+let appelsTotal = 0;
+function noterAppel(appel) {
+  appelsTotal += 1;
+  appelsReseau.push(appel);
+  if (appelsReseau.length > APPELS_MAX) appelsReseau.shift();
+}
+
+/* Le dernier appel raté sur une route, s'il y en a un. C'est ce qui sépare
+   « ce nom n'existe pas » de « le serveur n'a pas répondu » — deux phrases que
+   l'utilisateur lisait pareil, et qui ne se réparent pas du tout pareil. */
+const dernierEchec = (bout) => [...appelsReseau].reverse()
+  .find((x) => x.chemin.includes(bout) && (x.erreur || x.statut === 0 || x.statut >= 400));
+
+(() => {
+  if (!window.fetch) return;
+  const vrai = window.fetch.bind(window);
+  window.fetch = async (entree, options) => {
+    const adresse = typeof entree === "string" ? entree : (entree?.url || String(entree));
+    // Seulement notre API : les rushs et les vignettes se comptent par centaines
+    // et n'apprennent rien.
+    if (!/(^|\/)api\//.test(adresse)) return vrai(entree, options);
+    const depart = performance.now();
+    const methode = (options?.method || entree?.method || "GET").toUpperCase();
+    try {
+      const reponse = await vrai(entree, options);
+      noterAppel({
+        methode, chemin: sansSecret(adresse), statut: reponse.status,
+        ms: Math.round(performance.now() - depart),
+        octets: Number(reponse.headers.get("content-length")) || 0,
+      });
+      return reponse;
+    } catch (erreur) {
+      noterAppel({
+        methode, chemin: sansSecret(adresse), statut: 0,
+        ms: Math.round(performance.now() - depart),
+        erreur: erreur?.message || "réseau injoignable",
+      });
+      throw erreur;
+    }
+  };
+})();
+
+/* Ce que le rapport dit des appels : un résumé par route, et le détail de ce
+   qui a raté. Cent vingt appels à « /api/media » n'apprennent rien un par un ;
+   celui qui a rendu 502, si. */
+function appelsEnTexte() {
+  if (!appelsReseau.length) return ["  (aucun appel enregistré)"];
+  const tete = appelsTotal > appelsReseau.length
+    ? [`  (${appelsTotal} appels en tout, les ${appelsReseau.length} derniers sont détaillés)`]
+    : [];
+  const parRoute = new Map();
+  for (const appel of appelsReseau) {
+    const route = `${appel.methode} ${appel.chemin.split("?")[0]}`;
+    const vu = parRoute.get(route) || { combien: 0, ms: 0, pire: 0, statuts: {}, octets: 0 };
+    vu.combien += 1;
+    vu.ms += appel.ms;
+    vu.pire = Math.max(vu.pire, appel.ms);
+    vu.octets += appel.octets || 0;
+    const quoi = appel.erreur ? `réseau (${appel.erreur})` : String(appel.statut);
+    vu.statuts[quoi] = (vu.statuts[quoi] || 0) + 1;
+    parRoute.set(route, vu);
+  }
+  const lignes = [...parRoute.entries()].map(([route, vu]) =>
+    `  ${route} · ${vu.combien} appel(s) · ${Object.entries(vu.statuts)
+      .map(([q, n]) => (n > 1 ? `${q}×${n}` : q)).join(", ")}`
+    + ` · ${Math.round(vu.ms / vu.combien)} ms en moyenne, ${vu.pire} ms au pire`
+    + (vu.octets ? ` · ${(vu.octets / 1024).toFixed(0)} Ko reçus` : ""));
+
+  const rates = appelsReseau.filter((x) => x.erreur || x.statut === 0 || x.statut >= 400);
+  if (rates.length) {
+    lignes.push("", `  ${rates.length} appel(s) en échec :`);
+    for (const x of rates.slice(-12)) {
+      lignes.push(`    ${x.methode} ${x.chemin} → ${x.erreur ? `réseau : ${x.erreur}` : x.statut}`
+        + ` (${x.ms} ms)`);
+    }
+  }
+  return [...tete, ...lignes];
+}
+
+/* ---- Le contexte : la moitié d'un rapport que personne ne pense à donner ----
+
+   « Ça marche pas » sans l'appareil, la version ni la demande ne se diagnostique
+   pas : la même génération réussit sur un ordinateur et échoue sur un iPhone en
+   3G, et la version dit si le correctif d'hier est seulement arrivé. Tout est
+   ici, en clair, et rien de ce qui est secret n'y figure. */
+function contexteDuJournal() {
+  const app = navigator.connection || {};
+  const seul = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  const lignes = [
+    `version ${VERSION_PAGE} · ${new Date().toISOString()}`,
+    `appareil : ${navigator.userAgent}`,
+    `écran ${screen.width}×${screen.height} @${devicePixelRatio || 1}`
+      + ` · fenêtre ${innerWidth}×${innerHeight} · langue ${navigator.language}`,
+    `installée sur l'écran d'accueil : ${seul ? "oui" : "non"}`
+      + ` · en ligne : ${navigator.onLine ? "oui" : "non"}`
+      + (app.effectiveType ? ` · réseau ${app.effectiveType}` : "")
+      + (navigator.deviceMemory ? ` · mémoire ${navigator.deviceMemory} Go` : "")
+      + (navigator.hardwareConcurrency ? ` · ${navigator.hardwareConcurrency} cœurs` : ""),
+    `notifications : ${permissionNotifs()} · réglage ${reglages.notifications ? "on" : "off"}`
+      + ` · poussée ${poussees.etat || "non tentée"}`,
+    `sauvegarde : ${coffre.actif ? "active" : "coupée"}`
+      + ` · code présent ${coffre.code ? "oui" : "non"} · ${coffre.etat || "sans incident"}`,
+  ];
+  if (place.refusee) {
+    lignes.push(`stockage : ${place.refusee} écriture(s) refusée(s) — ${place.derniere}`);
+  }
+  return lignes;
+}
+
+/* Ce qu'on a demandé : sans cette partie, personne ne peut refaire le montage
+   qui a échoué. */
+function demandeDuJournal() {
+  const rythme = tunnel.rythme;
+  if (!rythme) return ["  (aucune musique analysée)"];
+  const fichier = tunnel.fichier;
+  return [
+    `  musique : ${fichier ? `${fichier.name} · ${(fichier.size / 1e6).toFixed(1)} Mo`
+      + ` · ${fichier.type || "type inconnu"}` : "aucun fichier ouvert"}`,
+    `  analyse : ${Math.round(rythme.duree)} s · ${Math.round(rythme.bpm || 0)} BPM`
+      + ` · instrument ${rythme.instrument || "tempo"}`
+      + ` · ${rythme.sections?.length || 0} passages`,
+    `  trame : ${(rythme.sections || []).map((section, rang) => {
+      const emotion = tunnel.etiquettes[rang] || "?";
+      return `${Math.round(section.debut)}-${Math.round(section.fin)}s ${emotion}`;
+    }).join(", ") || "aucune"}`,
+    `  portée : ${tunnel.portee === "unique" ? "un animé" : "animé mixte"}`
+      + ` · demandé : ${tunnel.animes.map((x) => `${nomAnime(x)}${tagAnime(x) ? ` [${tagAnime(x)}]` : ""}`)
+        .join(", ") || "rien"}`,
+    `  paroles : ${(tunnel.paroles || []).length} vers entendus`,
+  ];
+}
+
+/* Le rapport entier, tel qu'on le colle ailleurs.
+
+   Ce n'est pas la liste de l'écran : l'écran dit ce qui se passe, le rapport
+   sert à comprendre ce qui s'est passé sans être là. Il porte l'appareil, la
+   demande, les étapes horodatées et les appels au serveur — de quoi refaire le
+   chemin, ou le donner à quelqu'un qui le refera. */
+function journalEnTexte() {
+  const alertes = journalTunnel.filter((l) => l.niveau === "alerte");
+  return [
+    "=== AMVAuto — rapport de génération ===",
+    "AMVAuto monte un AMV à partir de scènes d'animation (Sakugabooru, AnimeThemes)"
+      + " et d'une musique. C'est une page unique servie par un Worker Cloudflare ;"
+      + " tout ce qui suit s'est passé dans le navigateur.",
+    ...contexteDuJournal(),
+    "",
+    /* Ce qui a mal tourné, avant tout le reste : celui qui lit un rapport
+       cherche d'abord s'il y a quelque chose à chercher. */
+    "--- ce qui a alerté ---",
+    ...(alertes.length
+      ? alertes.map((l) => `  ${depuisLeDebut(l.ms)} ${l.texte}${l.detail ? `  ${l.detail}` : ""}`)
+      : ["  (rien : aucune étape ne s'est plainte)"]),
+    "",
+    "--- la demande ---",
+    ...demandeDuJournal(),
+    "",
+    "--- les étapes ---",
+    ...(journalTunnel.length
+      ? journalTunnel.map((l) => `  ${l.quand} ${depuisLeDebut(l.ms).padStart(7)}`
+        + `  ${l.niveau === "alerte" ? "[!] " : ""}${l.texte}${l.detail ? `  ${l.detail}` : ""}`)
+      : ["  (rien encore)"]),
+    "",
+    "--- les appels au serveur ---",
+    ...appelsEnTexte(),
+    "",
+    "=== fin du rapport ===",
+  ].join("\n");
+}
+
+/* Une erreur de script ne se voit nulle part : la page s'arrête, et le journal
+   dirait seulement que la génération n'a jamais fini. On l'y écrit, avec la
+   ligne où elle est tombée — c'est ce qu'on donnera à lire. */
+window.addEventListener("error", (evt) => {
+  noter(`Erreur de script : ${evt.message}`, "alerte", {
+    fichier: (evt.filename || "").split("/").pop(),
+    ligne: evt.lineno,
+    colonne: evt.colno,
+  });
+});
+window.addEventListener("unhandledrejection", (evt) => {
+  const raison = evt.reason;
+  noter(`Promesse refusée : ${raison?.message || raison || "sans motif"}`, "alerte", {
+    ou: String(raison?.stack || "").split("\n")[1]?.trim().slice(0, 80),
+  });
+});
 
 /* Le journal, sous le bouton qui l'a déclenché. Il n'apparaît qu'une fois qu'il
    a quelque chose à dire. */
 function blocJournal() {
-  const boite = blocTunnel("·", "Journal", "Ce que l'outil a fait, dans l'ordre.");
+  const boite = blocTunnel("·", "Journal",
+    "Chaque étape, horodatée. « Copier le rapport » y ajoute l'appareil, la demande"
+    + " et les appels au serveur : c'est ce qu'il faut donner à quelqu'un — ou à une"
+    + " intelligence artificielle — pour comprendre où ça a lâché.");
 
   const liste = document.createElement("div");
   liste.className = "journal";
@@ -5044,20 +5294,25 @@ function blocJournal() {
   gestes.className = "tunnel-sorties";
   const copier = document.createElement("button");
   copier.type = "button";
-  copier.className = "archive-action";
-  copier.textContent = "Copier le journal";
+  copier.className = "archive-action fort";
+  copier.textContent = "Copier le rapport";
   copier.addEventListener("click", async () => {
+    const rapport = journalEnTexte();
     try {
-      await navigator.clipboard.writeText(journalEnTexte());
-      copier.textContent = "Copié";
-      setTimeout(() => { copier.textContent = "Copier le journal"; }, 1600);
+      await navigator.clipboard.writeText(rapport);
+      copier.textContent = `Copié · ${rapport.split("\n").length} lignes`;
+      setTimeout(() => { copier.textContent = "Copier le rapport"; }, 2400);
     } catch { copier.textContent = "Copie refusée"; }
   });
   const vider = document.createElement("button");
   vider.type = "button";
   vider.className = "archive-action";
   vider.textContent = "Vider";
-  vider.addEventListener("click", () => { journalTunnel.length = 0; rendreCreer(); });
+  vider.addEventListener("click", () => {
+    journalTunnel.length = 0;
+    appelsReseau.length = 0;
+    rendreCreer();
+  });
   gestes.append(copier, vider);
   boite.append(gestes);
   return boite;
@@ -5357,10 +5612,20 @@ async function genererLAmv() {
   tunnel.occupe = "montage";
   tunnel.montage = null;
   journalTunnel.length = 0;
+  appelsReseau.length = 0;
+  appelsTotal = 0;
+  departJournal = performance.now();
   noter(`Génération demandée · ${tunnel.portee === "unique"
     ? nomAnime(tunnel.animes[0]) || "un animé" : "animé mixte"}`
     + ` · ${Math.round(tunnel.rythme.duree)} s de musique`
-    + ` · instrument ${nomDeBande(tunnel.rythme.instrument).split(" ")[0].toLowerCase()}`);
+    + ` · instrument ${nomDeBande(tunnel.rythme.instrument).split(" ")[0].toLowerCase()}`, "", {
+    animes: tunnel.animes.map((x) => tagAnime(x) || nomAnime(x)),
+    duree: `${Math.round(tunnel.rythme.duree)}s`,
+    bpm: Math.round(tunnel.rythme.bpm || 0),
+    passages: tunnel.rythme.sections?.length || 0,
+    trame: tunnel.etiquettes.join(">"),
+    paroles: (tunnel.paroles || []).length,
+  });
   rendreCreer();
   const dire = direTunnel;
 
@@ -5395,16 +5660,42 @@ async function genererLAmv() {
       .catch(() => {});
 
     dire("Recherche des scènes…");
+    const cases = casesAttendues(projet);
+    noter("Recherche des scènes…", "", {
+      coupesAttendues: cases,
+      ambiances: [...new Set(tunnel.etiquettes)].join("/") || "aucune",
+      elargi: tunnel.portee !== "unique" ? "oui" : "non",
+    });
     const journal = { resolus: [] };
+    const avantRecherche = performance.now();
     const trouves = await chercherRushs(tunnel.animes, tunnel.rythme.duree,
-      casesAttendues(projet), tunnel.portee !== "unique", journal, tunnel.etiquettes);
+      cases, tunnel.portee !== "unique", journal, tunnel.etiquettes);
     for (const x of journal.resolus) {
+      /* « Introuvable » n'est vrai que si le catalogue a répondu. Quand il rend
+         502, le nom n'y est pour rien — et l'on ne répare pas un serveur en
+         corrigeant son orthographe. */
+      const rate = x.trouve ? null : dernierEchec("/api/rushes");
       noter(x.trouve
         ? `« ${x.demande} » → ${x.trouve} · ${x.total} scènes au catalogue`
-        : `« ${x.demande} » est introuvable sur Sakugabooru`, x.trouve ? "" : "alerte");
+        : rate
+          ? `« ${x.demande} » : le catalogue n'a pas répondu`
+          : `« ${x.demande} » est introuvable sur Sakugabooru`, x.trouve ? "" : "alerte",
+      { tag: x.tag || "", total: x.total || 0,
+        ...(rate ? { serveur: rate.erreur || rate.statut } : {}) });
     }
+    noter("Recherche terminée", "", {
+      scenes: trouves.length,
+      en: `${Math.round(performance.now() - avantRecherche)}ms`,
+    });
     if (!trouves.length) {
-      noter("Aucune scène trouvée : rien à monter.", "alerte");
+      const rate = dernierEchec("/api/rushes");
+      noter("Aucune scène trouvée : rien à monter.", "alerte", {
+        cause: rate
+          ? `le catalogue a refusé la demande (${rate.erreur || rate.statut})`
+          : journal.resolus.some((x) => x.trouve)
+            ? "le catalogue a répondu mais aucune scène ne convient"
+            : "aucun nom d'animé n'a été reconnu",
+      });
       dire(`${phraseResolution(journal)}Aucune scène trouvée.`
         + " Vérifie l'orthographe, ou passe en animé mixte.");
       return;
@@ -5412,9 +5703,17 @@ async function genererLAmv() {
     {
       const parSource = {};
       for (const r of trouves) parSource[r.provider || "?"] = (parSource[r.provider || "?"] || 0) + 1;
+      const avecVideo = trouves.filter((r) => mediaDe(r)).length;
       noter(`Pioche : ${trouves.length} scènes · `
         + Object.entries(parSource).map(([quoi, combien]) => `${combien} ${quoi}`).join(", ")
-        + ` · ${casesAttendues(projet)} coupes attendues`);
+        + ` · ${cases} coupes attendues`, "", {
+        sources: Object.entries(parSource).map(([q, n]) => `${q}:${n}`),
+        avecFichier: `${avecVideo}/${trouves.length}`,
+        parScene: (trouves.length / Math.max(1, cases)).toFixed(1),
+      });
+      if (avecVideo < trouves.length) {
+        noter(`${trouves.length - avecVideo} scènes sans fichier lisible sont écartées.`, "alerte");
+      }
     }
     /* Le titre porte le nom du site, pas la frappe : « chainsaw man » devient
        « Chainsaw Man », et c'est lui qui partira sur YouTube. */
@@ -5442,6 +5741,10 @@ async function genererLAmv() {
     dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
       + " Lecture des scènes…");
     const assezDeScenes = Math.ceil(casesAttendues(projet) * 1.4) + 10;
+    noter("Lecture des en-têtes…", "", {
+      aLire: projet.rushs.length, assezA: assezDeScenes, limite: "60s",
+    });
+    const avantCles = performance.now();
     await attendreCles(projet.rushs, 60000, (n, total) =>
       dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
         + ` Lecture des scènes… ${n}/${total}`), assezDeScenes);
@@ -5458,26 +5761,60 @@ async function genererLAmv() {
       const cartes = projet.rushs.filter((plan) => clesConnues.get(mediaDe(plan))?.mouvement).length;
       noter(`Scènes lues : ${lues}/${projet.rushs.length} durées`
         + ` · ${cartes} courbes de mouvement · ${clesRefusees.size} illisibles`,
-        lues ? "" : "alerte");
+      lues ? "" : "alerte", {
+        en: `${Math.round(performance.now() - avantCles)}ms`,
+        arretA: lues >= assezDeScenes ? "assez lu" : "fin de liste ou temps écoulé",
+        refusees: clesRefusees.size,
+      });
+      if (lues < assezDeScenes) {
+        noter(`Moins de scènes mesurées que voulu (${lues} pour ${assezDeScenes} souhaitées) :`
+          + " le montage piochera dans moins de matière.", "alerte");
+      }
     }
     const muettes = projet.rushs.filter((plan) => !dureeConnue(plan)
       && clesRefusees.has(mediaDe(plan)));
     if (muettes.length) {
       dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
         + ` Lecture directe de ${muettes.length} en-têtes…`);
+      noter(`Reprise directe de ${muettes.length} en-têtes que le serveur n'a pas lus…`, "", {
+        combien: muettes.length,
+      });
+      const avantDirect = performance.now();
       await mesurerEnTetes(muettes, 6);
+      noter("Reprise directe terminée", "", {
+        gagnees: muettes.filter((plan) => dureeConnue(plan)).length,
+        en: `${Math.round(performance.now() - avantDirect)}ms`,
+      });
     }
 
     const surs = projet.rushs.filter((plan) => dureeConnue(plan));
     if (!surs.length) {
-      noter("Aucune durée lisible : le montage ne se pose pas sur des suppositions.", "alerte");
+      noter("Aucune durée lisible : le montage ne se pose pas sur des suppositions.", "alerte", {
+        scenes: projet.rushs.length,
+        refusees: clesRefusees.size,
+        cause: !navigator.onLine ? "appareil hors ligne"
+          : dernierEchec("/api/cles")
+            ? `la lecture des en-têtes a refusé (${dernierEchec("/api/cles").erreur
+              || dernierEchec("/api/cles").statut})`
+            : "le serveur n'a rendu aucune durée",
+      });
       dire(`${phraseResolution(journal)}Aucune durée n'a pu être lue :`
         + " le montage ne se pose pas sur des suppositions.");
       return;
     }
+    noter("Construction du montage…", "", {
+      scenesUtilisables: surs.length,
+      coupesVisees: casesAttendues(projet),
+      passages: projet.rythme.sections.length,
+    });
+    const avantMontage = performance.now();
     const montage = construireMontage(projet, { ordre: "libre", depuis: surs, graine: nouvelleGraine() });
     if (!montage?.length) {
-      noter("Le montage n'a pas pu être construit.", "alerte");
+      noter("Le montage n'a pas pu être construit.", "alerte", {
+        scenesUtilisables: surs.length,
+        en: `${Math.round(performance.now() - avantMontage)}ms`,
+        cause: "aucune fenêtre de coupe n'a pu être posée sur les scènes lues",
+      });
       dire(`${phraseResolution(journal)}Le montage n'a pas pu être construit.`);
       return;
     }
@@ -5492,20 +5829,65 @@ async function genererLAmv() {
       const couvert = montage.reduce((t, x) => t + ((x.sortie || 0) - (x.entree || 0)), 0);
       const moments = new Set(montage.map((x) => `${x.rush}@${(x.entree || 0).toFixed(2)}`)).size;
       const longueurs = montage.map((x) => (x.sortie || 0) - (x.entree || 0)).sort((a, b) => a - b);
+      const scenes = new Set(montage.map((x) => x.rush)).size;
       noter(`Montage : ${montage.length} coupes · ${Math.round(couvert)} s sur`
-        + ` ${Math.round(tunnel.rythme.duree)} s · ${moments} moments distincts`);
+        + ` ${Math.round(tunnel.rythme.duree)} s · ${moments} moments distincts`, "", {
+        en: `${Math.round(performance.now() - avantMontage)}ms`,
+        scenesEmployees: `${scenes}/${surs.length}`,
+        couverture: `${Math.round((100 * couvert) / Math.max(1, tunnel.rythme.duree))}%`,
+      });
+      /* Par passage : c'est là qu'on voit qu'un refrain n'a rien reçu, ce qu'un
+         total ne dit jamais.
+
+         Une coupe ne porte pas sa place sur la musique : les plans se suivent, et
+         c'est la somme des précédents qui dit où elle tombe. */
+      let curseur = 0;
+      const places = montage.map((x) => {
+        const debut = curseur;
+        curseur += (x.sortie || 0) - (x.entree || 0);
+        return { debut, duree: curseur - debut };
+      });
+      for (const [rang, section] of projet.rythme.sections.entries()) {
+        const dedans = places.filter((x) => x.debut >= section.debut - 0.01
+          && x.debut < section.fin);
+        const tenu = dedans.reduce((t, x) => t + x.duree, 0);
+        noter(`Passage ${rang + 1} (${section.emotion || "?"}) :`
+          + ` ${dedans.length} coupes sur ${Math.round(section.fin - section.debut)} s`,
+        dedans.length ? "" : "alerte", {
+          de: `${Math.round(section.debut)}s`, a: `${Math.round(section.fin)}s`,
+          energie: section.energie,
+          couvert: `${Math.round(tenu)}s`,
+        });
+      }
       noter(`Plans : du plus court ${longueurs[0].toFixed(2)} s au plus long`
         + ` ${longueurs[longueurs.length - 1].toFixed(2)} s`
         + ` · médian ${longueurs[Math.floor(longueurs.length / 2)].toFixed(2)} s`, "fait");
       const trou = Math.round(tunnel.rythme.duree - couvert);
-      if (trou > 1) noter(`${trou} s de musique restent sans image.`, "alerte");
+      if (trou > 1) {
+        noter(`${trou} s de musique restent sans image.`, "alerte", {
+          manque: `${trou}s`,
+          cause: surs.length < casesAttendues(projet)
+            ? "moins de scènes lues que de coupes à poser"
+            : "les fenêtres de coupe n'ont pas pu être placées",
+        });
+      }
     }
     dire(`${phraseResolution(journal)}${montage.length} coupes sur ${surs.length} scènes,`
       + ` aucune deux fois.${phraseCouverture(projet)}`);
   } catch (erreur) {
-    noter(`Génération interrompue : ${erreur.message}`, "alerte");
+    noter(`Génération interrompue : ${erreur.message}`, "alerte", {
+      type: erreur?.name || "Error",
+      ou: String(erreur?.stack || "").split("\n")[1]?.trim().slice(0, 100),
+      enLigne: navigator.onLine ? "oui" : "non",
+    });
     dire(`Génération interrompue : ${erreur.message}`);
   } finally {
+    noter("Génération terminée", tunnel.montage?.length ? "fait" : "alerte", {
+      total: `${((performance.now() - departJournal) / 1000).toFixed(1)}s`,
+      coupes: tunnel.montage?.length || 0,
+      appels: appelsTotal,
+      echecs: appelsReseau.filter((x) => x.erreur || x.statut >= 400).length,
+    });
     tunnel.occupe = "";
     rendreCreer();
   }
