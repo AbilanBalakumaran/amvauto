@@ -1991,7 +1991,7 @@ const clignement = () => absence.duree < CLIGNEMENT;
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-16 20:11";
+const VERSION_PAGE = "2026-09-20 04:44";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4550,6 +4550,7 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
+  fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
   clignement: () => clignement(), absence: () => absence,
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
@@ -17041,14 +17042,14 @@ const TENUE_MAX = 4;
 
    L'unicité des scènes ne suffisait pas : vingt scènes distinctes tirées du même
    épisode racontent quand même le même épisode. Le budget porte donc sur
-   l'épisode, pas sur la scène — passé quinze secondes, ses plans passent derrière
+   l'épisode, pas sur la scène — passé dix-huit secondes, ses plans passent derrière
    tous les autres. C'est une préférence très forte, pas une interdiction : quand
    un animé n'offre pas assez d'épisodes, mieux vaut dépasser que laisser un trou.
 
    Quinze secondes sur un AMV de deux minutes et demie, cela fait au moins dix
    épisodes différents — de quoi parcourir une série au lieu d'en illustrer un
    passage. */
-const BUDGET_EPISODE = 15;
+const BUDGET_EPISODE = 18;
 
 const cleEpisode = (plan) =>
   `${(plan.anime || plan.ref || "?").toLowerCase()}#${plan.episode ?? "?"}`;
@@ -17445,9 +17446,36 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
      manque presque toujours ; taillé autour de lui, c'est exactement ce qu'un
      monteur serait allé chercher. On le réserve aux passages qui frappent, et à
      un seul emploi : le montrer deux fois lui ôterait ce qui en fait un pic. */
+  /* Une coupe s'arrête à la fin de sa scène.
+
+     Un bloc qui dure plus longtemps que la scène où il commence montre la fin
+     d'un plan, puis le début d'un autre : une coupe au milieu du bloc, que
+     personne n'a demandée, et qui tombe à contretemps de la musique. C'est
+     exactement ce qui se voit — « une nouvelle image d'une nouvelle scène au
+     milieu ».
+
+     Dans un fichier H.264, un changement de plan force presque toujours une
+     image-clé : le codeur ne peut plus prédire, il repart de zéro. Les
+     images-clés sont donc la meilleure carte des scènes dont on dispose, et
+     elle ne coûte rien — elle est déjà chargée pour la découpe.
+
+     Le bloc s'arrête donc avant la prochaine image-clé. S'il faut le raccourcir
+     de moitié, on le raccourcit : mieux vaut un plan court que deux moitiés de
+     plans collées. En dessous du minimum lisible, on renonce et l'on garde la
+     tenue voulue — un bloc d'un sixième de seconde ne serait pas un plan. */
+  const finDeScene = (entree) => {
+    const cles = clesConnues.get(mediaDe(plan))?.cles;
+    if (!cles?.length) return entree + tenue;
+    let prochaine = Infinity;
+    for (const t of cles) if (t > entree + 0.04 && t < prochaine) prochaine = t;
+    if (!Number.isFinite(prochaine)) return entree + tenue;
+    const coupee = Math.min(entree + tenue, prochaine);
+    return coupee - entree >= PLAN_MINI ? coupee : entree + tenue;
+  };
+
   const rendre = (entree) => ({
     entree: Math.round(entree * 1000) / 1000,
-    sortie: Math.round((entree + tenue) * 1000) / 1000,
+    sortie: Math.round(finDeScene(entree) * 1000) / 1000,
   });
 
   const pic = plan.lecture?.pic;
