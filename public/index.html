@@ -1405,9 +1405,19 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 }
 .rendu-titre { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .rendu-titre strong { font-size: .88rem; }
-.rendu-titre span { font-size: .74rem; color: var(--doux); }
-.rendu-gestes { display: flex; gap: 6px; align-items: center; }
-.rendu-lecteur { grid-column: 1 / -1; }
+.rendu-titre span { font-size: .74rem; color: var(--doux); text-align: left; }
+.rendu-lecteur { width: 100%; }
+
+/* La ligne entière est le bouton, pas un carré posé dessus : ce qu'on touche sur
+   un téléphone doit faire la largeur du pouce. */
+.rendu-ligne {
+  width: 100%; text-align: left; cursor: pointer;
+  font: inherit; color: inherit;
+}
+.rendu-ligne:active { background: #1d1d1d; }
+.rendu-ligne .rendu-vignette { cursor: inherit; }
+.rendu-chevron { display: flex; align-items: center; color: var(--doux); }
+.rendu-chevron svg { width: 20px; height: 20px; }
 
 /* Un nombre qu'aucun dessin ne porte, posé sur le coin du carré. */
 .action-carree { position: relative; }
@@ -4031,23 +4041,6 @@ function archiver(projet, oui = true) {
   rendreHistoire();
 }
 
-const dateCourte = (instant) => new Date(instant).toLocaleDateString("fr-FR",
-  { day: "numeric", month: "long", year: "numeric" });
-
-/* Renommer un projet, d'où qu'on le demande. */
-function renommerProjet(projet) {
-  if (!projet) return;
-  const nom = prompt("Nom du projet", projet.nom || "");
-  if (nom === null) return;
-  const propre = nom.trim().slice(0, 80);
-  if (!propre || propre === projet.nom) return;
-  projet.nom = propre;
-  sauver();
-  rendreProjet();
-  rendre();
-  rendreHistoire();
-}
-
 /* L'historique : tous les projets, ouverts comme rangés.
 
    Il ne montrait que les archives. Or c'est là qu'on vient chercher « ce que
@@ -4082,6 +4075,8 @@ function carteRenduLocal(id, fiche, apres) {
   let adresseLocale = "";
   return carteDeRendu(rendu, {
     octets,
+    // Le lien sûr vers le montage : les fiches locales sont rangées par projet.
+    projetId: id,
     adresse: async () => {
       if (adresseLocale) return adresseLocale;
       const blob = await octets();
@@ -4090,13 +4085,14 @@ function carteRenduLocal(id, fiche, apres) {
       return adresseLocale;
     },
     supprimer: async (bouton) => {
-      if (!confirm(`Supprimer le rendu de « ${fiche.nom || "ce montage"} » gardé sur l'appareil ?`)) return;
+      if (!confirm(`Supprimer le rendu de « ${fiche.nom || "ce montage"} » gardé sur l'appareil ?`)) return false;
       bouton.disabled = true;
       await effacerBase(`rendu:${id}`).catch(() => {});
       const fiches = lireFichesRendu();
       delete fiches[id];
       try { localStorage.setItem(CLE_RENDUS, JSON.stringify(fiches)); } catch { /* tant pis */ }
       apres?.();
+      return true;
     },
   });
 }
@@ -4151,10 +4147,6 @@ async function peindreRendusEnLigne() {
   morceaux.push(rafraichir);
   hote.replaceChildren(...morceaux);
 }
-
-/* Laquelle des deux faces est montrée. Gardée entre deux passages : on revient
-   presque toujours pour la même chose. */
-let histoireFace = "rendus";
 
 /* ======================================================================
    LE TUNNEL — une musique entre, un AMV sort
@@ -5703,185 +5695,34 @@ function rendreVeille() {
   if (!tendance.pistes.length && !tendance.occupe && !tendance.erreur) chargerVeille().catch(() => {});
 }
 
+/* L'Historique : les rendus, et rien d'autre.
+
+   Il avait deux faces — les MONTAGES, qu'on rouvrait pour continuer à
+   travailler, et les RENDUS, qu'on vient regarder. La première n'a plus d'objet :
+   le tunnel fabrique son montage pour chaque musique, il n'y a plus de projet à
+   ouvrir, à ranger ni à renommer à la main. Elle obligeait à choisir une face
+   avant d'atteindre ce qu'on cherchait toujours.
+
+   Reste la liste des rendus, et la page de chacun. */
 function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
-  /* La liste se reconstruit : le lecteur qui y vivait part avec elle, et il
-     faut lui retirer sa source avant, sinon il garde son décodeur. */
-  lecteurHistoire?.();
-  const morceaux = [];
-  /* Du plus récent au plus ancien, et rien d'autre.
+  /* La vue se reconstruit : le lecteur qui y vivait part avec elle, et il faut
+     lui retirer sa source avant, sinon il garde son décodeur. */
+  if (!renduOuvert) lecteurHistoire?.();
 
-     Les montages rangés partaient en bas de la liste. Ranger une carte la
-     faisait donc sauter sous le doigt qui venait de l'appuyer, et la ressortir
-     la ramenait ailleurs : on rangeait au jugé, sans jamais savoir où l'on en
-     était. Une liste se lit par ses places ; ce qui les fixe ici est la date de
-     création, qui ne change jamais.
-
-     On perd le regroupement — rangés d'un côté, ouverts de l'autre. Chaque
-     carte le dit déjà pour son compte : sa ligne porte « rangé le … » ou
-     « ouvert », le montage courant garde son cerne vert, et le geste d'état
-     n'a pas la même silhouette d'un côté et de l'autre. */
-  const tous = [...(state.projets || [])].sort((a, b) => (b.cree || 0) - (a.cree || 0));
-
-  /* Deux choses différentes vivent dans cet onglet, et on n'y vient jamais
-     pour les deux à la fois : les MONTAGES, qu'on rouvre pour continuer à
-     travailler, et les RENDUS, qu'on vient regarder ou enregistrer. Les
-     empiler obligeait à faire défiler l'un pour atteindre l'autre. Une bascule,
-     et l'on voit celui qu'on cherche. */
-  const bascule = document.createElement("nav");
-  bascule.className = "reglages-nav";
-  bascule.style.padding = "0 0 var(--e3)";
-  const faces = [["rendus", "Rendus"], ["projets", "Montages"]];
-  for (const [quoi, dit] of faces) {
-    const bouton = document.createElement("button");
-    bouton.type = "button";
-    bouton.className = `reglages-onglet${histoireFace === quoi ? " actif" : ""}`;
-    bouton.textContent = dit;
-    bouton.addEventListener("click", () => {
-      if (histoireFace === quoi) return;
-      histoireFace = quoi;
-      rendreHistoire();
-    });
-    bascule.append(bouton);
+  if (renduOuvert) {
+    vue.replaceChildren(...pageDeRendu(renduOuvert));
+    // Arriver sur une page en son milieu, c'est arriver nulle part : « main » est
+    // ce qui défile ici, pas la fenêtre.
+    document.querySelector("main")?.scrollTo(0, 0);
+    return;
   }
-  morceaux.push(bascule);
 
   const rendus = document.createElement("div");
   rendus.id = "histoire-rendus";
   rendus.style.padding = "0";
-  rendus.hidden = histoireFace !== "rendus";
-  morceaux.push(rendus);
-
-  const titre = document.createElement("div");
-  titre.className = "lecteur-titre";
-  titre.style.padding = "var(--e3) 0 0";
-  titre.textContent = `Tous les montages (${tous.length})`;
-  titre.hidden = histoireFace !== "projets";
-  morceaux.push(titre);
-
-  if (!tous.length) {
-    const vide = note("Aucun montage pour l'instant. Le premier que tu créeras apparaîtra ici, et il y restera.");
-    vide.hidden = histoireFace !== "projets";
-    morceaux.push(vide);
-    vue.replaceChildren(...morceaux);
-    peindreRendusEnLigne().catch(() => {});
-    return;
-  }
-
-  const liste = document.createElement("div");
-  liste.className = "projets colonne";
-  liste.hidden = histoireFace !== "projets";
-  for (const projet of tous) {
-    const range = estArchive(projet);
-    const carte = document.createElement("div");
-    carte.className = `projet-carte archive${range ? "" : " actif"}`;
-
-    const vignette = document.createElement("span");
-    vignette.className = "projet-vignette";
-    const image = projet.plans.find((plan) => plan.preview)?.preview;
-    if (image) vignette.style.backgroundImage = `url("${image}")`;
-    else vignette.innerHTML = icone("pellicule");
-
-    const texte = document.createElement("span");
-    texte.className = "projet-texte";
-    const nom = document.createElement("span");
-    nom.className = "projet-nom";
-    nom.textContent = projet.nom;
-    const sous = document.createElement("span");
-    sous.className = "projet-sous";
-    sous.textContent = `${projet.plans.length} plan${projet.plans.length > 1 ? "s" : ""} · ${horloge(total(projet))}`
-      + `${projet.rythme?.bpm ? ` · ${Math.round(projet.rythme.bpm)} BPM` : ""}`
-      + (range ? ` · rangé le ${dateCourte(projet.archive)}`
-        : projet.id === state.actif ? " · ouvert en ce moment" : " · ouvert");
-    texte.append(nom, sous);
-
-    const gestes = document.createElement("span");
-    gestes.className = "archive-gestes";
-
-    /* Les libellés disaient chacun un geste que son dessin dit mieux : le sens
-       part dans l'infobulle et dans l'étiquette, que les lecteurs d'écran
-       lisent.
-
-       « Ouvrir » et « Ranger » n'en font plus qu'un. C'étaient deux boutons
-       pour un seul état, et sur un montage rangé ils faisaient presque la même
-       chose : l'un et l'autre le ressortaient. Un seul bouton dit maintenant
-       où en est le montage, et le fait passer de l'autre côté.
-
-       Ce que chaque état appelle n'est pas le même geste. Un montage ouvert vit
-       déjà dans la barre des projets, en haut de l'atelier : pour y aller, on
-       l'y touche. Ici, le geste qui manque est de l'en retirer. Un montage
-       rangé, lui, n'est nulle part ailleurs — le ressortir et l'ouvrir sont le
-       même mouvement, et le bouton les fait d'un coup. */
-    const etat = document.createElement("button");
-    etat.type = "button";
-    etat.className = "action-carree";
-    direCarre(etat, range ? "Ressortir et ouvrir ce montage" : "Ranger ce montage",
-      range ? "ressortir" : "ranger");
-    etat.addEventListener("click", () => {
-      if (!range) { archiver(projet, true); return; }
-      archiver(projet, false);
-      changerProjet(projet.id);
-      rendreProjet();
-      rendre();
-      /* On reste où l'on est. Ressortir un montage envoyait sur l'atelier :
-         c'était décider à la place de qui regarde sa liste, et en plein
-         parcours de rangement cela la lui retirait des mains.
-
-         Mais il faut alors redessiner cette liste soi-même. Le saut d'onglet
-         la reconstruisait au passage ; sans lui, elle restait sur l'état
-         d'avant — « archiver » redessine, puis « changerProjet » change le
-         montage courant, et plus personne ne le disait. La carte annonce
-         maintenant « ouvert en ce moment » dès l'appui, et son geste bascule
-         avec elle. */
-      rendreHistoire();
-    });
-
-    const renommer = document.createElement("button");
-    renommer.type = "button";
-    renommer.className = "action-carree";
-    direCarre(renommer, "Renommer ce montage", "renommer");
-    renommer.addEventListener("click", () => renommerProjet(projet));
-
-    const jeter = document.createElement("button");
-    jeter.type = "button";
-    jeter.className = "action-carree danger";
-    direCarre(jeter, "Supprimer ce montage", "supprimer");
-    jeter.addEventListener("click", () => {
-      if (!confirm(`Supprimer « ${projet.nom} » définitivement ? Ses plans et ses coupes seront perdus, ici comme sur les autres appareils.`)) return;
-      supprimerProjet(projet);
-      rendreHistoire();
-    });
-
-    gestes.append(etat, renommer, jeter);
-    carte.append(vignette, texte, gestes);
-
-    /* La fiche sous la carte, quand le montage en a une.
-
-       Elle est dans un enveloppe plutôt que dans la carte : la carte est une
-       grille de trois colonnes, et un pavé de texte y aurait sa place à côté de
-       la vignette au lieu d'être dessous. */
-    /* Sous la carte : ce qu'on fait d'un montage une fois qu'il existe —
-       l'exporter pour le remonter, et copier sa fiche pour le publier. */
-    const enveloppe = document.createElement("div");
-    enveloppe.className = "archive-bloc";
-    enveloppe.append(carte);
-
-    const pied = document.createElement("div");
-    pied.className = "archive-pied";
-    // « etat » est déjà le bouton d'état de la carte : celui-ci dit autre chose.
-    const suivi = document.createElement("p");
-    suivi.className = "tunnel-dit";
-    suivi.style.whiteSpace = "pre-line";
-    pied.append(boutonProjetDaVinci(projet, suivi));
-    if (projet.seo?.titre) pied.append(blocFicheSeo(projet.seo));
-    pied.append(suivi);
-    enveloppe.append(pied);
-    liste.append(enveloppe);
-  }
-  morceaux.push(liste);
-  morceaux.push(note("La flèche qui rentre dans la boîte range un montage : il quitte la barre des projets sans rien perdre, et ses plans, ses coupes et sa musique l'attendent. La flèche qui s'échappe du cadre le remet en place et le rouvre, sans quitter cette liste."));
-  vue.replaceChildren(...morceaux);
+  vue.replaceChildren(rendus);
   peindreRendusEnLigne().catch(() => {});
 }
 
@@ -6543,7 +6384,8 @@ window.__banc = {
   tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
   majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
   journal: () => journalTunnel, noter: (t, n) => noter(t, n),
-  rendreHistoire: () => rendreHistoire(),
+  rendreHistoire: () => rendreHistoire(), renduOuvert: () => renduOuvert,
+  garderRendu: (pr, b, e) => garderRendu(pr, b, e),
   parolesDuPassage: (a, b) => parolesDuPassage(a, b),
   grilleDeCoupes: (...a) => grilleDeCoupes(...a), attendreCles: (...a) => attendreCles(...a),
   mesurerEnTetes: (...a) => mesurerEnTetes(...a), dureeParEntete: (x) => dureeParEntete(x),
@@ -18016,16 +17858,23 @@ const direRendu = (rendu, avecNom = true) => [
 
    Là où le partage de fichiers n'existe pas — un ordinateur — le bouton
    redevient un téléchargement ordinaire. */
-function boutonEnregistrer(chercher, nom, titre) {
+function boutonEnregistrer(chercher, nom, titre, libelle = "") {
   const bouton = document.createElement("button");
   bouton.type = "button";
-  bouton.className = "action-carree";
-  bouton.title = "Télécharger";
-  bouton.innerHTML = icone("exporter");
+  /* Deux formes pour le même geste. Dans une liste, un carré : la place manque.
+     Sur la page d'un rendu, un bouton qui dit ce qu'il fait — c'est le geste
+     qu'on vient y chercher, il n'a pas à se deviner à un dessin. */
+  bouton.className = libelle ? "archive-action fort" : "action-carree";
+  bouton.title = libelle || "Télécharger";
+  if (libelle) bouton.textContent = libelle; else bouton.innerHTML = icone("exporter");
   let pret = null;
   /* Le libellé d'un bouton carré est son infobulle et son dessin : le triangle
      d'enregistrement remplace la flèche quand les octets sont là. */
-  const dire = (quoi, dessin) => { bouton.title = quoi; bouton.innerHTML = icone(dessin); };
+  const dire = (quoi, dessin) => {
+    bouton.title = quoi;
+    if (libelle) bouton.textContent = quoi === "Télécharger" ? libelle : quoi;
+    else bouton.innerHTML = icone(dessin);
+  };
 
   const versFichier = (blob) => new File([blob], nom, { type: blob.type || "video/mp4" });
 
@@ -18097,19 +17946,18 @@ function imageDuRendu(rendu) {
 /* Le lecteur ouvert dans l'historique, s'il y en a un. Un seul à la fois. */
 let lecteurHistoire = null;
 
-function carteDeRendu(rendu, { octets, adresse, supprimer }) {
-  const carte = document.createElement("div");
-  carte.className = "rendu-carte";
+function carteDeRendu(rendu, acces) {
+  const ligne = document.createElement("button");
+  ligne.type = "button";
+  ligne.className = "rendu-carte rendu-ligne";
 
-  const vignette = document.createElement("button");
-  vignette.type = "button";
+  const vignette = document.createElement("span");
   vignette.className = "rendu-vignette";
-  vignette.title = "Lire ce rendu";
   vignette.innerHTML = icone("play");
   const image = imageDuRendu(rendu);
   if (image) vignette.style.backgroundImage = `url("${image}")`;
 
-  const titre = document.createElement("div");
+  const titre = document.createElement("span");
   titre.className = "rendu-titre";
   const nom = document.createElement("strong");
   nom.textContent = rendu.projet || rendu.nom;
@@ -18117,68 +17965,145 @@ function carteDeRendu(rendu, { octets, adresse, supprimer }) {
   sous.textContent = direRendu(rendu, false);
   titre.append(nom, sous);
 
-  const gestes = document.createElement("div");
-  gestes.className = "rendu-gestes";
+  const chevron = document.createElement("span");
+  chevron.className = "rendu-chevron";
+  chevron.innerHTML = icone("avancer");
 
-  const garder = boutonEnregistrer(octets, rendu.nom, rendu.projet || rendu.nom);
-  const jeter = document.createElement("button");
-  jeter.type = "button";
-  jeter.className = "action-carree danger";
-  jeter.title = "Supprimer";
-  jeter.innerHTML = icone("supprimer");
-  jeter.addEventListener("click", () => supprimer(jeter));
-  gestes.append(garder, jeter);
+  ligne.append(vignette, titre, chevron);
+  ligne.addEventListener("click", () => ouvrirRendu(rendu, acces));
+  return ligne;
+}
 
-  /* Le lecteur prend toute la largeur, sous la ligne : une vidéo coincée dans
-     une colonne de soixante-douze points ne se regarde pas. */
-  let lecteur = null;
-  /* Refermer proprement : une balise retirée du document continue de tenir sa
-     session de décodage tant qu'elle garde sa source. Sur iOS, WebKit n'en
-     accorde qu'une poignée, et deux cartes ouvertes suffisaient à en manquer. */
+/* Le rendu ouvert, s'il y en a un, avec ce qu'on sait faire de son fichier. */
+let renduOuvert = null;
+
+function ouvrirRendu(rendu, acces) {
+  renduOuvert = { rendu, acces };
+  /* On y arrive aussi depuis le tunnel, quand le rendu vient de tomber : la
+     page vit dans l'Historique, et c'est là qu'il faut se retrouver. */
+  const onglet = document.querySelector('.tab-btn[data-tab="histoire"]');
+  if ($("vue-histoire").hidden && onglet) onglet.click();
+  else rendreHistoire();
+}
+
+function fermerRendu() {
+  renduOuvert = null;
+  lecteurHistoire?.();
+  rendreHistoire();
+}
+
+/* Le projet dont un rendu est sorti — celui qui porte la fiche et les plans.
+
+   Un rendu gardé sur l'appareil connaît l'identifiant du montage : c'est le
+   lien sûr. Un rendu descendu du grenier ne porte que son nom de projet, parce
+   que c'est tout ce que le dépôt garde — on le retrouve par là, et parfois pas
+   du tout : un rendu fait depuis un autre téléphone n'a pas son montage ici. */
+function projetDuRendu(rendu, acces) {
+  if (acces?.projetId) {
+    const par = (state.projets || []).find((x) => x.id === acces.projetId);
+    if (par) return par;
+  }
+  const nom = (rendu.projet || "").trim().toLowerCase();
+  if (!nom) return null;
+  return (state.projets || []).find((x) => (x.nom || "").trim().toLowerCase() === nom) || null;
+}
+
+/* La page d'un rendu : la vidéo, et les trois choses qu'on en fait.
+
+   Tout cela vivait sur la ligne de la liste — un lecteur qui s'ouvrait entre
+   deux autres cartes, un carré pour enregistrer, un carré pour supprimer, et la
+   fiche pliée en dessous. Sur un téléphone, cela faisait quatre cibles de la
+   taille d'un ongle et une vidéo large de trois cents points. Ici, la vidéo
+   prend la page, et chaque geste porte son nom. */
+function pageDeRendu({ rendu, acces }) {
+  const morceaux = [];
+
+  const retour = document.createElement("button");
+  retour.type = "button";
+  retour.className = "archive-action";
+  retour.textContent = "‹ Tous les rendus";
+  retour.addEventListener("click", fermerRendu);
+  morceaux.push(retour);
+
+  const titre = document.createElement("div");
+  titre.className = "lecteur-titre";
+  titre.style.padding = "var(--e3) 0 0";
+  titre.textContent = rendu.projet || rendu.nom;
+  const sous = document.createElement("p");
+  sous.className = "tunnel-dit";
+  sous.textContent = direRendu(rendu, false);
+  morceaux.push(titre, sous);
+
+  /* Le lecteur est là dès l'arrivée : on est venu pour le regarder. Il ne
+     charge que son en-tête tant qu'on ne le lance pas. */
+  const lecteur = document.createElement("video");
+  lecteur.className = "rendu-lecteur";
+  lecteur.controls = true;
+  lecteur.playsInline = true;
+  lecteur.preload = "metadata";
+  const image = imageDuRendu(rendu);
+  if (image) lecteur.poster = image;
+  lecteur.style.cssText = "width:100%;border-radius:10px;display:block;background:#000";
+  morceaux.push(lecteur);
+  /* Refermer proprement : une balise retirée du document tient sa session de
+     décodage tant qu'elle garde sa source, et WebKit n'en accorde qu'une
+     poignée. */
   const refermer = () => {
-    if (!lecteur) return;
     lecteur.pause();
     lecteur.removeAttribute("src");
     lecteur.load();
-    lecteur.remove();
-    lecteur = null;
-    vignette.innerHTML = icone("play");
     if (lecteurHistoire === refermer) lecteurHistoire = null;
   };
-  vignette.addEventListener("click", async () => {
-    if (lecteur) { refermer(); return; }
-    /* Un seul lecteur ouvert dans toute la liste : celui d'avant se referme.
-       Ils s'empilaient — on ouvrait trois rendus, trois vidéos chargeaient et
-       jouaient en même temps. */
-    lecteurHistoire?.();
-    vignette.disabled = true;
-    const src = await adresse();
-    vignette.disabled = false;
-    if (!src) { sous.textContent = "le fichier n'est plus là"; return; }
-    lecteurHistoire = refermer;
-    lecteur = document.createElement("video");
-    lecteur.className = "rendu-lecteur";
-    lecteur.src = src;
-    lecteur.controls = true;
-    lecteur.playsInline = true;
-    lecteur.preload = "metadata";
-    if (image) lecteur.poster = image;
-    lecteur.style.cssText = "width:100%;border-radius:10px;display:block;background:#000;margin-top:10px";
-    carte.append(lecteur);
-    vignette.innerHTML = icone("pause");
-    lecteur.play().catch(() => { /* l'appareil demandera un second geste */ });
+  lecteurHistoire?.();
+  lecteurHistoire = refermer;
+  Promise.resolve(acces.adresse()).then((src) => {
+    if (lecteurHistoire !== refermer) return;
+    if (src) lecteur.src = src;
+    else sous.textContent = "Le fichier n'est plus là.";
+  }).catch(() => { sous.textContent = "Le fichier n'a pas pu être ouvert."; });
+
+  const suivi = document.createElement("p");
+  suivi.className = "tunnel-dit";
+  suivi.style.whiteSpace = "pre-line";
+
+  const gestes = document.createElement("div");
+  gestes.className = "tunnel-sorties";
+  gestes.append(boutonEnregistrer(acces.octets, rendu.nom, rendu.projet || rendu.nom,
+    "Télécharger en MP4"));
+
+  /* Reprendre le montage demande le montage, pas la vidéo : sans lui, le bouton
+     mentirait. On dit alors pourquoi il n'est pas là. */
+  const projet = projetDuRendu(rendu, acces);
+  if (projet?.plans?.length) gestes.append(boutonProjetDaVinci(projet, suivi));
+  morceaux.push(gestes);
+  if (!projet?.plans?.length) {
+    morceaux.push(note("L'export DaVinci demande le montage dont cette vidéo est sortie —"
+      + " ses plans, leurs points d'entrée et sa musique. Il n'est pas sur cet appareil :"
+      + " ce rendu a été fait ailleurs, ou son montage a été supprimé depuis."));
+  }
+  morceaux.push(suivi);
+
+  /* La fiche dépliée : sur la page d'un rendu, c'est ce qu'on vient chercher
+     pour publier. Dans une liste, elle était pliée pour ne pas la remplir. */
+  if (projet?.seo?.titre) morceaux.push(blocFicheSeo(projet.seo, true));
+  else {
+    morceaux.push(note("Aucune fiche à publier n'a été gardée pour ce rendu."
+      + " Les montages faits depuis l'ajout de la fiche en ont une."));
+  }
+
+  const jeter = document.createElement("button");
+  jeter.type = "button";
+  jeter.className = "archive-action danger";
+  jeter.textContent = "Supprimer ce rendu";
+  jeter.addEventListener("click", async () => {
+    if (await acces.supprimer(jeter)) fermerRendu();
   });
-
-  carte.append(vignette, titre, gestes);
-
-  /* La fiche du montage dont cette vidéo est sortie. Le grenier garde le nom du
-     projet avec le fichier : c'est ce nom qui fait le lien. Et c'est ici, devant
-     la vidéo prête, qu'on a besoin du titre et des tags. */
-  const source = state.projets.find((projet) => projet.seo?.titre
-    && projet.nom === (rendu.projet || ""));
-  if (source) carte.append(blocFicheSeo(source.seo));
-
-  return carte;
+  const bas = document.createElement("div");
+  bas.className = "tunnel-sorties";
+  bas.style.padding = "var(--e3) 0 0";
+  bas.append(jeter);
+  morceaux.push(bas);
+  return morceaux;
 }
 
 function carteRendu(rendu, apres) {
@@ -18188,13 +18113,16 @@ function carteRendu(rendu, apres) {
     // Lu par tranches : la lecture démarre sans avoir reçu les quatre-vingt-
     // treize mégaoctets.
     adresse: () => adresseRendu(rendu),
+    // Rend « true » quand le fichier est vraiment parti : la page du rendu s'en
+    // sert pour se refermer, et ne doit pas le faire sur un refus de confirmation.
     supprimer: async (bouton) => {
       if (!confirm(`Supprimer « ${rendu.projet || rendu.nom} » du grenier ?`
-        + " La vidéo sera perdue, ici comme sur les autres appareils.")) return;
+        + " La vidéo sera perdue, ici comme sur les autres appareils.")) return false;
       bouton.disabled = true;
       await fetch(`/api/grenier?code=${encodeURIComponent(coffre.code)}&nom=${encodeURIComponent(rendu.nom)}`,
         { method: "DELETE" }).catch(() => null);
       apres?.();
+      return true;
     },
   });
 }
