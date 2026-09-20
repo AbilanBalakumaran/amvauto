@@ -1871,9 +1871,9 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
     <button type="button" class="tab-btn active" data-tab="creer" title="Créer" aria-label="Créer un AMV">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l10-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
     </button>
-    <button type="button" class="tab-btn" data-tab="explorer" title="Explorer" aria-label="Explorer">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-    </button>
+    <!-- L'explorateur de rushs n'a plus d'onglet : c'est le tunnel qui cherche
+         les scènes, et l'utilisateur n'a rien à y fouiller. Sa section reste
+         dans la page parce que sa machinerie sert encore à chercher. -->
     <button type="button" class="tab-btn" data-tab="veille" title="Veille" aria-label="Veille musicale">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18V9"/><path d="M10 18V5"/><path d="M16 18v-7"/><path d="M22 18V8"/></svg>
       <span class="tab-badge" id="badge" hidden>0</span>
@@ -2105,7 +2105,7 @@ const clignement = () => absence.duree < CLIGNEMENT;
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 06:33";
+const VERSION_PAGE = "2026-09-20 07:16";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2362,7 +2362,7 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     $("vue-creer").hidden = onglet !== "creer";
     $("vue-veille").hidden = onglet !== "veille";
     if (onglet === "veille") rendreVeille();
-    $("vue-explorer").hidden = onglet !== "explorer";
+    $("vue-explorer").hidden = true;
     $("vue-projet").hidden = true;
     $("vue-histoire").hidden = onglet !== "histoire";
     $("vue-apropos").hidden = onglet !== "apropos";
@@ -3901,6 +3901,23 @@ const emotionDe = (cle) => EMOTIONS.find((e) => e.cle === cle) || EMOTIONS[3];
 const emotionSuggeree = (energie) => (
   energie >= 3 ? "action" : energie === 2 ? "elan" : energie === 1 ? "tension" : "calme");
 
+/* L'aperçu n'est plus montré.
+
+   Le tunnel rend un fichier, pas une lecture : on décrit ce qu'on veut, on
+   génère, on télécharge. Toute la machinerie de préparation — imports,
+   extraits, fabrique — reste en place parce qu'elle sert à construire le
+   montage, mais elle ne s'adresse plus à personne.
+
+   Ce qui l'annonçait s'éteint donc : le bandeau posé sur le moniteur, et les
+   trois notifications système qui disaient « Ton AMV se prépare », « L'aperçu
+   est prêt », « Les plans sont là ». Elles parlaient d'un écran que plus
+   personne ne regarde — et une notification qui annonce ce qu'on ne peut pas
+   voir est une notification qui inquiète pour rien.
+
+   Un seul drapeau, pour que tout revienne ensemble le jour où l'aperçu
+   revient. */
+const APERCU_MONTRE = false;
+
 const tunnel = {
   fichier: null, rythme: null, etiquettes: [],
   portee: "mixte", animes: [], montage: null, occupe: "", message: "",
@@ -5291,6 +5308,7 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
+  majPreparation: (pr) => majPreparation(pr), majNotificationTransfert: () => majNotificationTransfert(),
   rendreProjet: () => rendreProjet(),
   tunnel: () => tunnel, rendreCreer: () => rendreCreer(),
   fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
@@ -9515,7 +9533,11 @@ function pisteComplete(projet) {
   ajouter.innerHTML = icone("plus");
   ajouter.title = "Ajouter un plan depuis l'explorateur";
   ajouter.setAttribute("aria-label", "Ajouter un plan");
-  ajouter.addEventListener("click", () => document.querySelector('[data-tab="explorer"]').click());
+  /* L'explorateur n'a plus d'onglet : ce bouton pointait vers un bouton
+     disparu, et l'appui levait une erreur. Il vit dans l'atelier, qui n'est
+     plus montré non plus — on le garde muet plutôt que de le retirer, le jour
+     où l'un ou l'autre revient. */
+  ajouter.addEventListener("click", () => document.querySelector('[data-tab="explorer"]')?.click());
 
   enveloppe.append(entetePiste(projet), cadre, boutonSon(projet), ajouter);
   return enveloppe;
@@ -12993,6 +13015,7 @@ function majPreparation(projet) {
   const bandeau = $("preparation");
   const dit = $("preparation-dit");
   if (!bandeau || !dit) return;
+  if (!APERCU_MONTRE) { bandeau.hidden = true; return; }
   const etat = phraseAvancement(projet);
 
   // Les gestes du chargement : tant qu'il y a du travail, ou des abandons à
@@ -14153,6 +14176,7 @@ const RYTHME_AVIS = 20000;
    seule bannière, toujours, au prix d'une alerte par mise à jour : d'où les
    vingt secondes entre deux, et le texte qui doit avoir changé. */
 function majNotificationTransfert() {
+  if (!APERCU_MONTRE) return;
   if (!sentinelle.prevenir || !("serviceWorker" in navigator)) return;
   const projet = projetActif();
   if (!projet) return;
@@ -14315,6 +14339,7 @@ function raisonDominante() {
 let apercuAnnonce = "";
 
 function annoncerApercuPret(projet, total) {
+  if (!APERCU_MONTRE) return;
   const marque = `${projet?.id}:${total}`;
   if (!total || apercuAnnonce === marque) return;
   apercuAnnonce = marque;
@@ -14539,7 +14564,7 @@ function finirVeille(prets, total) {
   sentinelle.voulue = false;
   relacherVeille();
   majBoutonVeille();
-  if (!sentinelle.prevenir || !total) return;
+  if (!APERCU_MONTRE || !sentinelle.prevenir || !total) return;
   navigator.serviceWorker?.ready?.then((enregistrement) => {
     const projet = projetActif();
     const plans = projet?.plans || [];
