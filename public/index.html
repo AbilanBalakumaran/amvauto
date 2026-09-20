@@ -2146,7 +2146,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 12:35";
+const VERSION_PAGE = "2026-09-20 12:54";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -18995,7 +18995,7 @@ function ecartDIntention(plan, section, entree, sortie) {
   return 1 - Math.max(0, Math.min(1, note));
 }
 
-function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null) {
+function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null, moments = null) {
   const source = dureeSource(plan);
   if (!(source > 0) || source < PLAN_MINI) return null;
   const tenue = Math.min(duree, Math.max(PLAN_MINI, source));
@@ -19075,16 +19075,35 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null
      le début du rush, quoi qu'il montre. On les classe donc par ce que le
      passage demande, et l'on prend la meilleure. Un rush réemployé prend la
      suivante, pour ne pas remontrer le même instant. */
+  /* Un moment déjà posé ne se reprend pas.
+
+     Un rush réemployé doit montrer autre chose, sinon le réemploi se voit comme
+     une redite. On écarte donc les entrées déjà servies avant de classer ; s'il
+     n'en reste aucune, on reprend le classement complet — la musique passe
+     devant, mais la fenêtre sera au moins la moins mauvaise. */
+  const libre = (entree) => !moments || !moments.has(`${idRush(plan)}@${(Math.round(entree * 1000) / 1000).toFixed(2)}`);
+
   const cases = casesUtiles(plan, tenue, graine);
   if (cases && cases.length) {
-    if (!section) return rendre(cases[pris % cases.length]);
-    const classees = cases
+    const ouvertes = cases.filter(libre);
+    const pioche = ouvertes.length ? ouvertes : cases;
+    if (!section) return rendre(pioche[pris % pioche.length]);
+    const classees = pioche
       .map((entree) => ({ entree, ecart: ecartDIntention(plan, section, entree, finDeScene(entree)) }))
       .sort((a, b) => a.ecart - b.ecart);
-    return rendre(classees[pris % classees.length].entree);
+    return rendre(classees[ouvertes.length ? 0 : pris % classees.length].entree);
   }
 
   const { combien, pas, ordre } = morceauxDe(plan, tenue, graine);
+  /* On avance dans l'ordre dispersé jusqu'à une case qui n'a pas servi : sans
+     cela, un rush employé plus souvent qu'il n'a de cases reviendrait au même
+     instant, et c'est la seule redite qu'on ne s'autorise pas. */
+  for (let saut = 0; saut < combien; saut += 1) {
+    const place = ordre[(pris + saut) % combien];
+    const milieu = place * pas + pas / 2;
+    const candidate = Math.max(0, Math.min(milieu - tenue / 2, source - tenue));
+    if (libre(candidate)) return rendre(candidate);
+  }
   const place = ordre[pris % combien];
   // Centré dans sa case : un morceau collé au bord en mordrait un autre.
   const milieu = place * pas + pas / 2;
@@ -19213,20 +19232,27 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
   const budgets = new Map();
   const montage = [];
 
-  /* ---- Une scène, une seule fois, dans tout l'AMV -------------------------
+  /* ---- Couvrir la musique d'abord, ne rien répéter ensuite ----------------
 
-     C'était une pénalité de cent points : très lourde, mais franchissable quand
-     il ne restait rien d'autre. Mesuré sur une musique de 1:43 à 134 BPM —
-     quatre-vingt-sept cases : au-dessus de quatre-vingt-sept sources, zéro
-     doublon déjà ; à soixante sources, vingt-sept coupes en double et une scène
-     vue quatre fois ; à quarante, quarante-sept doublons et jusqu'à cinq
-     emplois. Le barème n'était donc pas en cause : l'arithmétique l'était.
-     Quatre-vingt-sept cases et quarante scènes ne peuvent pas être toutes
-     distinctes.
+     La règle a été dure un temps : une scène employée sortait du vivier, et le
+     nombre de coupes suivait le vivier. C'était juste sur le papier et faux à
+     l'usage — « des fois on a un AMV de cinquante secondes alors que la musique
+     fait trois minutes ». Quarante scènes trouvées, cent vingt coupes
+     nécessaires : le montage s'arrêtait à la quarantième et laissait deux
+     minutes de musique sans image. Un AMV qui s'arrête au tiers n'est pas un
+     AMV.
 
-     La règle devient dure — une scène employée sort du vivier — et c'est alors
-     le nombre de cases qui suit le vivier, jamais l'inverse. */
+     L'ordre des priorités s'inverse donc, et c'est le bon ordre : la durée de la
+     musique est une promesse, l'unicité une préférence. Tant qu'il reste une
+     scène neuve, c'est elle qui sort — la pénalité de cent points y veille, et
+     elle vaut plus que tout le reste réuni. Quand il n'en reste plus, on reprend
+     une scène déjà vue, mais JAMAIS au même endroit : un autre instant du même
+     rush n'est pas la même image. Et jamais deux fois de suite la même source.
+
+     Ce qui reste interdit, donc : le même moment deux fois. Ce qui devient
+     possible : le même fichier, ailleurs. */
   const dejaPris = new Set();
+  const momentsPris = new Set();
 
   /* Ce que chaque section voudrait, si les scènes ne manquaient pas. */
   const voulues = sections.map((section) => {
@@ -19234,7 +19260,9 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
     return Math.max(1, Math.round((section.fin - section.debut) / tenue));
   });
   const totalVoulu = voulues.reduce((a, b) => a + b, 0);
-  const budgetCases = Math.min(totalVoulu, sources.length);
+  /* Le budget est celui de la musique. Il valait « le plus petit du voulu et du
+     vivier », et c'est exactement ce qui coupait l'AMV au tiers. */
+  const budgetCases = totalVoulu;
 
   /* Réparti au prorata, avec les plus forts restes d'abord : la somme doit
      tomber juste sur le budget, sinon le doublon rentre par la petite porte. */
@@ -19321,24 +19349,35 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
           choix = suite.find((candidat) => !dejaPris.has(String(idRush(candidat)))) || null;
         }
       } else {
-        let meilleure = Infinity;
-        for (const plan of sources) {
-          // La règle dure : une scène posée n'est plus un candidat.
-          if (dejaPris.has(String(idRush(plan)))) continue;
-          /* Deux blocs de suite venus du même rush, c'est le plan d'origine qui
-             réapparaît : exactement ce qu'un mashup doit éviter. La règle est
-             dure, pas une pénalité — sauf s'il n'y a rien d'autre. */
-          if (precedent && sources.length > 1 && String(idRush(plan)) === String(idRush(precedent))) continue;
-          // Un rush trop court pour la case n'est pas disqualifié — il n'y en
-          // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
-          const court = dureeSource(plan) < vise ? 3 : 0;
-          const note = noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie, graine) + court;
-          if (note < meilleure) { meilleure = note; choix = plan; }
+        /* Deux tours : les scènes neuves, puis toutes. Le premier tour est la
+           règle, le second la promesse de couvrir la musique. */
+        for (const neuvesSeulement of [true, false]) {
+          let meilleure = Infinity;
+          for (const plan of sources) {
+            if (neuvesSeulement && dejaPris.has(String(idRush(plan)))) continue;
+            /* Deux blocs de suite venus du même rush, c'est le plan d'origine qui
+               réapparaît : exactement ce qu'un mashup doit éviter. La règle est
+               dure, pas une pénalité — sauf s'il n'y a rien d'autre. */
+            if (precedent && sources.length > 1 && String(idRush(plan)) === String(idRush(precedent))) continue;
+            // Un rush trop court pour la case n'est pas disqualifié — il n'y en
+            // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
+            const court = dureeSource(plan) < vise ? 3 : 0;
+            const note = noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie, graine) + court;
+            if (note < meilleure) { meilleure = note; choix = plan; }
+          }
+          if (choix) break;
+        }
+        /* Il ne reste qu'une source dans tout le projet : la règle « pas deux
+           fois de suite la même » ne peut plus être tenue, et tenir la musique
+           vaut mieux que la tenir. */
+        if (!choix && precedent) {
+          choix = sources.find((plan) => dureeSource(plan) >= PLAN_MINI) || null;
         }
       }
       if (!choix) break;
 
-      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu, graine, section);
+      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu, graine, section,
+        momentsPris);
       if (!bornes) break;
       // Combien de plans d'affilée dans la même famille : c'est ce qui rend le
       // sur-place de plus en plus coûteux.
@@ -19377,6 +19416,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       });
       choix.__pris = (choix.__pris || 0) + 1;
       dejaPris.add(String(idRush(choix)));
+      momentsPris.add(`${idRush(choix)}@${bornes.entree.toFixed(2)}`);
       vus.set(choix.id, rang);
       const cle = cleEpisode(choix);
       budgets.set(cle, (budgets.get(cle) || 0) + pose);
