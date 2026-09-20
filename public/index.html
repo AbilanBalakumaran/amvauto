@@ -2137,7 +2137,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 07:52";
+const VERSION_PAGE = "2026-09-20 09:35";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4186,6 +4186,10 @@ function blocNarration() {
 
     const choix = document.createElement("select");
     choix.className = "trame-choix";
+    /* Changer une émotion annule le montage : pendant un rendu, cela reviendrait
+       à jeter ce que le serveur est en train d'assembler. L'écoute, elle, reste
+       ouverte — elle ne change rien. */
+    choix.disabled = Boolean(tunnel.occupe);
     choix.setAttribute("aria-label", `Émotion du passage ${minutageCourt(section.debut)}`);
     for (const emotion of EMOTIONS) {
       const option = document.createElement("option");
@@ -4229,6 +4233,7 @@ function blocAnime() {
     pastille.type = "button";
     pastille.className = `pastille${tunnel.portee === cle ? " on" : ""}`;
     pastille.textContent = nom;
+    pastille.disabled = Boolean(tunnel.occupe);
     pastille.addEventListener("click", () => {
       tunnel.portee = cle;
       tunnel.montage = null;
@@ -4246,6 +4251,7 @@ function blocAnime() {
     champ.autocomplete = "off";
     champ.spellcheck = false;
     champ.value = tunnel.animes[0] || "";
+    champ.disabled = Boolean(tunnel.occupe);
     champ.setAttribute("aria-label", "Nom de l'animé");
 
     const propositions = document.createElement("div");
@@ -4307,6 +4313,27 @@ function blocGenerer() {
   etat.textContent = tunnel.message;
   boite.append(etat);
   return boite;
+}
+
+/* Le suivi du rendu vit dans un nœud qui traverse les redessins.
+
+   Il était fabriqué à chaque clic et accroché à la vue : le moindre redessin du
+   tunnel l'emportait, et le suivi s'arrêtait avec lui — « document.body.contains »
+   est justement ce qui lui dit de s'arrêter. Le même nœud est donc réutilisé et
+   simplement réadopté à chaque redessin : « append » déplace un élément, il ne
+   le recopie pas. Ce qu'il contient — jusqu'à la carte du rendu et son bouton
+   de téléchargement — reste en place. */
+const suiviRendu = { noeud: null };
+
+function noeudDeRendu() {
+  if (!suiviRendu.noeud) {
+    const bloc = document.createElement("div");
+    bloc.className = "tunnel-dit";
+    bloc.id = "tunnel-rendu";
+    bloc.style.whiteSpace = "pre-line";
+    suiviRendu.noeud = bloc;
+  }
+  return suiviRendu.noeud;
 }
 
 /* --- 5. Le résultat --------------------------------------------------- */
@@ -4385,7 +4412,7 @@ function blocResultat() {
   note.className = "tunnel-dit";
   note.textContent = "Le fichier est assemblé sur un serveur, puis rangé dans l'Historique."
     + " Compte quelques minutes.";
-  boite.append(note);
+  boite.append(note, noeudDeRendu());
   return boite;
 }
 
@@ -4484,17 +4511,27 @@ async function rendreLeTunnel() {
   if (!projet || tunnel.occupe) return;
   tunnel.occupe = "rendu";
   rendreCreer();
-  const etat = document.createElement("p");
-  etat.className = "tunnel-dit";
-  etat.style.whiteSpace = "pre-line";
+  const etat = noeudDeRendu();
+  /* Le bouton du tunnel n'est pas celui que le lanceur sait manier : il se
+     redessine. On lui en donne un factice, et c'est « tunnel.occupe » qui tient
+     l'état visible. */
   const faux = document.createElement("button");
+  let suivi = false;
   try {
-    $("vue-creer")?.append(etat);
-    await lancerRenduDistant(projet, faux, etat);
+    /* Le rendu dure des minutes : on ne rend la main au bouton qu'à la fin de la
+       course, sinon un deuxième appui lancerait un deuxième rendu — et deux fois
+       les minutes d'Actions. */
+    suivi = await lancerRenduDistant(projet, faux, etat, () => {
+      tunnel.occupe = "";
+      rendreCreer();
+    }) === true;
   } catch (erreur) {
     etat.textContent = `Le rendu n'a pas pu partir : ${erreur.message}`;
   } finally {
-    tunnel.occupe = "";
+    if (!suivi) {
+      tunnel.occupe = "";
+      rendreCreer();
+    }
   }
 }
 
@@ -15353,7 +15390,7 @@ async function deposerPiste(projet) {
 
    Ce qu'on y gagne : le jeton ne descend plus jamais, il se change en un seul
    endroit, et un appareil neuf n'a rien à saisir. */
-async function lancerRenduDistant(projet, bouton, etat) {
+async function lancerRenduDistant(projet, bouton, etat, termine = null) {
   if (!coffre.code) {
     etat.textContent = "Il faut un code de sauvegarde : c'est lui qui sert de laissez-passer au rendu."
       + "\nLe panneau Setting en crée un.";
@@ -15406,7 +15443,10 @@ async function lancerRenduDistant(projet, bouton, etat) {
         + "\nRegarde l'onglet Actions du dépôt dans une minute.";
       return;
     }
-    montrerCourse({ id: dit.course, html_url: dit.page }, etat);
+    montrerCourse({ id: dit.course, html_url: dit.page }, etat, Date.now(), termine);
+    // Le suivi continue tout seul : celui qui a appelé doit le savoir pour ne
+    // pas rendre la main au bouton avant la fin.
+    return true;
   } finally {
     bouton.disabled = false;
     bouton.textContent = avant;
@@ -15414,7 +15454,7 @@ async function lancerRenduDistant(projet, bouton, etat) {
 }
 
 /* Suivre la course jusqu'au bout, sans empêcher de faire autre chose. */
-function montrerCourse(course, etat, depuis = Date.now()) {
+function montrerCourse(course, etat, depuis = Date.now(), termine = null) {
   const lien = course.html_url;
   const dire = (quoi) => { etat.innerHTML = ""; etat.append(quoi); };
   const ligne = (texte) => {
@@ -15433,9 +15473,18 @@ function montrerCourse(course, etat, depuis = Date.now()) {
   dire(ligne("Rendu en cours sur GitHub — compte deux à quatre minutes."));
 
   let tours = 0;
+  // Fini, pour n'importe quelle raison : celui qui attend doit l'apprendre une
+  // fois et une seule.
+  let rendu = false;
+  const fini = () => {
+    clearInterval(suivre);
+    if (rendu) return;
+    rendu = true;
+    termine?.();
+  };
   const suivre = setInterval(async () => {
     tours += 1;
-    if (!document.body.contains(etat) || tours > 80) { clearInterval(suivre); return; }
+    if (!document.body.contains(etat) || tours > 80) { fini(); return; }
     /* Le suivi passe aussi par le Worker : c'est lui qui a le jeton. */
     const reponse = await fetch(`/api/rendu?course=${encodeURIComponent(course.id)}`,
       { headers: { "x-coffre": coffre.code || "" } }).catch(() => null);
@@ -15446,7 +15495,7 @@ function montrerCourse(course, etat, depuis = Date.now()) {
       dire(ligne(`Rendu en cours sur GitHub — ${dit.etat === "queued" ? "en file" : "en train de rendre"}…`));
       return;
     }
-    clearInterval(suivre);
+    fini();
     if (dit.verdict !== "success") {
       dire(ligne(`Le rendu a échoué (${dit.verdict}). La page GitHub dit à quelle étape.`));
       return;
