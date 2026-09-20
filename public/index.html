@@ -2283,7 +2283,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 20:32";
+const VERSION_PAGE = "2026-09-20 21:02";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6416,6 +6416,7 @@ window.__banc = {
   journal: () => journalTunnel, noter: (t, n) => noter(t, n),
   rendreHistoire: () => rendreHistoire(), renduOuvert: () => renduOuvert,
   peindreRendusEnLigne: () => peindreRendusEnLigne(),
+  blocDuRendu: (r, a, o) => blocDuRendu(r, a, o),
   courses: () => [...courses.values()], rendreLeTunnel: () => rendreLeTunnel(),
   abonnerAuxPoussees: () => abonnerAuxPoussees(), poussees: () => poussees,
   garderRendu: (pr, b, e) => garderRendu(pr, b, e),
@@ -16716,13 +16717,23 @@ function montrerCourse(course, etat, depuis = Date.now(), termine = null, quoi =
     etat.innerHTML = "";
     etat.append(ligne(texte));
   };
+  /* Le rendu fini s'ouvre là où on l'attend, et pas ailleurs.
+
+     Il apparaissait en ligne de liste, et la toucher sautait dans l'onglet
+     Historique : on avait lancé le montage depuis l'accueil, on se retrouvait
+     sur une autre page, et le bouton qu'on cherchait — télécharger — demandait
+     un aller-retour. La page d'un rendu reste le concept de l'Historique, où
+     l'on parcourt une liste ; ici, on n'a qu'un rendu et c'est celui qu'on vient
+     de faire : il se pose sur place, prêt à regarder et à enregistrer. */
   const montrer = (rendu) => {
     if (!etat || !document.body.contains(etat)) return;
     etat.innerHTML = "";
     const dit = document.createElement("div");
     dit.textContent = `${quoi} terminé — il est aussi dans l'onglet Historique.`;
-    dit.style.marginBottom = "8px";
-    etat.append(dit, carteRendu(rendu, () => { etat.textContent = "Rendu supprimé."; }));
+    dit.style.marginBottom = "12px";
+    etat.append(dit, blocDuRendu(rendu, accesDuGrenier(rendu, () => {
+      etat.textContent = "Rendu supprimé.";
+    })));
   };
 
   const suivi = { id: String(course.id), page: lien, depuis, quoi, dire, montrer, termine };
@@ -18347,20 +18358,21 @@ function projetDuRendu(rendu, acces) {
    fiche pliée en dessous. Sur un téléphone, cela faisait quatre cibles de la
    taille d'un ongle et une vidéo large de trois cents points. Ici, la vidéo
    prend la page, et chaque geste porte son nom. */
-function pageDeRendu({ rendu, acces }) {
-  /* Une page, pas une pile. Les morceaux étaient posés à la suite avec des
-     marges chacun à sa façon : le titre collait à sa ligne d'infos, les deux
-     remarques pesaient autant que les boutons, et rien ne disait ce qui allait
-     avec quoi. Ici, une seule colonne, un seul écart entre les groupes, et les
-     groupes se serrent à l'intérieur. */
-  const page = document.createElement("div");
-  page.className = "page-rendu";
-
-  const retour = document.createElement("button");
-  retour.type = "button";
-  retour.className = "archive-action rendu-retour";
-  retour.textContent = "‹ Tous les rendus";
-  retour.addEventListener("click", fermerRendu);
+function blocDuRendu(rendu, acces, { retour = null, supprimer = false } = {}) {
+  /* Une colonne, un seul écart entre les groupes, et les groupes serrés à
+     l'intérieur. Les morceaux portaient chacun leur marge : le titre collait à
+     sa ligne d'infos, les remarques pesaient autant que les boutons, et rien ne
+     disait ce qui allait avec quoi. */
+  const bloc = document.createElement("div");
+  bloc.className = "page-rendu";
+  if (retour) {
+    const revenir = document.createElement("button");
+    revenir.type = "button";
+    revenir.className = "archive-action rendu-retour";
+    revenir.textContent = "‹ Tous les rendus";
+    revenir.addEventListener("click", retour);
+    bloc.append(revenir);
+  }
 
   // Le titre et ce qu'il pèse ne font qu'un : ils se serrent l'un contre l'autre.
   const entete = document.createElement("div");
@@ -18372,32 +18384,40 @@ function pageDeRendu({ rendu, acces }) {
   sous.className = "tunnel-dit";
   sous.textContent = direRendu(rendu, false);
   entete.append(titre, sous);
+  bloc.append(entete);
 
-  /* Le lecteur est là dès l'arrivée : on est venu pour le regarder. Il ne
-     charge que son en-tête tant qu'on ne le lance pas. */
-  const lecteur = document.createElement("video");
-  lecteur.className = "rendu-lecteur";
-  lecteur.controls = true;
-  lecteur.playsInline = true;
-  lecteur.preload = "metadata";
-  const image = imageDuRendu(rendu);
-  if (image) lecteur.poster = image;
-  /* Refermer proprement : une balise retirée du document tient sa session de
-     décodage tant qu'elle garde sa source, et WebKit n'en accorde qu'une
-     poignée. */
-  const refermer = () => {
-    lecteur.pause();
-    lecteur.removeAttribute("src");
-    lecteur.load();
-    if (lecteurHistoire === refermer) lecteurHistoire = null;
-  };
-  lecteurHistoire?.();
-  lecteurHistoire = refermer;
-  Promise.resolve(acces.adresse()).then((src) => {
-    if (lecteurHistoire !== refermer) return;
-    if (src) lecteur.src = src;
-    else sous.textContent = "Le fichier n'est plus là.";
-  }).catch(() => { sous.textContent = "Le fichier n'a pas pu être ouvert."; });
+  /* Une archive ne se regarde pas : le lecteur n'est posé que pour une vidéo.
+     Il y était pour tout, et un projet DaVinci s'affichait comme un carré noir
+     qui ne jouerait jamais. */
+  const archive = /\.zip$/i.test(rendu.nom || "");
+  if (!archive) {
+    /* Le lecteur est là dès l'arrivée : on est venu pour le regarder. Il ne
+       charge que son en-tête tant qu'on ne le lance pas. */
+    const lecteur = document.createElement("video");
+    lecteur.className = "rendu-lecteur";
+    lecteur.controls = true;
+    lecteur.playsInline = true;
+    lecteur.preload = "metadata";
+    const image = imageDuRendu(rendu);
+    if (image) lecteur.poster = image;
+    /* Refermer proprement : une balise retirée du document tient sa session de
+       décodage tant qu'elle garde sa source, et WebKit n'en accorde qu'une
+       poignée. */
+    const refermer = () => {
+      lecteur.pause();
+      lecteur.removeAttribute("src");
+      lecteur.load();
+      if (lecteurHistoire === refermer) lecteurHistoire = null;
+    };
+    lecteurHistoire?.();
+    lecteurHistoire = refermer;
+    Promise.resolve(acces.adresse()).then((src) => {
+      if (lecteurHistoire !== refermer) return;
+      if (src) lecteur.src = src;
+      else sous.textContent = "Le fichier n'est plus là.";
+    }).catch(() => { sous.textContent = "Le fichier n'a pas pu être ouvert."; });
+    bloc.append(lecteur);
+  }
 
   const suivi = document.createElement("p");
   suivi.className = "tunnel-dit";
@@ -18410,15 +18430,15 @@ function pageDeRendu({ rendu, acces }) {
   const gestes = document.createElement("div");
   gestes.className = "tunnel-sorties";
   gestes.append(boutonEnregistrer(acces.octets, rendu.nom, nomDuRendu(rendu, acces),
-    "Télécharger en MP4"));
+    archive ? "Télécharger l'archive" : "Télécharger en MP4"));
 
   /* Reprendre le montage demande le montage, pas la vidéo : sans lui, le bouton
      mentirait. On dit alors pourquoi il n'est pas là — en une remarque, pas en
      un panneau : ce n'est pas l'objet de la page. */
   const projet = projetDuRendu(rendu, acces);
-  if (projet?.plans?.length) gestes.append(boutonProjetDaVinci(projet, suivi));
+  if (!archive && projet?.plans?.length) gestes.append(boutonProjetDaVinci(projet, suivi));
   faire.append(gestes);
-  if (!projet?.plans?.length) {
+  if (!archive && !projet?.plans?.length) {
     const sans = document.createElement("p");
     sans.className = "tunnel-dit";
     sans.textContent = "L'export DaVinci demande le montage dont cette vidéo est sortie —"
@@ -18427,35 +18447,41 @@ function pageDeRendu({ rendu, acces }) {
     faire.append(sans);
   }
   faire.append(suivi);
+  bloc.append(faire);
 
-  page.append(retour, entete, lecteur, faire);
-
-  /* La fiche dépliée : sur la page d'un rendu, c'est ce qu'on vient chercher
-     pour publier. Dans une liste, elle était pliée pour ne pas la remplir. */
-  if (projet?.seo?.titre) page.append(blocFicheSeo(projet.seo, true));
-  else {
-    const sans = document.createElement("p");
-    sans.className = "tunnel-dit";
-    sans.textContent = "Aucune fiche à publier n'a été gardée pour ce rendu."
-      + " Les montages faits depuis l'ajout de la fiche en ont une.";
-    page.append(sans);
+  /* La fiche dépliée : devant la vidéo prête, c'est ce qu'on vient chercher pour
+     publier. Dans une liste, elle était pliée pour ne pas la remplir. */
+  if (!archive) {
+    if (projet?.seo?.titre) bloc.append(blocFicheSeo(projet.seo, true));
+    else {
+      const sans = document.createElement("p");
+      sans.className = "tunnel-dit";
+      sans.textContent = "Aucune fiche à publier n'a été gardée pour ce rendu."
+        + " Les montages faits depuis l'ajout de la fiche en ont une.";
+      bloc.append(sans);
+    }
   }
 
   // Le geste qui détruit, à l'écart et sous un trait : on ne l'atteint pas par
   // mégarde en remontant la page.
-  const bas = document.createElement("div");
-  bas.className = "rendu-fin";
-  const jeter = document.createElement("button");
-  jeter.type = "button";
-  jeter.className = "archive-action danger";
-  jeter.textContent = "Supprimer ce rendu";
-  jeter.addEventListener("click", async () => {
-    if (await acces.supprimer(jeter)) fermerRendu();
-  });
-  bas.append(jeter);
-  page.append(bas);
-  return [page];
+  if (supprimer) {
+    const bas = document.createElement("div");
+    bas.className = "rendu-fin";
+    const jeter = document.createElement("button");
+    jeter.type = "button";
+    jeter.className = "archive-action danger";
+    jeter.textContent = "Supprimer ce rendu";
+    jeter.addEventListener("click", async () => {
+      if (await acces.supprimer(jeter)) fermerRendu();
+    });
+    bas.append(jeter);
+    bloc.append(bas);
+  }
+  return bloc;
 }
+
+const pageDeRendu = ({ rendu, acces }) =>
+  [blocDuRendu(rendu, acces, { retour: fermerRendu, supprimer: true })];
 
 /* Ce qu'on sait faire du fichier d'un rendu du grenier. Séparé de la carte : on
    y arrive aussi par une notification, sans jamais avoir vu la liste. */
