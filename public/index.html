@@ -845,6 +845,11 @@ main {
   text-align: center; cursor: pointer;
 }
 .tunnel-depot.rempli { border-style: solid; color: var(--texte); }
+.tunnel-recours {
+  align-self: flex-start; padding: 0; border: 0; background: none;
+  font: 400 0.75rem/1.4 system-ui, sans-serif; color: var(--doux);
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
 .tunnel-geste { width: 100%; }
 .tunnel-champ {
   width: 100%; padding: 12px 14px; border-radius: 10px;
@@ -2128,7 +2133,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 07:38";
+const VERSION_PAGE = "2026-09-20 07:44";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4000,10 +4005,7 @@ function blocMusique() {
   champ.textContent = tunnel.fichier ? tunnel.fichier.name : "Insérer votre musique";
   champ.classList.toggle("rempli", Boolean(tunnel.fichier));
 
-  const entree = document.createElement("input");
-  entree.type = "file";
-  entree.accept = "audio/*";
-  entree.hidden = true;
+  const entree = champDeSon();
   entree.addEventListener("change", () => {
     const fichier = entree.files?.[0];
     if (!fichier) return;
@@ -4023,6 +4025,21 @@ function blocMusique() {
   analyser.addEventListener("click", () => analyserLaMusique().catch(() => {}));
 
   boite.append(champ, entree, analyser);
+  /* « Mon mp3 est grisé. » Il reste des cas que le filtre ne couvre pas : un
+     fichier iCloud pas encore descendu, une extension inhabituelle, un envoi
+     AirDrop sans type. On propose alors d'ouvrir Fichiers sans aucun filtre —
+     rien ne peut plus être grisé, et c'est l'analyse qui juge. */
+  if (SUR_WEBKIT && !tunnel.fichier) {
+    const recours = document.createElement("button");
+    recours.type = "button";
+    recours.className = "tunnel-recours";
+    recours.textContent = "Mon fichier est grisé dans Fichiers";
+    recours.addEventListener("click", () => {
+      entree.removeAttribute("accept");
+      entree.click();
+    });
+    boite.append(recours);
+  }
   if (tunnel.rythme) {
     const dit = document.createElement("p");
     dit.className = "tunnel-dit";
@@ -10097,7 +10114,23 @@ function noterMusiqueVolatile(projet) {
    d'être choisis — au lieu de l'application Fichiers. Énumérer les extensions
    fait basculer le sélecteur sur les documents, où vit le MP3 qu'on vient de
    télécharger. */
-const FORMATS_SON = ".mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.opus,.aif,.aiff,.webm,audio/*";
+const FORMATS_SON = ".mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.opus,.aif,.aiff,.webm,"
+  + "audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/flac,audio/ogg,audio/*";
+
+/* Le champ de fichier son, fabriqué au même endroit pour tout le monde.
+
+   Il y en avait quatre copies, et la quatrième — celle du tunnel, la seule que
+   l'utilisateur touche encore — avait gardé « audio/* » seul. Sur iPhone, cela
+   ouvre la bibliothèque Musique et grise les documents : on arrivait dans
+   Fichiers sans pouvoir désigner son propre mp3. Une copie de moins, et le
+   filtre vérifié sur l'appareil s'applique partout. */
+function champDeSon() {
+  const entree = document.createElement("input");
+  entree.type = "file";
+  entree.accept = FORMATS_SON;
+  entree.hidden = true;
+  return entree;
+}
 
 function boutonSon(projet) {
   const barre = document.createElement("div");
@@ -10125,10 +10158,7 @@ function boutonSon(projet) {
   bouton.classList.toggle("charge", Boolean(projet.audio));
   bouton.classList.toggle("sans-texte", !dit);
 
-  const champ = document.createElement("input");
-  champ.type = "file";
-  champ.accept = FORMATS_SON;
-  champ.hidden = true;
+  const champ = champDeSon();
   champ.addEventListener("change", () => {
     const fichier = champ.files?.[0];
     if (fichier) chargerSon(projet, fichier);
@@ -15597,10 +15627,7 @@ function ouvrirExport(projet) {
   const musique = document.createElement("label");
   musique.className = "lecteur-actions";
   musique.style.margin = "0";
-  const choisir = document.createElement("input");
-  choisir.type = "file";
-  choisir.accept = FORMATS_SON;
-  choisir.hidden = true;
+  const choisir = champDeSon();
   choisir.addEventListener("change", () => {
     const fichier = choisir.files?.[0];
     if (fichier) chargerSon(projet, fichier);
@@ -19768,10 +19795,7 @@ function ouvrirBrief() {
     const importer = document.createElement("button");
     importer.type = "button";
     importer.textContent = "Choisir un fichier…";
-    const champFichier = document.createElement("input");
-    champFichier.type = "file";
-    champFichier.accept = FORMATS_SON;
-    champFichier.hidden = true;
+    const champFichier = champDeSon();
     /* Importer fermait le panneau, et l'on se retrouvait devant le montage sans
        savoir qu'il fallait rouvrir pour continuer. On reste : le fichier se
        charge, son tempo se lit — quelques secondes pour un morceau entier —, et
