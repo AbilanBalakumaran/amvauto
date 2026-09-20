@@ -22,6 +22,17 @@ export const MOODS = {
     label: "Hype / transfo",
     tags: { henshin: 4, morphing: 3, dancing: 4, performance: 3, background_animation: 2, rotation: 1 },
   },
+  /* Les décors.
+
+     Ils n'avaient pas d'ambiance à eux : « background_animation » ne valait que
+     deux points dans « hype », derrière les transformations. Or un passage calme
+     demande d'abord un décor qui défile, et le demander veut dire pouvoir le
+     chercher — sans quoi la pioche n'en contient aucun et le montage n'a rien à
+     choisir. */
+  decor: {
+    label: "Décors",
+    tags: { background_animation: 6, rotation: 3, wind: 2, liquid: 2, effects: 1, perspective: 3 },
+  },
 };
 
 /* Le tag qui porte l'ambiance à lui seul.
@@ -36,6 +47,7 @@ export const TAG_PHARE = {
   vitesse: "running",
   acting: "character_acting",
   hype: "henshin",
+  decor: "background_animation",
 };
 
 /* Les étiquettes que le montage sait lire.

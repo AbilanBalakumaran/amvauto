@@ -877,6 +877,15 @@ main {
 .trame-ligne[data-emotion="action"] { border-left-color: #c1121f; }
 .trame-ligne[data-emotion="choc"] { border-left-color: #e0523a; }
 .trame-quand { font: 500 0.84rem/1 ui-monospace, monospace; color: var(--doux); }
+.trame-vers {
+  margin: -2px 0 2px 46px; font: 400 0.76rem/1.35 system-ui, sans-serif;
+  color: var(--doux); font-style: italic;
+}
+.trame-instrument {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font: 400 0.8rem/1.4 system-ui, sans-serif; color: var(--doux);
+}
+.trame-instrument select { flex: 1 1 12rem; min-width: 0; }
 .trame-choix {
   padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--trait); background: #161616; color: var(--texte);
@@ -2137,7 +2146,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 10:56";
+const VERSION_PAGE = "2026-09-20 12:35";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3990,7 +3999,7 @@ const emotionSuggeree = (energie) => (
 const APERCU_MONTRE = false;
 
 const tunnel = {
-  fichier: null, rythme: null, etiquettes: [],
+  fichier: null, rythme: null, etiquettes: [], paroles: [],
   portee: "mixte", animes: [], montage: null, occupe: "", message: "",
 };
 
@@ -4108,6 +4117,11 @@ async function analyserLaMusique() {
     tunnel.rythme = rythme;
     /* Une étiquette par passage, proposée d'après l'énergie mesurée. */
     tunnel.etiquettes = rythme.sections.map((section) => emotionSuggeree(section.energie));
+    /* Et les paroles, s'il y en a. Elles ne conditionnent rien : sans elles le
+       montage se fait sur l'énergie et le mouvement, comme avant. C'est pour
+       cela qu'on ne s'arrête pas sur un échec, et qu'on ne le montre pas comme
+       une panne. */
+    await ecouterLesParoles().catch(() => {});
   } catch (erreur) {
     alert(`La musique n'a pas pu être analysée : ${erreur.message}.\n\n`
       + "Si c'est un morceau de la bibliothèque Musique, il est protégé et aucune "
@@ -4204,10 +4218,89 @@ async function ecouterPassage(rang, section) {
   }
 }
 
+/* Faire entendre les paroles au serveur.
+
+   Le fichier part tel quel : c'est Whisper, sur le même compte Cloudflare, qui
+   écoute. Il rend les vers avec leurs instants, et rien n'est conservé de
+   l'audio. Sans code de coffre, on ne demande rien — c'est le laissez-passer de
+   tout ce qui coûte du quota. */
+async function ecouterLesParoles() {
+  tunnel.paroles = [];
+  if (!tunnel.fichier || !coffre.code) return;
+  direTunnel("Écoute des paroles…");
+  try {
+    const reponse = await fetch("/api/ecoute", {
+      method: "POST",
+      headers: { "x-coffre": coffre.code, "content-type": tunnel.fichier.type || "audio/mpeg" },
+      body: tunnel.fichier,
+    });
+    const dit = await reponse.json().catch(() => ({}));
+    if (!reponse.ok || !Array.isArray(dit.lignes)) {
+      direTunnel(dit.erreur ? `Les paroles n'ont pas pu être entendues : ${dit.erreur}` : "");
+      return;
+    }
+    tunnel.paroles = dit.lignes;
+    direTunnel(dit.lignes.length ? `${dit.lignes.length} vers entendus.` : "Aucune parole entendue.");
+  } catch {
+    direTunnel("");
+  }
+}
+
+/* Ce qui se chante pendant un passage : tout vers qui le recouvre, même en
+   partie. Un vers à cheval sur deux passages sert les deux — il est chanté dans
+   les deux. */
+function parolesDuPassage(debut, fin) {
+  return (tunnel.paroles || [])
+    .filter((ligne) => ligne.fin > debut && ligne.debut < fin)
+    .map((ligne) => ligne.texte)
+    .join(" ");
+}
+
 /* --- 2. La piste narrative -------------------------------------------- */
 function blocNarration() {
   const boite = blocTunnel(2, "La trame",
     "Chaque passage reçoit une émotion. C'est elle qui oriente le choix des scènes.");
+
+  /* Sur quel instrument les coupes tombent.
+
+     Le choix automatique prend l'instrument le plus régulier et le mieux dosé —
+     mesuré sur une batterie de synthèse, il trouve la caisse claire et ses
+     quarante frappes exactes. Mais c'est une oreille qui décide d'un montage :
+     le sélecteur est là, avec le nombre de frappes de chaque bande, parce que
+     c'est ce nombre qui dit combien de plans il y aura. */
+  const instruments = tunnel.rythme?.instruments || {};
+  if (Object.keys(instruments).length) {
+    const ligne = document.createElement("div");
+    ligne.className = "trame-instrument";
+    const dit = document.createElement("span");
+    dit.textContent = "Les coupes tombent sur";
+    const choix = document.createElement("select");
+    choix.className = "trame-choix";
+    choix.setAttribute("aria-label", "Instrument qui donne le rythme des coupes");
+    choix.disabled = Boolean(tunnel.occupe);
+    for (const bande of BANDES) {
+      const combien = (instruments[bande.cle] || []).length;
+      if (combien < 4) continue;
+      const option = document.createElement("option");
+      option.value = bande.cle;
+      option.textContent = `${bande.nom} — ${combien} frappes`;
+      if (bande.cle === tunnel.rythme.instrument) option.selected = true;
+      choix.append(option);
+    }
+    const tempo = document.createElement("option");
+    tempo.value = "";
+    tempo.textContent = "Le tempo, régulièrement";
+    if (!tunnel.rythme.instrument) tempo.selected = true;
+    choix.append(tempo);
+    choix.addEventListener("change", () => {
+      tunnel.rythme.instrument = choix.value;
+      tunnel.montage = null;
+      rendreCreer();
+    });
+    ligne.append(dit, choix);
+    boite.append(ligne);
+  }
+
   const liste = document.createElement("div");
   liste.className = "tunnel-trame";
 
@@ -4251,6 +4344,17 @@ function blocNarration() {
 
     ligne.append(ecouter, quand, choix);
     liste.append(ligne);
+
+    /* Le vers entendu, sous son passage. C'est ce qui rend l'illustration
+       vérifiable : si l'outil a entendu « fire » là où la chanson dit autre
+       chose, cela se voit avant de générer, pas après. */
+    const dit = parolesDuPassage(section.debut, section.fin);
+    if (dit) {
+      const vers = document.createElement("p");
+      vers.className = "trame-vers";
+      vers.textContent = `« ${dit.length > 120 ? `${dit.slice(0, 118)}…` : dit} »`;
+      liste.append(vers);
+    }
   });
 
   boite.append(liste);
@@ -4538,6 +4642,9 @@ async function genererLAmv() {
         ...section,
         energie: emotionDe(tunnel.etiquettes[rang]).energie,
         emotion: tunnel.etiquettes[rang],
+        // Ce qui se chante là : c'est par cette ligne que les paroles atteignent
+        // le choix des scènes.
+        paroles: parolesDuPassage(section.debut, section.fin),
       })),
     };
     projet.amv = { portee: tunnel.portee, animes: tunnel.animes.map(nomAnime),
@@ -4555,7 +4662,7 @@ async function genererLAmv() {
     dire("Recherche des scènes…");
     const journal = { resolus: [] };
     const trouves = await chercherRushs(tunnel.animes, tunnel.rythme.duree,
-      casesAttendues(projet), tunnel.portee !== "unique", journal);
+      casesAttendues(projet), tunnel.portee !== "unique", journal, tunnel.etiquettes);
     if (!trouves.length) {
       dire(`${phraseResolution(journal)}Aucune scène trouvée.`
         + " Vérifie l'orthographe, ou passe en animé mixte.");
@@ -4575,11 +4682,32 @@ async function genererLAmv() {
     projet.rushs = [...new Map(trouves.map((rush) => [String(idRush(rush)),
       { ...rush, id: idRush(rush), rush: undefined, duree: null, entree: 0, sortie: null }])).values()];
 
+    /* Une seule lecture par scène, côté serveur, et elle rapporte tout.
+
+       Le téléphone lisait lui-même l'en-tête de chaque rush — jusqu'à
+       quatre-vingts kilo-octets par scène, soit dix mégaoctets pour cent
+       vingt-cinq, sur un forfait mobile. La route « /api/cles » lit le même
+       « moov » une fois pour tous les appareils, le garde dans R2 pour toujours,
+       et rend d'un coup la durée, les images-clés — donc les fins de scène — et
+       la courbe de mouvement. Quelques centaines d'octets de JSON au lieu de
+       quatre-vingts kilo-octets. */
     dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
-      + " Lecture de leurs en-têtes…");
-    await mesurerEnTetes(projet.rushs, 6, (n, total) =>
+      + " Lecture des scènes…");
+    await attendreCles(projet.rushs, 60000, (n, total) =>
       dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
-        + ` Lecture des en-têtes… ${n}/${total}`));
+        + ` Lecture des scènes… ${n}/${total}`));
+    for (const plan of projet.rushs) {
+      const fiche = clesConnues.get(mediaDe(plan));
+      if (fiche?.duree > 0) retenirDuree(plan, Math.round(fiche.duree * 100) / 100);
+    }
+    // Ce que le serveur n'a pas su lire, on le lit soi-même : c'est quelques
+    // scènes, pas toutes.
+    const muettes = projet.rushs.filter((plan) => !dureeConnue(plan));
+    if (muettes.length) {
+      dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
+        + ` Lecture directe de ${muettes.length} en-têtes…`);
+      await mesurerEnTetes(muettes, 6);
+    }
 
     const surs = projet.rushs.filter((plan) => dureeConnue(plan));
     if (!surs.length) {
@@ -5604,6 +5732,10 @@ window.__banc = {
   retirerLaPastille: () => retirerLaPastille(), marquerPastille: (n) => marquerPastille(n),
   ecoute: () => ecoute, arreterEcoute: () => arreterEcoute(),
   chercherRushs: (...a) => chercherRushs(...a), phraseResolution: (j) => phraseResolution(j),
+  profilDe: (...a) => profilDe(...a), ecartDIntention: (...a) => ecartDIntention(...a),
+  tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
+  parolesDuPassage: (a, b) => parolesDuPassage(a, b),
+  grilleDeCoupes: (...a) => grilleDeCoupes(...a), attendreCles: (...a) => attendreCles(...a),
   mesurerEnTetes: (...a) => mesurerEnTetes(...a), dureeParEntete: (x) => dureeParEntete(x),
   dureeConnue: (x) => dureeConnue(x), dureeDuMvhd: (o) => dureeDuMvhd(o),
   projetDuTunnel: () => projetDuTunnel(), genererLAmv: () => genererLAmv(), etat: () => state,
@@ -17709,6 +17841,175 @@ function enveloppeAttaque(buffer) {
   return { net, niveau, trames };
 }
 
+/* ---- Les instruments, et les instants où ils frappent -------------------
+
+   « Base-toi sur un instrument du son, et à chaque fois qu'il arrive ou que le
+   même son se répète, la scène change. » Il faut donc entendre les instruments
+   séparément, et non l'énergie du mélange.
+
+   Une transformée de Fourier par trame le ferait proprement ; quatre filtres à
+   un pôle suffisent à séparer ce qui nous intéresse, et coûtent une addition par
+   échantillon au lieu d'une transformée. On ne fabrique jamais le signal filtré
+   — seulement son énergie par trame de dix millisecondes : sur un morceau de
+   trois minutes, garder les quatre bandes en mémoire ferait soixante-quatre
+   mégaoctets sur un téléphone, et l'énergie par trame en fait cent fois moins.
+
+   Les quatre bandes, avec les noms de ce qu'on y entend :
+     grave     moins de 150 Hz    la grosse caisse, la basse
+     caisse    150 à 1200 Hz      la caisse claire, les claps
+     mélodie   1,2 à 5 kHz        la voix, le lead, les cordes
+     aigu      plus de 5 kHz      le charley, les cymbales */
+const BANDES = [
+  { cle: "grave", nom: "Grave (grosse caisse, basse)", bas: 0, haut: 150 },
+  { cle: "caisse", nom: "Caisse (snare, claps)", bas: 150, haut: 1200 },
+  { cle: "melodie", nom: "Mélodie (voix, lead)", bas: 1200, haut: 5000 },
+  { cle: "aigu", nom: "Aigu (charley, cymbales)", bas: 5000, haut: 0 },
+];
+
+const nomDeBande = (cle) => BANDES.find((b) => b.cle === cle)?.nom || "Tempo";
+
+function enveloppesParBande(buffer) {
+  const taux = buffer.sampleRate;
+  const parTrame = Math.max(1, Math.round(taux / TRAMES_PAR_SECONDE));
+  const trames = Math.floor(buffer.length / parTrame);
+  const canaux = [];
+  for (let c = 0; c < buffer.numberOfChannels; c += 1) canaux.push(buffer.getChannelData(c));
+  const nbCanaux = canaux.length || 1;
+
+  /* Un pôle : y += (1 - a) × (x - y). Empilé quatre fois, il coupe assez net.
+
+     Mesuré sur une batterie de synthèse dont on connaît la vérité — 80 grosses
+     caisses à 60 Hz, 40 caisses à 400, 160 charleys à 9 kHz : avec un seul pôle,
+     la bande « caisse » comptait 119 frappes au lieu de 40, c'est-à-dire qu'elle
+     entendait aussi la grosse caisse, et choisir l'un ou l'autre ne changeait
+     rien. Le passe-haut empilé quatre fois rend 40 sur 40, et le grave 79 sur 80.
+
+     C'est bien le passe-HAUT qu'il faut empiler : une seule soustraction
+     n'atténue le 60 Hz que de sept pour cent. */
+  const ORDRE = 4;
+  const pole = (fc) => (fc > 0 ? Math.exp((-2 * Math.PI * fc) / taux) : 0);
+  const aBas = BANDES.map((b) => pole(b.bas));
+  const aHaut = BANDES.map((b) => pole(b.haut));
+  const yBas = BANDES.map(() => new Float64Array(ORDRE));
+  const yHaut = BANDES.map(() => new Float64Array(ORDRE));
+  const enveloppes = BANDES.map(() => new Float32Array(trames));
+  const sommes = new Float64Array(BANDES.length);
+
+  for (let t = 0; t < trames; t += 1) {
+    const debut = t * parTrame;
+    sommes.fill(0);
+    for (let i = 0; i < parTrame; i += 1) {
+      let x = 0;
+      for (let c = 0; c < nbCanaux; c += 1) x += canaux[c][debut + i];
+      x /= nbCanaux;
+      for (let b = 0; b < BANDES.length; b += 1) {
+        let v = x;
+        const ab = aBas[b];
+        if (BANDES[b].bas > 0) {
+          const yb = yBas[b];
+          for (let k = 0; k < ORDRE; k += 1) { yb[k] = ab * yb[k] + (1 - ab) * v; v -= yb[k]; }
+        }
+        const ah = aHaut[b];
+        if (BANDES[b].haut > 0) {
+          const yh = yHaut[b];
+          for (let k = 0; k < ORDRE; k += 1) { yh[k] = ah * yh[k] + (1 - ah) * v; v = yh[k]; }
+        }
+        sommes[b] += v * v;
+      }
+    }
+    for (let b = 0; b < BANDES.length; b += 1) enveloppes[b][t] = Math.sqrt(sommes[b] / parTrame);
+  }
+  return enveloppes;
+}
+
+/* Ce qui sort du fond sonore du moment, et non ce qui est fort.
+
+   Le même calcul que pour l'enveloppe générale : différence positive, moins une
+   moyenne glissante d'une seconde. Une nappe de synthé continue ne produit
+   aucune attaque ; une frappe en produit une, même douce. */
+function attaquesDeBande(enveloppe) {
+  const trames = enveloppe.length;
+  const net = new Float32Array(trames);
+  const fenetre = TRAMES_PAR_SECONDE;
+  let cumul = 0;
+  const flux = new Float32Array(trames);
+  for (let t = 1; t < trames; t += 1) flux[t] = Math.max(0, enveloppe[t] - enveloppe[t - 1]);
+  for (let t = 0; t < trames; t += 1) {
+    cumul += flux[t];
+    if (t >= fenetre) cumul -= flux[t - fenetre];
+    net[t] = Math.max(0, flux[t] - cumul / Math.min(t + 1, fenetre));
+  }
+
+  /* Le seuil se lit dans le morceau, à deux échelles.
+
+     Une médiane et un écart absolu médian sur l'ensemble — le réflexe — donnaient
+     zéro frappe : sur un morceau percussif, les trames à flux non nul sont rares
+     et toutes fortes, si bien que « médiane + 3 écarts » dépassait le maximum.
+     On prend donc un plancher relatif au pic du morceau, et deux fois la médiane
+     du voisinage d'une seconde : le premier écarte le bruit de fond, la seconde
+     laisse passer une frappe douce dans un passage calme.
+
+     Douze pour cent du pic, mesuré sur la batterie de synthèse : 79 grosses
+     caisses sur 80, et 40 caisses sur 40. */
+  let pic = 0;
+  for (let t = 0; t < trames; t += 1) if (net[t] > pic) pic = net[t];
+  if (!(pic > 0)) return [];
+  const plancher = 0.12 * pic;
+  const demi = TRAMES_PAR_SECONDE;
+
+  // Deux frappes ne se distinguent pas à moins de cent millisecondes : au-delà
+  // du double-coup de caisse, c'est du roulement.
+  const ecartMini = Math.round(0.1 * TRAMES_PAR_SECONDE);
+  const trouvees = [];
+  for (let t = 1; t < trames - 1; t += 1) {
+    if (net[t] < plancher || net[t] < net[t - 1] || net[t] < net[t + 1]) continue;
+    const a = Math.max(0, t - demi);
+    const bb = Math.min(trames, t + demi);
+    const voisinage = [];
+    for (let k = a; k < bb; k += 1) voisinage.push(net[k]);
+    voisinage.sort((x, y) => x - y);
+    if (net[t] < 2 * voisinage[Math.floor(voisinage.length / 2)]) continue;
+    const quand = t / TRAMES_PAR_SECONDE;
+    const force = net[t];
+    if (trouvees.length && t - trouvees[trouvees.length - 1].trame < ecartMini) {
+      // On garde la plus forte des deux : c'est elle qu'on entend.
+      if (force > trouvees[trouvees.length - 1].force) trouvees[trouvees.length - 1] = { trame: t, quand, force };
+      continue;
+    }
+    trouvees.push({ trame: t, quand, force });
+  }
+  return trouvees.map(({ quand, force }) => ({ quand: Math.round(quand * 1000) / 1000, force }));
+}
+
+/* L'instrument qui porte le morceau.
+
+   On cherche celui dont les frappes sont à la fois assez nombreuses pour donner
+   un montage vivant, et assez régulières pour qu'on les entende comme un motif
+   qui revient — ce qui est exactement la demande : « le même son qui se répète ».
+   Une bande qui claque au hasard trente fois vaut moins qu'une bande qui frappe
+   régulièrement soixante fois.
+
+   Régularité : l'écart-type des intervalles rapporté à leur moyenne. Zéro pour
+   un métronome, grand pour un bruit de fond. */
+function meilleureBande(parBande, duree) {
+  let meilleur = null;
+  for (const [cle, attaques] of Object.entries(parBande)) {
+    if (attaques.length < 8) continue;
+    const intervalles = attaques.slice(1).map((a, i) => a.quand - attaques[i].quand);
+    const moyenne = intervalles.reduce((t, x) => t + x, 0) / intervalles.length;
+    if (!(moyenne > 0)) continue;
+    const ecart = Math.sqrt(intervalles.reduce((t, x) => t + (x - moyenne) ** 2, 0) / intervalles.length);
+    const regularite = Math.max(0, 1 - ecart / moyenne);
+    // Une frappe par seconde et demie est le rythme de coupe d'un AMV : on
+    // s'éloigne de cette densité aussi peu que possible.
+    const densite = attaques.length / Math.max(1, duree);
+    const justesse = 1 - Math.min(1, Math.abs(densite - 0.7) / 0.7);
+    const note = regularite * 2 + justesse;
+    if (!meilleur || note > meilleur.note) meilleur = { cle, note, regularite, densite };
+  }
+  return meilleur;
+}
+
 /* Le tempo se lit dans la périodicité de ces attaques : on corrèle l'enveloppe
    avec elle-même décalée, et le décalage qui donne le meilleur accord est la
    durée d'un temps. Les erreurs d'octave — prendre le double ou la moitié du
@@ -18030,6 +18331,15 @@ async function analyserRythme(donnees) {
   const ruptures = rupturesDuNiveau(niveau).slice(0, 24);
   const tempo = tempoDeLenveloppe(net);
   const cale = calerSurLesFrappes(net, tempo.retard / TRAMES_PAR_SECONDE);
+
+  /* Les instruments, et celui qui portera les coupes. On les garde tous : le
+     choix automatique est un point de départ, pas un verdict — c'est l'oreille
+     qui tranche, et elle a un sélecteur pour ça. */
+  const enveloppes = enveloppesParBande(buffer);
+  const instruments = {};
+  BANDES.forEach((bande, i) => { instruments[bande.cle] = attaquesDeBande(enveloppes[i]); });
+  const choisie = meilleureBande(instruments, buffer.duration);
+
   return {
     bpm: Math.round((60 / cale.periode) * 10) / 10,
     depart: Math.round(cale.phase * 1000) / 1000,
@@ -18037,6 +18347,9 @@ async function analyserRythme(donnees) {
     duree: Math.round(buffer.duration * 100) / 100,
     ruptures,
     sections: decouperEnSections(niveau, ruptures, buffer.duration, cale),
+    instruments,
+    instrument: choisie?.cle || "",
+    regularite: choisie ? Math.round(choisie.regularite * 100) / 100 : 0,
   };
 }
 
@@ -18285,7 +18598,30 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
      qui s'attarde à une scène qui se répète. */
   const colle = precedent && cleEpisode(precedent) === cleEpisode(plan) ? 30 : 0;
 
-  return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole
+  /* Ce que le passage demande, et ce que le plan montre.
+
+     Douze points au plus : du même ordre que l'écart d'énergie maximal, donc
+     capable de faire passer un plan d'acting devant un plan de combat sur un
+     couplet — mais pas de racheter une scène déjà vue. Le jugement porte sur le
+     rush entier, faute de savoir encore quelle fenêtre on y prendra ; la fenêtre,
+     elle, sera choisie sur la même mesure. */
+  const intention = ecartDIntention(plan, section, 0, dureeSource(plan)) * 12;
+
+  /* Les paroles du passage, quand on les a entendues.
+
+     Huit points : assez pour qu'un plan de pluie passe devant un plan d'énergie
+     parfaite sur un vers qui parle de pluie, pas assez pour racheter une scène
+     déjà vue. C'est le même barème que l'accord par modèle de langue, qui sert
+     quand les paroles ont été écrites par l'outil ; celui-ci sert quand elles ont
+     été entendues. */
+  const voulus = tagsDesParoles(section);
+  let illustration = 0;
+  if (voulus) {
+    const porte = (plan.tags || []).filter((tag) => voulus.has(tag)).length;
+    illustration = porte ? -Math.min(8, 4 + porte * 2) : 0;
+  }
+
+  return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole + intention + illustration
     + accordDuMouvement(precedent, plan)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -18334,7 +18670,15 @@ const clesConnues = new Map();
 const clesRefusees = new Set();
 const clesEnVol = new Set();
 const fileCles = [];
-const CLES_PARALLELES = 3;
+/* Six de front, et non trois : le tunnel en demande cent vingt-cinq d'un coup
+   avant de monter, et trois par trois cela prend une demi-minute. Le Worker les
+   garde dans R2 pour toujours, donc la deuxième fois est immédiate. */
+const CLES_PARALLELES = 6;
+/* L'atelier dort dans le tunnel, et rien ne devait s'y préparer tout seul. Mais
+   les fiches de scène ne sont plus un agrément : c'est d'elles que viennent les
+   durées, les fins de scène et la courbe de mouvement. Quand on les demande
+   explicitement, on les sert. */
+let clesDemandees = false;
 
 function planifierCles(plan) {
   const adresse = mediaDe(plan);
@@ -18346,8 +18690,9 @@ function planifierCles(plan) {
 }
 
 function servirCles() {
-  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
-  if (!gesteMontage) return;
+  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir — sauf
+  // ce qu'on a demandé nommément.
+  if (!gesteMontage && !clesDemandees) return;
   while (clesEnVol.size < CLES_PARALLELES && fileCles.length) {
     const plan = fileCles.shift();
     const adresse = mediaDe(plan);
@@ -18371,14 +18716,24 @@ function servirCles() {
    ne répond pas. */
 const ATTENTE_CLES = 6000;
 
-async function attendreCles(plans) {
+async function attendreCles(plans, limiteMs = ATTENTE_CLES, aChaque = null) {
+  clesDemandees = true;
   for (const plan of plans) planifierCles(plan);
+  servirCles();
   const fini = () => !clesEnVol.size && !fileCles.length;
-  const limite = performance.now() + ATTENTE_CLES;
+  const limite = performance.now() + limiteMs;
+  const total = plans.length;
   while (!fini() && performance.now() < limite) {
     // eslint-disable-next-line no-await-in-loop
     await new Promise((suite) => setTimeout(suite, 120));
+    if (!aChaque) continue;
+    const faits = plans.filter((plan) => {
+      const adresse = mediaDe(plan);
+      return clesConnues.has(adresse) || clesRefusees.has(adresse);
+    }).length;
+    aChaque(faits, total);
   }
+  return plans.filter((plan) => clesConnues.has(mediaDe(plan))).length;
 }
 
 /* Les instants où ce rush peut commencer sans rien traîner derrière lui, à
@@ -18468,7 +18823,179 @@ function morceauxDe(plan, tenue, graine = 0) {
 /* Ce qu'on laisse voir avant l'impact : un souffle, pas une approche. */
 const ELAN_AVANT_PIC = 0.18;
 
-function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
+/* ---- Des paroles aux images ---------------------------------------------
+
+   « Il faut que ça illustre les paroles en choisissant les bonnes scènes. »
+
+   Les paroles arrivent transcrites, avec l'instant de chaque vers : on sait donc
+   ce qui se chante pendant chaque passage. Reste à relier un mot à une image, et
+   la seule langue commune entre une chanson et Sakugabooru est celle des
+   étiquettes. Un lexique, donc — pas un modèle : un mot, des étiquettes, et rien
+   qui puisse halluciner. Anglais d'abord, puisque c'est ce qui se chante, avec
+   ce qui revient en français.
+
+   Le lexique ne prétend pas comprendre un texte. Il attrape ce qui est
+   littéral — la pluie, le feu, courir, pleurer, le ciel — et c'est exactement ce
+   qu'un monteur illustre en premier. */
+const LEXIQUE = {
+  // le feu, l'eau, le ciel, la nuit
+  fire: ["fire", "explosions"], burn: ["fire"], burning: ["fire"], flame: ["fire"], flames: ["fire"],
+  feu: ["fire"], ash: ["smoke", "debris"], smoke: ["smoke"], fumee: ["smoke"],
+  rain: ["liquid"], rains: ["liquid"], water: ["liquid"], ocean: ["liquid"], sea: ["liquid"],
+  river: ["liquid"], tears: ["crying", "liquid"], pluie: ["liquid"], eau: ["liquid"],
+  wind: ["wind"], storm: ["wind", "lightning"], thunder: ["lightning"], lightning: ["lightning"],
+  vent: ["wind"], orage: ["lightning"], snow: ["ice"], ice: ["ice"], frozen: ["ice"], cold: ["ice"],
+  sky: ["background_animation"], stars: ["background_animation"], sun: ["background_animation"],
+  moon: ["background_animation"], night: ["background_animation"], city: ["background_animation"],
+  ciel: ["background_animation"], nuit: ["background_animation"], ville: ["background_animation"],
+  // le corps, le visage, le sentiment
+  eyes: ["character_acting"], eye: ["character_acting"], face: ["character_acting"],
+  smile: ["character_acting"], smiling: ["character_acting"], laugh: ["character_acting"],
+  cry: ["crying"], crying: ["crying"], cried: ["crying"], weep: ["crying"], pleure: ["crying"],
+  heart: ["character_acting"], coeur: ["character_acting"], alone: ["character_acting"],
+  lonely: ["character_acting"], silence: ["character_acting"], breathe: ["character_acting"],
+  hand: ["character_acting"], hands: ["character_acting"], voice: ["dialogue"],
+  say: ["dialogue"], said: ["dialogue"], tell: ["dialogue"], talk: ["dialogue"],
+  hair: ["hair"], cheveux: ["hair"], dress: ["fabric"], coat: ["fabric"],
+  // le mouvement
+  run: ["running"], running: ["running"], ran: ["running"], run_away: ["running", "chase"],
+  chase: ["chase"], chasing: ["chase"], courir: ["running"], cours: ["running"],
+  fly: ["flying"], flying: ["flying"], fall: ["falling"], falling: ["falling"], tombe: ["falling"],
+  jump: ["running"], dance: ["dancing"], dancing: ["dancing"], danse: ["dancing"],
+  drive: ["vehicle"], road: ["vehicle"], train: ["vehicle"], car: ["vehicle"],
+  // le combat
+  fight: ["fighting"], fighting: ["fighting"], fought: ["fighting"], war: ["fighting", "explosions"],
+  battle: ["fighting"], blood: ["liquid", "fighting"], sword: ["swords"], blade: ["swords"],
+  gun: ["shooting"], shot: ["shooting"], kill: ["fighting"], break: ["impact_frames", "debris"],
+  broken: ["debris"], crash: ["impact_frames", "debris"], strike: ["impact_frames"],
+  combat: ["fighting"], sang: ["fighting"], epee: ["swords"],
+  // la bascule
+  change: ["henshin", "morphing"], rise: ["henshin"], awake: ["character_acting"],
+  power: ["beams", "henshin"], light: ["beams"], shine: ["beams"], shining: ["beams"],
+  lumiere: ["beams"], transform: ["henshin", "morphing"],
+};
+
+/* Les étiquettes que les paroles d'un passage réclament. Un mot compte une fois :
+   répéter « fire » douze fois dans un refrain ne demande pas douze plans de feu,
+   cela demande du feu. */
+function tagsDesParoles(section) {
+  const texte = String(section?.paroles || "").toLowerCase();
+  if (!texte) return null;
+  const voulus = new Set();
+  for (const mot of texte.split(/[^a-zà-ÿ']+/)) {
+    if (mot.length < 3) continue;
+    const trouves = LEXIQUE[mot] || LEXIQUE[mot.replace(/s$/, "")] || null;
+    if (trouves) for (const tag of trouves) voulus.add(tag);
+  }
+  return voulus.size ? voulus : null;
+}
+
+/* ---- Ce qu'un plan montre, et ce qu'un passage demande -------------------
+
+   « Le choix des scènes ne doit pas être anodin. » Trois intentions, et un plan
+   se juge sur celle que le passage demande :
+
+     expression   un visage qui joue — peu de mouvement, mais du mouvement
+     décor        un décor qui défile — un mouvement moyen et tenu
+     mouvement    une caméra qui suit — un mouvement fort et tenu
+
+   Deux sources pour chacune. Les étiquettes du site disent le SUJET :
+   « character_acting » est un plan d'acting, « background_animation » un décor
+   animé. La courbe de mouvement, lue dans le poids des images, dit la FAÇON DE
+   FILMER — et c'est elle seule qui distingue un panoramique d'une explosion :
+   les deux bougent autant, mais le panoramique bouge de façon tenue, l'explosion
+   par à-coups. Aucune étiquette ne porte cette différence.
+
+   Les bornes viennent de la mesure et non d'une intuition : sur des rushs de
+   Sakugabooru, le milli-octet par pixel vaut 2 à 10 sur un plan presque
+   immobile, 20 à 50 en régime ordinaire, 60 à 255 dans un combat. */
+const INTENTIONS = {
+  expression: {
+    nom: "expressions", bande: [5, 34], tenue: 0.45,
+    tags: { character_acting: 6, dialogue: 5, crying: 5, hair: 2, fabric: 2, eating: 2, smoking: 2, walk_cycle: 1 },
+  },
+  decor: {
+    nom: "décors", bande: [18, 62], tenue: 0.6,
+    tags: { background_animation: 8, rotation: 3, wind: 2, liquid: 2, effects: 1 },
+  },
+  mouvement: {
+    nom: "mouvement de caméra", bande: [55, 255], tenue: 0.5,
+    tags: { running: 5, chase: 5, fighting: 4, smears: 4, flying: 4, martial_arts: 3, sliding: 3,
+      vehicle: 3, sports: 3, falling: 3, impact_frames: 2 },
+  },
+};
+
+/* Ce que chaque émotion de la trame demande, en parts. Un passage calme veut
+   d'abord des décors, un passage d'émotion des visages, un passage d'action une
+   caméra qui suit. */
+const DEMANDE = {
+  calme: { decor: 3, expression: 2 },
+  emotion: { expression: 4, decor: 1 },
+  tension: { expression: 3, decor: 2, mouvement: 1 },
+  elan: { mouvement: 3, decor: 1 },
+  action: { mouvement: 4 },
+  choc: { mouvement: 4, expression: 1 },
+};
+
+// Sans étiquette d'émotion — les anciens projets, l'ancien automate —, l'énergie
+// dit à peu près la même chose.
+const demandeDe = (section) => DEMANDE[section?.emotion]
+  || ((section?.energie ?? 2) >= 2 ? { mouvement: 3, decor: 1 } : { expression: 3, decor: 2 });
+
+/* Le mouvement d'une fenêtre : sa force moyenne, et sa tenue.
+
+   La tenue vaut 1 quand le mouvement est constant d'un bout à l'autre — un
+   travelling, un suivi — et tombe vers 0 quand tout tient dans un pic — un
+   impact, un flash. C'est la mesure qui répond à « choisir les scènes en
+   fonction du mouvement de caméra présent naturellement dans la scène ». */
+function profilDe(plan, entree, sortie) {
+  const courbe = clesConnues.get(mediaDe(plan))?.mouvement;
+  if (!courbe?.valeurs?.length || !(courbe.pas > 0)) return null;
+  const a = Math.max(0, Math.floor(entree / courbe.pas));
+  const b = Math.min(courbe.valeurs.length, Math.max(a + 1, Math.ceil(sortie / courbe.pas)));
+  const v = courbe.valeurs.slice(a, b);
+  if (!v.length) return null;
+  const moyenne = v.reduce((t, x) => t + x, 0) / v.length;
+  const ecart = Math.sqrt(v.reduce((t, x) => t + (x - moyenne) ** 2, 0) / v.length);
+  return { moyenne, tenue: moyenne > 0 ? Math.max(0, 1 - ecart / moyenne) : 0, pic: Math.max(...v) };
+}
+
+/* Zéro quand la fenêtre est exactement ce que le passage demande, un quand elle
+   n'a rien de ce qu'il demande. Moitié étiquettes, moitié mouvement : les unes
+   sans l'autre se tromperaient — un plan étiqueté « fighting » peut être un plan
+   fixe de deux personnages qui se regardent. */
+function ecartDIntention(plan, section, entree, sortie) {
+  const demande = demandeDe(section);
+  const total = Object.values(demande).reduce((a, b) => a + b, 0) || 1;
+  const etiquettes = new Set(plan.tags || []);
+  const profil = profilDe(plan, entree, sortie);
+  let note = 0;
+  for (const [cle, part] of Object.entries(demande)) {
+    if (!part) continue;
+    const vise = INTENTIONS[cle];
+    if (!vise) continue;
+    let poids = 0;
+    let plafond = 0;
+    for (const [tag, w] of Object.entries(vise.tags)) { plafond += w; if (etiquettes.has(tag)) poids += w; }
+    // Un tiers du poids d'une intention suffit à dire qu'un plan en relève : un
+    // plan ne porte jamais toutes les étiquettes d'une famille.
+    const parEtiquettes = plafond ? Math.min(1, poids / (plafond / 3)) : 0;
+    let parMouvement = 0;
+    if (profil) {
+      const [bas, haut] = vise.bande;
+      const dehors = profil.moyenne < bas ? bas - profil.moyenne
+        : profil.moyenne > haut ? profil.moyenne - haut : 0;
+      // Quarante points de mouvement d'écart : au-delà, la fenêtre n'a plus rien
+      // à voir avec ce qu'on cherche.
+      const dedans = Math.max(0, 1 - dehors / 40);
+      parMouvement = dedans * (0.5 + 0.5 * Math.min(1, profil.tenue / vise.tenue));
+    }
+    note += (part / total) * (parEtiquettes * 0.5 + parMouvement * 0.5);
+  }
+  return 1 - Math.max(0, Math.min(1, note));
+}
+
+function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null) {
   const source = dureeSource(plan);
   if (!(source > 0) || source < PLAN_MINI) return null;
   const tenue = Math.min(duree, Math.max(PLAN_MINI, source));
@@ -18541,8 +19068,21 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
      comme il prenait la tranche suivante. Au-delà du nombre d'images-clés, on
      reprend la découpe régulière : mieux vaut un extrait lourd qu'un montage
      qui répète le même instant. */
+  /* Parmi les cases possibles, celle qui sert le passage.
+
+     Elles étaient prises dans l'ordre : la première fois la première image-clé,
+     et comme une scène ne sert plus qu'une fois, c'était TOUJOURS la première —
+     le début du rush, quoi qu'il montre. On les classe donc par ce que le
+     passage demande, et l'on prend la meilleure. Un rush réemployé prend la
+     suivante, pour ne pas remontrer le même instant. */
   const cases = casesUtiles(plan, tenue, graine);
-  if (cases && pris < cases.length) return rendre(cases[pris]);
+  if (cases && cases.length) {
+    if (!section) return rendre(cases[pris % cases.length]);
+    const classees = cases
+      .map((entree) => ({ entree, ecart: ecartDIntention(plan, section, entree, finDeScene(entree)) }))
+      .sort((a, b) => a.ecart - b.ecart);
+    return rendre(classees[pris % classees.length].entree);
+  }
 
   const { combien, pas, ordre } = morceauxDe(plan, tenue, graine);
   const place = ordre[pris % combien];
@@ -18563,6 +19103,73 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0) {
    musique. C'est le bon choix pour un AMV qui raconte quelque chose. */
 const parChronologie = (a, b) =>
   (Number(a.episode) || 0) - (Number(b.episode) || 0) || String(a.id).localeCompare(String(b.id));
+
+/* La grille des coupes : les frappes d'un seul instrument.
+
+   « À chaque fois que l'instrument arrive, ou que le même son se répète, la
+   scène change. » La grille n'est donc plus une division régulière de la
+   section : ce sont les instants où l'instrument choisi frappe. Un plan dure
+   d'une frappe à la suivante, et la coupe tombe sur le son.
+
+   Deux garde-fous, dans cet ordre :
+     — une frappe trop proche de la précédente est retirée : en dessous d'un
+       demi-tiers de seconde, l'œil ne voit plus un plan mais un clignotement ;
+     — un trou trop long est comblé par des frappes intermédiaires, sinon un
+       passage sans percussion tiendrait le même plan quinze secondes.
+
+   Et puisque chaque scène ne sert qu'une fois, la grille ne peut pas demander
+   plus de coupes qu'il n'y a de scènes : au-delà, on retire les frappes les plus
+   faibles jusqu'à ce que le compte tombe. */
+const COUPE_MINI = 0.34;
+
+function grilleDeCoupes(rythme, budget) {
+  const attaques = rythme?.instruments?.[rythme?.instrument] || [];
+  if (attaques.length < 4) return null;
+  const duree = rythme.duree || 0;
+  const periode = rythme.bpm ? 60 / rythme.bpm : 0.5;
+
+  // 1. Les frappes, dans l'ordre, sans celles qui se collent à la précédente.
+  const gardees = [];
+  for (const a of [...attaques].sort((x, y) => x.quand - y.quand)) {
+    if (a.quand <= 0 || a.quand >= duree) continue;
+    const derniere = gardees[gardees.length - 1];
+    if (derniere && a.quand - derniere.quand < COUPE_MINI) {
+      if (a.force > derniere.force) gardees[gardees.length - 1] = a;
+      continue;
+    }
+    gardees.push(a);
+  }
+  if (gardees.length < 4) return null;
+
+  // 2. Les trous : on y pose des coupes régulières, sur le temps.
+  const points = [];
+  let avant = 0;
+  for (const a of [...gardees, { quand: duree, force: 0 }]) {
+    let creux = a.quand - avant;
+    while (creux > TENUE_MAX + 0.01) {
+      const morceaux = Math.ceil(creux / TENUE_MAX);
+      const pas = Math.max(periode, creux / morceaux);
+      for (let k = 1; k < morceaux; k += 1) points.push({ quand: avant + pas * k, force: 0, comble: true });
+      break;
+    }
+    if (a.quand < duree) points.push(a);
+    avant = a.quand;
+  }
+  points.sort((x, y) => x.quand - y.quand);
+
+  /* 3. Trop de coupes pour le vivier : on retire les plus faibles. Les frappes
+        de comblement partent les premières — elles ne portent aucun son. */
+  if (budget > 0 && points.length + 1 > budget) {
+    const trop = points.length + 1 - budget;
+    const ordreFaiblesse = [...points]
+      .map((x, i) => ({ i, force: x.comble ? -1 : x.force }))
+      .sort((a, b) => a.force - b.force)
+      .slice(0, trop);
+    const retirer = new Set(ordreFaiblesse.map((x) => x.i));
+    for (let i = points.length - 1; i >= 0; i -= 1) if (retirer.has(i)) points.splice(i, 1);
+  }
+  return points.map((x) => Math.round(x.quand * 1000) / 1000);
+}
 
 function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 } = {}) {
   const rythme = projet.rythme;
@@ -18648,6 +19255,15 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
     if (partages[riche] > 1) { partages[riche] -= 1; partages[i] += 1; }
   });
 
+  /* Les coupes tombent sur l'instrument quand on en a un ; sinon sur la division
+     régulière d'avant, qui reste juste et ne dépend de rien. */
+  const grille = grilleDeCoupes(rythme, budgetCases);
+  const prochaineFrappe = (t) => {
+    if (!grille) return null;
+    for (const quand of grille) if (quand > t + COUPE_MINI) return quand;
+    return null;
+  };
+
   sections.forEach((section, rangSection) => {
     const accord = projet.accords?.[rangSection] || projet.accords?.[String(rangSection)] || null;
     const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
@@ -18662,17 +19278,25 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
        éclair au milieu du silence. */
     const span = section.fin - section.debut;
     const cases = partages[rangSection] || 0;
-    if (!cases) return;
-    const pas = span / cases;
+    if (!cases && !grille) return;
+    const pas = span / Math.max(1, cases);
 
     let curseur = section.debut;
     let garde = 0;
     while (section.fin - curseur > PLAN_MINI && garde < 4000) {
       garde += 1;
       const reste = section.fin - curseur;
+      /* Jusqu'à la prochaine frappe, mesurée depuis là où l'on est vraiment.
+
+         Prendre les frappes en absolu laissait dériver le montage dès qu'un rush
+         trop court ne remplissait pas sa case : les coupes suivantes tombaient à
+         côté du son. En repartant du curseur à chaque fois, la coupe retombe
+         toujours sur une frappe, quoi qu'il se soit passé avant. */
+      const frappe = prochaineFrappe(curseur);
+      const ecart = frappe === null ? pas : Math.min(frappe, section.fin) - curseur;
       // Le plafond par coupe s'applique ici : la section garde sa durée, elle
       // est simplement servie par plus de cases.
-      const vise = Math.min(pas, reste, TENUE_MAX);
+      const vise = Math.max(PLAN_MINI, Math.min(ecart, reste, TENUE_MAX));
       const rang = montage.length;
 
       const precedent = montage[montage.length - 1];
@@ -18714,7 +19338,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       }
       if (!choix) break;
 
-      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu, graine);
+      const bornes = fenetreDans(choix, vise, section.energie >= 2 && !choix.__picVu, graine, section);
       if (!bornes) break;
       // Combien de plans d'affilée dans la même famille : c'est ce qui rend le
       // sur-place de plus en plus coûteux.
@@ -18874,7 +19498,38 @@ function phraseResolution(journal) {
   return dits.length ? `${dits.join(" · ")}. ` : "";
 }
 
-async function chercherRushs(animes, secondes, cases = 0, elargir = false, journal = null) {
+/* Les ambiances à chercher, déduites de la trame.
+
+   Le vivier était tiré du classement général du site, qui favorise ce qui frappe
+   — impacts, effets, décors animés. Mesuré : sur une trame « calme, émotion,
+   action », les passages calmes recevaient trois plans d'acting sur sept, parce
+   qu'il n'y en avait presque pas dans la pioche. Choisir mieux ne sert à rien si
+   l'on n'a rien à choisir.
+
+   On demande donc au site une pioche par intention, dans la proportion où la
+   trame la demande : « acting » pour les expressions, « decor » pour les décors,
+   « combat » et « vitesse » pour le mouvement. Chaque ambiance a son propre
+   classement côté serveur — c'est exactement ce à quoi elles servent. */
+const AMBIANCE_DE = { expression: ["acting"], decor: ["decor"], mouvement: ["combat", "vitesse"] };
+
+function ambiancesVoulues(etiquettes) {
+  const parts = {};
+  for (const etiquette of etiquettes || []) {
+    for (const [intention, poids] of Object.entries(DEMANDE[etiquette] || {})) {
+      for (const ambiance of AMBIANCE_DE[intention] || []) {
+        parts[ambiance] = (parts[ambiance] || 0) + poids / (AMBIANCE_DE[intention].length || 1);
+      }
+    }
+  }
+  const total = Object.values(parts).reduce((a, b) => a + b, 0);
+  if (!total) return null;
+  return Object.entries(parts)
+    .map(([ambiance, poids]) => ({ ambiance, part: poids / total }))
+    .filter((x) => x.part > 0.04)
+    .sort((a, b) => b.part - a.part);
+}
+
+async function chercherRushs(animes, secondes, cases = 0, elargir = false, journal = null, etiquettes = null) {
   /* Autant de sources que de cases, quand on les connaît : c'est la seule façon
      qu'une scène n'apparaisse jamais deux fois. À défaut, une par tranche de
      cinq secondes, ce qui suffisait tant qu'on acceptait les redites. */
@@ -18897,36 +19552,52 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false, journ
     }
     return [...pris.values()].slice(0, RUSHS_MAX);
   }
-  /* Une marge, et non le compte juste.
+  /* Beaucoup plus de scènes que de coupes, et c'est la condition de tout le reste.
 
-     On demandait exactement le nombre de cases. Chaque scène ne servant qu'une
-     fois, il suffisait qu'une seule soit trop courte pour sa case, ou illisible,
-     pour que la fin de la musique reste sans image. Un tiers de plus coûte
-     quelques en-têtes et sauve la couverture. */
+     On demandait un tiers de plus que le nombre de cases. Mesuré : quarante-six
+     coupes servies par cinquante scènes, donc presque toutes employées — et dans
+     ce cas choisir ne veut plus rien dire. Le témoin le montrait crûment : le
+     montage avec les paroles illustrait 29 % des coupes, celui sans en illustrait
+     36 %, c'est-à-dire que le critère ne changeait rien du tout puisqu'il n'y
+     avait rien à choisir.
+
+     Deux fois et demie le nombre de coupes laisse une vraie marge de choix, et ne
+     coûte presque rien depuis que la lecture d'une scène tient dans un kilo-octet
+     de JSON : cent quarante scènes pèsent cent quarante kilo-octets. */
   const parAnime = Math.ceil(voulues / Math.max(1, animes.length));
-  const demande = Math.min(200, Math.ceil(parAnime * 1.35) + 8);
+  const demande = Math.min(200, Math.ceil(parAnime * 2.5) + 12);
+  /* Une pioche par ambiance, à la proportion où la trame la demande — et au
+     moins douze scènes chacune, sinon une intention minoritaire n'aurait rien. */
+  const ambiances = ambiancesVoulues(etiquettes)
+    || [{ ambiance: "", part: 1 }];
   const trouves = [];
   for (const entree of animes) {
     const anime = nomAnime(entree);
     const tag = tagAnime(entree);
-    // Le tag exact quand on l'a : aucune résolution, donc aucune surprise.
-    const cible = `/api/rushes?${tag ? `tag=${encodeURIComponent(tag)}` : `anime=${encodeURIComponent(anime)}`}`
-      + `&top=${demande}&pool=2000`;
-    try {
-      const reponse = await fetch(cible);
-      const contenu = await reponse.json();
-      if (!reponse.ok) throw new Error(contenu?.error || `le serveur a répondu ${reponse.status}`);
-      /* Le nom qui compte est celui que le site a reconnu, pas celui qu'on a
-         tapé : « chainsaw » doit s'écrire « Chainsaw Man » — sur les plans
-         comme dans le titre de l'AMV. */
-      const reconnu = contenu.anime || anime;
-      journal?.resolus.push({ demande: anime, trouve: reconnu, tag: contenu.tag || tag,
-        total: contenu.total || 0 });
-      (contenu.rushes || []).forEach((rush) => trouves.push({ ...rush, anime: rush.anime || reconnu }));
-    } catch (erreur) {
-      journal?.resolus.push({ demande: anime, trouve: "", tag: "", total: 0 });
-      console.warn(`aucun rush pour « ${anime} » :`, erreur.message);
+    let reconnuPour = "";
+    let totalPour = 0;
+    for (const { ambiance, part } of ambiances) {
+      const combien = Math.min(200, Math.max(12, Math.ceil(demande * part)));
+      // Le tag exact quand on l'a : aucune résolution, donc aucune surprise.
+      const cible = `/api/rushes?${tag ? `tag=${encodeURIComponent(tag)}` : `anime=${encodeURIComponent(anime)}`}`
+        + `&top=${combien}&pool=2000${ambiance ? `&mood=${ambiance}` : ""}`;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const reponse = await fetch(cible);
+        // eslint-disable-next-line no-await-in-loop
+        const contenu = await reponse.json();
+        if (!reponse.ok) throw new Error(contenu?.error || `le serveur a répondu ${reponse.status}`);
+        /* Le nom qui compte est celui que le site a reconnu, pas celui qu'on a
+           tapé : « chainsaw » doit s'écrire « Chainsaw Man » — sur les plans
+           comme dans le titre de l'AMV. */
+        reconnuPour = contenu.anime || anime;
+        totalPour = Math.max(totalPour, contenu.total || 0);
+        (contenu.rushes || []).forEach((rush) => trouves.push({ ...rush, anime: rush.anime || reconnuPour }));
+      } catch (erreur) {
+        console.warn(`aucun rush pour « ${anime} » (${ambiance || "général"}) :`, erreur.message);
+      }
     }
+    journal?.resolus.push({ demande: anime, trouve: reconnuPour, tag, total: totalPour });
   }
   // Un même plan peut sortir de deux recherches : on ne le garde qu'une fois.
   const uniques = [...new Map(trouves.map((r) => [String(r.id), r])).values()];

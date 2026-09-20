@@ -19,7 +19,50 @@ import { lireMp4 } from "../../public/demux.js";
 import { trouverMoov } from "../../public/plage.js";
 import { HOTES } from "./media.js";
 
-export const VERSION_CLES = 1;
+export const VERSION_CLES = 2;
+
+/* Le mouvement d'un plan, lu dans le poids de ses images.
+
+   Une image compressée pèse ce qu'elle a de nouveau à montrer. Un plan fixe sur
+   un visage tient en un ou deux kilo-octets par image ; un panoramique, où
+   chaque pixel se déplace, en pèse dix à trente fois plus. Et ce poids est déjà
+   dans le « moov » que l'on télécharge pour les images-clés : la courbe de
+   mouvement d'un rush ne coûte donc pas un octet de plus, et se garde au même
+   endroit, pour toujours.
+
+   Les images-clés sont exclues du calcul : une image-clé se décrit seule et pèse
+   toujours beaucoup, ce qui ferait passer un plan fixe pour un mouvement à
+   chaque début de groupe.
+
+   L'unité est le milli-octet par pixel — le poids de l'image divisé par sa
+   surface, en millièmes —, ce qui rend les valeurs comparables d'un rush à
+   l'autre quelle que soit sa définition. Mesuré sur des rushs de Sakugabooru :
+   0,002 pour un plan quasi immobile, 0,02 à 0,05 en régime ordinaire, 0,08 à
+   0,31 dans un combat. Une valeur par demi-seconde, plafonnée à 255 pour tenir
+   sur un octet. */
+const PAS_MOUVEMENT = 0.5;
+const ECHELLE_MOUVEMENT = 1000;
+
+function courbeDeMouvement(ech, echelle, duree, largeur, hauteur) {
+  const surface = (largeur || 0) * (hauteur || 0);
+  if (!surface || !(duree > 0)) return null;
+  const cases = Math.max(1, Math.ceil(duree / PAS_MOUVEMENT));
+  const sommes = new Float64Array(cases);
+  const nombres = new Float64Array(cases);
+  for (const e of ech) {
+    if (e.cle) continue;
+    const i = Math.min(cases - 1, Math.max(0, Math.floor((e.instant / echelle) / PAS_MOUVEMENT)));
+    sommes[i] += (e.taille || 0) / surface;
+    nombres[i] += 1;
+  }
+  const valeurs = [];
+  for (let i = 0; i < cases; i += 1) {
+    const moyenne = nombres[i] ? sommes[i] / nombres[i] : 0;
+    valeurs.push(Math.min(255, Math.round(moyenne * ECHELLE_MOUVEMENT)));
+  }
+  // Un rush dont aucune demi-seconde ne bouge n'a rien à dire de son mouvement.
+  return valeurs.some((v) => v > 0) ? { pas: PAS_MOUVEMENT, valeurs } : null;
+}
 
 const TETE = 32768;
 const encodeur = new TextEncoder();
@@ -80,7 +123,8 @@ async function lireCles(adresse) {
   }
   cles.sort((a, b) => a - b);
   return { duree: Math.round(duree * 1000) / 1000, cles, codec: carte.codec,
-    largeur: carte.largeur, hauteur: carte.hauteur };
+    largeur: carte.largeur, hauteur: carte.hauteur,
+    mouvement: courbeDeMouvement(ech, carte.echelle, duree, carte.largeur, carte.hauteur) };
 }
 
 const entetes = {

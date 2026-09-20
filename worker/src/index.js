@@ -14,6 +14,7 @@ import { compte } from "./compte.js";
 import { ecrireParoles } from "./paroles.js";
 import { accorderParoles } from "./accord.js";
 import { lireScene } from "./scene.js";
+import { ecoute } from "./ecoute.js";
 import { arcOf, describe, episodeNumber, FOLDERS, folderOf, techniqueOf } from "./naming.js";
 import { copyrightTags, rushes, rushesPartout, searchSeries, serieDe } from "./sakuga.js";
 import { rendu } from "./rendu.js";
@@ -422,6 +423,7 @@ export default {
         if (url.pathname === "/api/musique") return await genererMusique(request, url, env);
         if (url.pathname === "/api/paroles") return await ecrireParoles(request, url, env);
         if (url.pathname === "/api/scene") return await lireScene(request, url, env);
+        if (url.pathname === "/api/ecoute") return await ecoute(request, url, env);
         if (url.pathname === "/api/rendu") return await rendu(request, url, env);
         if (url.pathname === "/api/veille") return await veille(request, url);
         if (url.pathname === "/api/accord") return await accorderParoles(request, url, env);
