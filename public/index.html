@@ -897,6 +897,15 @@ main {
 /* La fiche à publier, sous une carte d'historique. Repliée, elle ne coûte
    qu'une ligne ; dépliée, elle donne les trois champs à copier. */
 .archive-bloc { display: flex; flex-direction: column; gap: 0; }
+/* Le pied d'une carte : les gestes qui ne tiennent pas dans un carré. */
+.archive-pied {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  margin: -6px 0 0; padding: 10px 12px 12px;
+  border: 1px solid var(--trait); border-top: 0;
+  border-radius: 0 0 12px 12px; background: #101010;
+}
+.archive-pied .fiche-seo { margin: 0; padding: 0; border: 0; background: none; width: 100%; }
+.tunnel-sorties { display: flex; flex-wrap: wrap; gap: 8px; }
 .fiche-seo {
   display: flex; flex-direction: column; gap: 8px;
   margin: -6px 0 0; padding: 10px 12px 12px;
@@ -2220,7 +2229,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 18:17";
+const VERSION_PAGE = "2026-09-20 18:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4999,6 +5008,48 @@ function ficheDuTunnel() {
   };
 }
 
+/* Exporter un montage en projet DaVinci.
+
+   Le rendu donne une vidéo : elle se publie, elle ne se remonte pas. Pour
+   reprendre le montage — déplacer un plan, rallonger une coupe — il faut un
+   projet et ses médias, et c'est une archive que l'on ouvre sur un ordinateur.
+
+   Elle est fabriquée là où le rendu l'est : sur le runner, qui a déjà les rushs
+   sous la main et FFmpeg pour les découper. Le téléphone n'envoie que la feuille
+   de route — quelques kilo-octets —, et l'archive revient dans le grenier, d'où
+   elle se télécharge depuis l'ordinateur où vit Resolve. */
+const projetsEnCours = new Set();
+
+function boutonProjetDaVinci(projet, etat) {
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.className = "archive-action";
+  bouton.textContent = "Projet DaVinci";
+  bouton.title = "Exporter une archive à ouvrir dans DaVinci Resolve";
+  bouton.addEventListener("click", async () => {
+    if (projetsEnCours.has(projet.id)) return;
+    if (!projet.plans?.length) { etat.textContent = "Ce montage n'a aucun plan à exporter."; return; }
+    projetsEnCours.add(projet.id);
+    bouton.disabled = true;
+    const avant = bouton.textContent;
+    bouton.textContent = "Export en cours…";
+    const rendreLaMain = () => {
+      projetsEnCours.delete(projet.id);
+      bouton.disabled = false;
+      bouton.textContent = avant;
+    };
+    try {
+      const suit = await lancerRenduDistant(projet, document.createElement("button"), etat,
+        rendreLaMain, { flux: "projet.yml", quoi: "projet" });
+      if (suit !== true) rendreLaMain();
+    } catch (erreur) {
+      etat.textContent = `L'export n'a pas pu partir : ${erreur.message}`;
+      rendreLaMain();
+    }
+  });
+  return bouton;
+}
+
 /* La fiche d'un montage, dépliable. Repliée par défaut : une carte d'historique
    doit rester une ligne qu'on parcourt, pas un pavé de texte. */
 function blocFicheSeo(fiche, ouverte = false) {
@@ -5074,10 +5125,20 @@ function blocResultat() {
   telecharger.addEventListener("click", () => rendreLeTunnel().catch(() => {}));
   boite.append(telecharger);
 
+  /* Deux sorties, et elles ne servent pas au même moment : la vidéo se publie,
+     le projet se remonte. */
+  const projet = projetActif();
+  if (projet) {
+    const gestes = document.createElement("div");
+    gestes.className = "tunnel-sorties";
+    gestes.append(boutonProjetDaVinci(projet, noeudDeRendu()));
+    boite.append(gestes);
+  }
+
   const note = document.createElement("p");
   note.className = "tunnel-dit";
   note.textContent = "Le fichier est assemblé sur un serveur, puis rangé dans l'Historique."
-    + " Compte quelques minutes.";
+    + " Compte quelques minutes. Le projet DaVinci revient au même endroit, en archive.";
   boite.append(note, noeudDeRendu());
   return boite;
 }
@@ -5656,14 +5717,23 @@ function rendreHistoire() {
        Elle est dans un enveloppe plutôt que dans la carte : la carte est une
        grille de trois colonnes, et un pavé de texte y aurait sa place à côté de
        la vignette au lieu d'être dessous. */
-    if (projet.seo?.titre) {
-      const enveloppe = document.createElement("div");
-      enveloppe.className = "archive-bloc";
-      enveloppe.append(carte, blocFicheSeo(projet.seo));
-      liste.append(enveloppe);
-    } else {
-      liste.append(carte);
-    }
+    /* Sous la carte : ce qu'on fait d'un montage une fois qu'il existe —
+       l'exporter pour le remonter, et copier sa fiche pour le publier. */
+    const enveloppe = document.createElement("div");
+    enveloppe.className = "archive-bloc";
+    enveloppe.append(carte);
+
+    const pied = document.createElement("div");
+    pied.className = "archive-pied";
+    // « etat » est déjà le bouton d'état de la carte : celui-ci dit autre chose.
+    const suivi = document.createElement("p");
+    suivi.className = "tunnel-dit";
+    suivi.style.whiteSpace = "pre-line";
+    pied.append(boutonProjetDaVinci(projet, suivi));
+    if (projet.seo?.titre) pied.append(blocFicheSeo(projet.seo));
+    pied.append(suivi);
+    enveloppe.append(pied);
+    liste.append(enveloppe);
   }
   morceaux.push(liste);
   morceaux.push(note("La flèche qui rentre dans la boîte range un montage : il quitte la barre des projets sans rien perdre, et ses plans, ses coupes et sa musique l'attendent. La flèche qui s'échappe du cadre le remet en place et le rouvre, sans quitter cette liste."));
@@ -16163,6 +16233,9 @@ function feuilleDeRoute(projet, musique) {
       video: adresse,
       entree: Math.round(entreeDe(plan) * 1000) / 1000,
       sortie: Math.round(sortieDe(plan) * 1000) / 1000,
+      // Le nom sert au projet DaVinci : une ligne de temps où chaque plan
+      // s'appelle « plan 37 » ne se relit pas.
+      nom: String(plan.name || plan.nom || "").slice(0, 60),
     });
   }
   return {
@@ -16222,7 +16295,9 @@ async function deposerPiste(projet) {
 
    Ce qu'on y gagne : le jeton ne descend plus jamais, il se change en un seul
    endroit, et un appareil neuf n'a rien à saisir. */
-async function lancerRenduDistant(projet, bouton, etat, termine = null) {
+async function lancerRenduDistant(projet, bouton, etat, termine = null, options = {}) {
+  const flux = options.flux || "rendu.yml";
+  const quoi = options.quoi || "rendu";
   if (!coffre.code) {
     etat.textContent = "Il faut un code de sauvegarde : c'est lui qui sert de laissez-passer au rendu."
       + "\nLe panneau Setting en crée un.";
@@ -16236,8 +16311,16 @@ async function lancerRenduDistant(projet, bouton, etat, termine = null) {
     etat.textContent = "Dépôt de la musique…";
     let musique = null;
     try { musique = await deposerPiste(projet); }
-    catch (erreur) { etat.textContent = `${erreur.message}\n\nLe rendu partirait muet : on s'arrête là.`; return; }
-    if (!musique) {
+    catch (erreur) {
+      /* Un projet DaVinci sans musique reste un projet : on continue, et l'on
+         dit ce qui manque. Un rendu muet, lui, n'est pas un rendu. */
+      if (quoi !== "projet") {
+        etat.textContent = `${erreur.message}\n\nLe rendu partirait muet : on s'arrête là.`;
+        return;
+      }
+      etat.textContent = `Sans la musique (${erreur.message}) — le projet partira sans piste audio.`;
+    }
+    if (!musique && quoi !== "projet") {
       etat.textContent = "La musique n'a pas pu être déposée. Le rendu partirait muet : on s'arrête là.";
       return;
     }
@@ -16249,10 +16332,14 @@ async function lancerRenduDistant(projet, bouton, etat, termine = null) {
     }
 
     etat.textContent = "Demande envoyée…";
+    /* Le nom du montage et sa fiche voyagent avec la feuille : le projet les
+       écrit dans son archive, la vidéo les ignore. */
+    feuille.nom = String(projet.nom || "AMV").slice(0, 80);
+    if (projet.seo?.titre) feuille.fiche = projet.seo;
     const reponse = await fetch("/api/rendu", {
       method: "POST",
       headers: { "x-coffre": coffre.code, "content-type": "application/json" },
-      body: JSON.stringify({ entrees: {
+      body: JSON.stringify({ flux, entrees: {
         montage: JSON.stringify(feuille),
         nom: nomDeFichier(projet).slice(0, 60) || "amv",
         /* Ce que le rendu emportera avec lui dans la liste : sans cela, un
@@ -16266,16 +16353,17 @@ async function lancerRenduDistant(projet, bouton, etat, termine = null) {
     const dit = await reponse.json().catch(() => ({}));
     if (!reponse.ok) {
       etat.textContent = reponse.status === 503
-        ? "Le rendu déporté n'est pas encore configuré côté serveur : il manque le secret GITHUB_TOKEN."
-        : `Le rendu a été refusé : ${dit.erreur || reponse.status}`;
+        ? "Le travail déporté n'est pas encore configuré côté serveur : il manque le secret GITHUB_TOKEN."
+        : `Le ${quoi} a été refusé : ${dit.erreur || reponse.status}`;
       return;
     }
     if (!dit.course) {
-      etat.textContent = "Le rendu est lancé, mais la course n'a pas été retrouvée tout de suite."
+      etat.textContent = `Le ${quoi} est lancé, mais la course n'a pas été retrouvée tout de suite.`
         + "\nRegarde l'onglet Actions du dépôt dans une minute.";
       return;
     }
-    montrerCourse({ id: dit.course, html_url: dit.page }, etat, Date.now(), termine);
+    montrerCourse({ id: dit.course, html_url: dit.page }, etat, Date.now(), termine,
+      quoi === "projet" ? "Projet DaVinci" : "Rendu");
     // Le suivi continue tout seul : celui qui a appelé doit le savoir pour ne
     // pas rendre la main au bouton avant la fin.
     return true;
@@ -16286,7 +16374,7 @@ async function lancerRenduDistant(projet, bouton, etat, termine = null) {
 }
 
 /* Suivre la course jusqu'au bout, sans empêcher de faire autre chose. */
-function montrerCourse(course, etat, depuis = Date.now(), termine = null) {
+function montrerCourse(course, etat, depuis = Date.now(), termine = null, quoi = "Rendu") {
   const lien = course.html_url;
   const dire = (quoi) => { etat.innerHTML = ""; etat.append(quoi); };
   const ligne = (texte) => {
@@ -16302,7 +16390,7 @@ function montrerCourse(course, etat, depuis = Date.now(), termine = null) {
     tout.append(bloc, a);
     return tout;
   };
-  dire(ligne("Rendu en cours sur GitHub — compte deux à quatre minutes."));
+  dire(ligne(`${quoi} en cours sur GitHub — compte deux à quatre minutes.`));
 
   let tours = 0;
   // Fini, pour n'importe quelle raison : celui qui attend doit l'apprendre une
@@ -16324,18 +16412,18 @@ function montrerCourse(course, etat, depuis = Date.now(), termine = null) {
     const dit = await reponse.json().catch(() => null);
     if (!dit) return;
     if (dit.etat !== "completed") {
-      dire(ligne(`Rendu en cours sur GitHub — ${dit.etat === "queued" ? "en file" : "en train de rendre"}…`));
+      dire(ligne(`${quoi} en cours sur GitHub — ${dit.etat === "queued" ? "en file" : "en train de travailler"}…`));
       return;
     }
     fini();
     if (dit.verdict !== "success") {
-      dire(ligne(`Le rendu a échoué (${dit.verdict}). La page GitHub dit à quelle étape.`));
+      dire(ligne(`${quoi} en échec (${dit.verdict}). La page GitHub dit à quelle étape.`));
       return;
     }
     /* Le fichier est déposé par la dernière étape du workflow, juste après la
        fin de la course : il peut manquer d'une poignée de secondes. On le
        cherche donc quelques fois avant de renvoyer vers GitHub. */
-    dire(ligne("Rendu terminé. Réception du fichier…"));
+    dire(ligne(`${quoi} terminé. Réception du fichier…`));
     for (let essai = 0; essai < 10; essai += 1) {
       // eslint-disable-next-line no-await-in-loop
       const rendus = await listerGrenier();
@@ -16343,7 +16431,7 @@ function montrerCourse(course, etat, depuis = Date.now(), termine = null) {
       if (neuf) {
         etat.innerHTML = "";
         const dire_ = document.createElement("div");
-        dire_.textContent = "Rendu terminé — il est aussi dans l'onglet Historique.";
+        dire_.textContent = `${quoi} terminé — il est aussi dans l'onglet Historique.`;
         dire_.style.marginBottom = "8px";
         etat.append(dire_, carteRendu(neuf, () => { etat.textContent = "Rendu supprimé."; }));
         return;
@@ -16351,7 +16439,7 @@ function montrerCourse(course, etat, depuis = Date.now(), termine = null) {
       // eslint-disable-next-line no-await-in-loop
       await new Promise((suite) => setTimeout(suite, 4000));
     }
-    dire(ligne("Rendu terminé, mais il n'est pas arrivé dans le grenier."
+    dire(ligne(`${quoi} terminé, mais il n'est pas arrivé dans le grenier.`
       + " Le secret AMVAUTO_CODE manque peut-être au dépôt — le fichier reste dans les artefacts de la course."));
   }, 5000);
 }

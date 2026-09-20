@@ -1,0 +1,122 @@
+# Le projet DaVinci, fabriqué ailleurs.
+#
+# Le téléphone n'envoie qu'une feuille de route : quelques kilo-octets de JSON —
+# les adresses des rushs, les bornes de chaque plan, la musique. Le runner, lui,
+# a la fibre, un processeur qui ne chauffe pas dans une poche, et FFmpeg.
+#
+# Deux minutes de runner Linux par projet, sur les deux mille offertes chaque
+# mois : de quoi rendre plusieurs centaines d'AMV sans rien payer.
+#
+# Déclenchement : POST sur l'API GitHub avec un jeton personnel de portée
+# « actions:write », ou depuis l'onglet Actions du dépôt.
+name: Projet DaVinci
+
+on:
+  workflow_dispatch:
+    inputs:
+      montage:
+        description: "La feuille de route du montage, en JSON"
+        required: true
+        type: string
+      nom:
+        description: "Nom du fichier projet"
+        required: false
+        default: amv
+        type: string
+      projet:
+        description: "Le nom du montage, pour la liste des rendus"
+        required: false
+        default: ""
+        type: string
+      duree:
+        description: "Sa durée en secondes"
+        required: false
+        default: ""
+        type: string
+      plans:
+        description: "Combien de plans"
+        required: false
+        default: ""
+        type: string
+
+# Le job n'a besoin que d'écrire son artefact : rien d'autre du dépôt.
+permissions:
+  contents: read
+
+jobs:
+  rendre:
+    runs-on: ubuntu-latest
+    # Quarante minutes, et non vingt : cent douze plans tirés de vingt-six rushs,
+    # c'est près d'un demi-gigaoctet à télécharger avant le premier réencodage.
+    # Une course qu'on arrête au milieu ne coûte pas moins de minutes qu'une
+    # course qui aboutit — elle ne rend simplement rien.
+    timeout-minutes: 40
+    steps:
+      - name: Récupérer le script de rendu
+        uses: actions/checkout@v4
+
+      - name: Installer FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Écrire la feuille de route
+        env:
+          MONTAGE: ${{ inputs.montage }}
+        run: printf '%s' "$MONTAGE" > montage.json
+
+      - name: Rendre
+        run: python3 tools/projet.py montage.json sortie.zip
+
+      - name: Publier le fichier
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.nom }}-projet
+          path: sortie.zip
+          retention-days: 7
+          if-no-files-found: error
+
+      # Le vrai point d'arrivée : le grenier de l'application.
+      #
+      # Un artefact GitHub oblige à quitter la PWA, ouvrir un site lourd sur un
+      # téléphone, se connecter, trouver la section « Artifacts », et récupérer
+      # un ZIP au lieu d'une vidéo. Et il expire au bout de sept jours.
+      #
+      # Le grenier, lui, est déjà dans l'application : la liste s'y affiche, le
+      # fichier s'y télécharge en un geste et se partage vers Photos. Le dépôt
+      # passe par le code de vingt caractères du compte — le même qui sert à
+      # retrouver ses montages d'un appareil à l'autre — rangé dans les secrets
+      # du dépôt. Sans ce secret, l'étape est simplement sautée : l'artefact
+      # reste là, et rien n'échoue.
+      - name: Déposer dans le grenier de l'application
+        env:
+          CODE: ${{ secrets.AMVAUTO_CODE }}
+          HOTE: ${{ vars.AMVAUTO_HOTE || 'https://amvauto.mangateamz2.workers.dev' }}
+          NOM: ${{ inputs.nom }}
+          PROJET: ${{ inputs.projet }}
+          DUREE: ${{ inputs.duree }}
+          PLANS: ${{ inputs.plans }}
+        run: |
+          set -u
+          # Le secret absent n'est pas une panne : l'artefact reste le chemin
+          # d'avant, et l'on ne fait pas échouer un rendu qui a abouti.
+          if [ -z "${CODE:-}" ]; then
+            echo "Aucun secret AMVAUTO_CODE : dépôt sauté, l'artefact ci-dessus reste disponible."
+            exit 0
+          fi
+          fichier="$(printf '%s' "$NOM" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-60)"
+          [ -n "$fichier" ] || fichier=amv
+          horodatage="$(date -u +%Y%m%d-%H%M)"
+          code_http=$(curl -sS -o reponse.json -w '%{http_code}' \
+            -X PUT "$HOTE/api/grenier?code=$CODE&nom=$fichier-$horodatage.zip&source=github&projet=$(printf '%s' "$PROJET" | jq -sRr @uri)&duree=$(printf '%s' "$DUREE" | jq -sRr @uri)&plans=$(printf '%s' "$PLANS" | jq -sRr @uri)" \
+            -H 'content-type: application/zip' \
+            --data-binary @sortie.zip) || code_http=000
+          echo "dépôt : HTTP $code_http"
+          if [ "$code_http" != "200" ]; then
+            echo "Le dépôt a échoué — l'artefact ci-dessus reste disponible." >&2
+            head -c 400 reponse.json >&2 || true
+            exit 0
+          fi
+          echo "Le projet est dans l'application, onglet Historique."
+
