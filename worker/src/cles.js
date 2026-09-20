@@ -17,9 +17,10 @@
    moindre octet d'image. */
 import { lireMp4 } from "../../public/demux.js";
 import { trouverMoov } from "../../public/plage.js";
+import { estWebm, lireWebm } from "../../public/webm.js";
 import { HOTES } from "./media.js";
 
-export const VERSION_CLES = 2;
+export const VERSION_CLES = 3;
 
 /* Le mouvement d'un plan, lu dans le poids de ses images.
 
@@ -64,7 +65,10 @@ function courbeDeMouvement(ech, echelle, duree, largeur, hauteur) {
   return valeurs.some((v) => v > 0) ? { pas: PAS_MOUVEMENT, valeurs } : null;
 }
 
-const TETE = 32768;
+const TETE = 65536;
+// Les Cues d'un WebM sont à la fin du fichier : c'est là que se lisent ses
+// images-clés, donc ses changements de plan.
+const QUEUE_WEBM = 65536;
 const encodeur = new TextEncoder();
 
 async function empreinte(texte) {
@@ -96,9 +100,30 @@ async function plageDe(adresse, debut, fin) {
   return { octets: new Uint8Array(await reponse.arrayBuffer()), total };
 }
 
+/* Les derniers octets d'un fichier, sans savoir sa taille : c'est une plage
+   suffixe, que tout serveur qui sert des plages comprend. */
+async function plageSuffixe(adresse, combien) {
+  const reponse = await amont(adresse, `bytes=-${combien}`);
+  if (!reponse || reponse.status !== 206) return null;
+  return { octets: new Uint8Array(await reponse.arrayBuffer()) };
+}
+
 async function lireCles(adresse) {
   const tete = await plageDe(adresse, 0, TETE);
   if (!tete || !tete.total) return { echec: "la source ne sert pas de plages" };
+
+  /* Un WebM ne se lit pas comme un MP4, et c'est ce qui tenait AnimeThemes hors
+     du montage : sans durée ni images-clés, ses génériques étaient écartés. La
+     tête porte l'échelle de temps, la durée et la définition ; la queue porte les
+     Cues, c'est-à-dire la carte des plans. */
+  if (estWebm(tete.octets)) {
+    const queue = await plageSuffixe(adresse, QUEUE_WEBM);
+    const lu = lireWebm(tete.octets, queue?.octets || null);
+    if (lu.echec) return lu;
+    if (!lu.cles?.length) return { echec: "aucune image-clé dans les Cues" };
+    return lu;
+  }
+
   const ou = trouverMoov(tete.octets);
   if (ou.ou < 0 || ou.ou >= tete.total) return { echec: "pas de moov" };
 

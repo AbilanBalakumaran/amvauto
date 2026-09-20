@@ -293,6 +293,8 @@ async function handleRushes(url) {
   const top = Math.min(200, Math.max(1, Number(url.searchParams.get("top")) || 24));
   const pool = Math.min(2000, Math.max(top, Number(url.searchParams.get("pool")) || 1000));
 
+  const generiquesVoulus = url.searchParams.get("generiques") === "1";
+
   /* Un tag exact court-circuite toute résolution.
 
      Quand la proposition vient du catalogue, la page connaît déjà le tag : le
@@ -323,12 +325,14 @@ async function handleRushes(url) {
     if (!posts.length) {
       return json({ error: `Aucun rush vidéo sous le tag « ${tagExact} ».` }, 404);
     }
+    const nomLisible = connuDavance ? connuDavance[0] : joliTag(tagExact);
     return json({
-      anime: connuDavance ? connuDavance[0] : joliTag(tagExact),
+      anime: nomLisible,
       tag: tagExact,
       mood,
       total: posts.length,
-      rushes: rank(posts, mood, top).map(serialize),
+      rushes: [...rank(posts, mood, top).map(serialize),
+        ...(generiquesVoulus ? await generiquesDe(nomLisible) : [])],
     });
   }
 
@@ -354,6 +358,16 @@ async function handleRushes(url) {
     });
   }
 
+  /* Les génériques, quand on les demande.
+
+     AnimeThemes sert les ouvertures et les fins en WebM 1080p sans crédits :
+     quatre-vingt-dix secondes de matériau propre par générique, là où une série
+     peu indexée ne compte que trente scènes sur Sakugabooru. Ils ne passent pas
+     par le classement par ambiance — ils ne portent aucune étiquette — mais ils
+     entrent dans la pioche, et le montage y découpe des plans comme dans un rush.
+
+     La route ne les sert que sur demande : l'explorateur les montrait à part, et
+     tout le monde n'en veut pas dans son AMV. */
   const resolved = await resolve(query, pool);
   if (!resolved) {
     return json({ error: `Aucun rush vidéo trouvé pour « ${query} ».`, suggestions: suggest("", 6) }, 404);
@@ -364,8 +378,34 @@ async function handleRushes(url) {
     tag: resolved.tag,
     mood,
     total: resolved.posts.length,
-    rushes: rank(resolved.posts, mood, top).map(serialize),
+    rushes: [...rank(resolved.posts, mood, top).map(serialize),
+      ...(generiquesVoulus ? await generiquesDe(query) : [])],
   });
+}
+
+/* Les génériques d'une série, prêts à entrer dans une pioche. Un échec ne coûte
+   rien : la pioche se fait sans eux, comme avant.
+
+   Les huit meilleurs, et pas les cent quarante-sept que Naruto compte. Chacun
+   pèse quatre-vingt-dix secondes de matériau : huit suffisent à nourrir un AMV
+   de douze minutes. En rendre cent quarante-sept noyait les scènes de
+   Sakugabooru et faisait lire cent quarante-sept fichiers d'en-tête pour rien —
+   mesuré : deux cent quarante scènes dans la pioche, cent une durées lues dans
+   le temps imparti. */
+const GENERIQUES_MAX = 8;
+
+async function generiquesDe(question) {
+  try {
+    const liste = await themes(question);
+    return liste
+      .slice()
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, GENERIQUES_MAX)
+      .map(fromSource)
+      .map((rush) => ({ ...rush, provider: "animethemes" }));
+  } catch {
+    return [];
+  }
 }
 
 /* Les routes dont la réponse ne dépend que de l'adresse : deux fois la même

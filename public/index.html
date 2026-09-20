@@ -2146,7 +2146,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 12:54";
+const VERSION_PAGE = "2026-09-20 13:15";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4693,16 +4693,20 @@ async function genererLAmv() {
        quatre-vingts kilo-octets. */
     dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
       + " Lecture des scènes…");
+    const assezDeScenes = Math.ceil(casesAttendues(projet) * 1.4) + 10;
     await attendreCles(projet.rushs, 60000, (n, total) =>
       dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
-        + ` Lecture des scènes… ${n}/${total}`));
+        + ` Lecture des scènes… ${n}/${total}`), assezDeScenes);
     for (const plan of projet.rushs) {
       const fiche = clesConnues.get(mediaDe(plan));
       if (fiche?.duree > 0) retenirDuree(plan, Math.round(fiche.duree * 100) / 100);
     }
-    // Ce que le serveur n'a pas su lire, on le lit soi-même : c'est quelques
-    // scènes, pas toutes.
-    const muettes = projet.rushs.filter((plan) => !dureeConnue(plan));
+    /* Les scènes qu'on n'a pas lues restent dans le vivier mais sans durée : le
+       montage les écarte de lui-même. On ne va donc PAS lire leurs en-têtes une à
+       une depuis le téléphone — c'était le cas quand le serveur échouait sur
+       quelques fichiers, ce n'est plus le cas quand on s'arrête volontairement. */
+    const muettes = projet.rushs.filter((plan) => !dureeConnue(plan)
+      && clesRefusees.has(mediaDe(plan)));
     if (muettes.length) {
       dire(`${phraseResolution(journal)}${projet.rushs.length} scènes trouvées.`
         + ` Lecture directe de ${muettes.length} en-têtes…`);
@@ -18670,10 +18674,12 @@ const clesConnues = new Map();
 const clesRefusees = new Set();
 const clesEnVol = new Set();
 const fileCles = [];
-/* Six de front, et non trois : le tunnel en demande cent vingt-cinq d'un coup
-   avant de monter, et trois par trois cela prend une demi-minute. Le Worker les
-   garde dans R2 pour toujours, donc la deuxième fois est immédiate. */
-const CLES_PARALLELES = 6;
+/* Douze de front, et non trois : le tunnel en demande deux cents d'un coup avant
+   de monter, et six par six cela dépassait la minute accordée — mesuré, cent une
+   fiches lues sur deux cent quarante. Le Worker les garde dans R2 pour toujours,
+   donc la deuxième fois est immédiate, et HTTP/2 multiplexe tout sur une seule
+   connexion. */
+const CLES_PARALLELES = 12;
 /* L'atelier dort dans le tunnel, et rien ne devait s'y préparer tout seul. Mais
    les fiches de scène ne sont plus un agrément : c'est d'elles que viennent les
    durées, les fins de scène et la courbe de mouvement. Quand on les demande
@@ -18716,24 +18722,34 @@ function servirCles() {
    ne répond pas. */
 const ATTENTE_CLES = 6000;
 
-async function attendreCles(plans, limiteMs = ATTENTE_CLES, aChaque = null) {
+/* Lire les fiches, et s'arrêter dès qu'on en a assez.
+
+   Le vivier est volontairement plus grand que le montage : c'est ce qui donne la
+   liberté de choisir. Mais lire deux cent douze fiches prend plus d'une minute la
+   première fois, et le montage n'en a pas besoin de deux cent douze — il en a
+   besoin d'un peu plus que de coupes. On lit donc jusqu'à ce compte, et l'on
+   laisse le reste : ce qui n'a pas été lu ne coûte rien, et sera lu la prochaine
+   fois, où tout est déjà rangé côté serveur.
+
+   Mesuré : deux cent douze scènes demandées, cent une lues en soixante secondes
+   à six requêtes de front, cent trente-quatre à douze. Avec l'arrêt anticipé, le
+   compte utile est atteint en une vingtaine de secondes. */
+async function attendreCles(plans, limiteMs = ATTENTE_CLES, aChaque = null, assez = 0) {
   clesDemandees = true;
   for (const plan of plans) planifierCles(plan);
   servirCles();
-  const fini = () => !clesEnVol.size && !fileCles.length;
+  const lues = () => plans.filter((plan) => clesConnues.has(mediaDe(plan))).length;
+  const fini = () => (!clesEnVol.size && !fileCles.length) || (assez > 0 && lues() >= assez);
   const limite = performance.now() + limiteMs;
-  const total = plans.length;
+  const total = assez > 0 ? Math.min(assez, plans.length) : plans.length;
   while (!fini() && performance.now() < limite) {
     // eslint-disable-next-line no-await-in-loop
     await new Promise((suite) => setTimeout(suite, 120));
-    if (!aChaque) continue;
-    const faits = plans.filter((plan) => {
-      const adresse = mediaDe(plan);
-      return clesConnues.has(adresse) || clesRefusees.has(adresse);
-    }).length;
-    aChaque(faits, total);
+    aChaque?.(Math.min(total, lues()), total);
   }
-  return plans.filter((plan) => clesConnues.has(mediaDe(plan))).length;
+  // Ce qui reste en file n'a plus lieu d'être demandé : on a de quoi monter.
+  if (assez > 0 && lues() >= assez) fileCles.length = 0;
+  return lues();
 }
 
 /* Les instants où ce rush peut commencer sans rien traîner derrière lui, à
@@ -19083,29 +19099,65 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null
      devant, mais la fenêtre sera au moins la moins mauvaise. */
   const libre = (entree) => !moments || !moments.has(`${idRush(plan)}@${(Math.round(entree * 1000) / 1000).toFixed(2)}`);
 
+  /* Une fenêtre qui ne traverse aucun changement de plan passe avant toutes les
+     autres, quelle que soit son intention.
+
+     Mesuré sur un générique d'AnimeThemes — cent quarante-huit images-clés en
+     quatre-vingt-onze secondes, donc un plan toutes les six dixièmes en moyenne :
+     une coupe d'une seconde traverse forcément un changement si l'on choisit son
+     entrée au hasard. Mais les images-clés sont groupées aux changements, et il
+     reste de longs passages sans aucune : il suffit d'y aller. */
+  const traverse = (entree) => {
+    const cles = clesConnues.get(mediaDe(plan))?.cles;
+    if (!cles?.length) return 0;
+    const fin = finDeScene(entree);
+    return cles.some((t) => t > entree + 0.05 && t < fin - 0.05) ? 1 : 0;
+  };
+
   const cases = casesUtiles(plan, tenue, graine);
-  if (cases && cases.length) {
-    const ouvertes = cases.filter(libre);
-    const pioche = ouvertes.length ? ouvertes : cases;
-    if (!section) return rendre(pioche[pris % pioche.length]);
-    const classees = pioche
-      .map((entree) => ({ entree, ecart: ecartDIntention(plan, section, entree, finDeScene(entree)) }))
-      .sort((a, b) => a.ecart - b.ecart);
-    return rendre(classees[ouvertes.length ? 0 : pris % classees.length].entree);
+  const ouvertes = cases ? cases.filter(libre) : [];
+  if (ouvertes.length) {
+    if (!section) return rendre(ouvertes[pris % ouvertes.length]);
+    const classees = ouvertes
+      .map((entree) => ({
+        entree,
+        coupe: traverse(entree),
+        ecart: ecartDIntention(plan, section, entree, finDeScene(entree)),
+      }))
+      .sort((a, b) => a.coupe - b.coupe || a.ecart - b.ecart);
+    return rendre(classees[0].entree);
   }
 
+  /* Plus d'image-clé libre : on revient à la découpe régulière, qui offre bien
+     plus de points d'entrée qu'un rush n'a d'images-clés. C'est ce qui manquait —
+     on reprenait alors une entrée déjà servie, et le même instant revenait. */
   const { combien, pas, ordre } = morceauxDe(plan, tenue, graine);
-  /* On avance dans l'ordre dispersé jusqu'à une case qui n'a pas servi : sans
-     cela, un rush employé plus souvent qu'il n'a de cases reviendrait au même
-     instant, et c'est la seule redite qu'on ne s'autorise pas. */
-  for (let saut = 0; saut < combien; saut += 1) {
-    const place = ordre[(pris + saut) % combien];
-    const milieu = place * pas + pas / 2;
-    const candidate = Math.max(0, Math.min(milieu - tenue / 2, source - tenue));
+  /* On avance dans l'ordre dispersé jusqu'à une case qui n'a pas servi, et l'on
+     préfère celles qui ne traversent pas de changement de plan : deux tours, le
+     premier exigeant, le second seulement libre. */
+  for (const exigeant of [true, false]) {
+    for (let saut = 0; saut < combien; saut += 1) {
+      const place = ordre[(pris + saut) % combien];
+      const milieu = place * pas + pas / 2;
+      const candidate = Math.max(0, Math.min(milieu - tenue / 2, source - tenue));
+      if (!libre(candidate)) continue;
+      if (exigeant && traverse(candidate)) continue;
+      return rendre(candidate);
+    }
+  }
+  /* Toutes les cases servies : on cherche alors n'importe quel instant libre, par
+     pas d'un quart de coupe. Une source de deux secondes n'a que deux cases, et
+     sur une musique de trois minutes elle sert cinq fois — sans ce dernier
+     recours, le cinquième emploi revenait au même instant que le premier. */
+  const grain = Math.max(0.08, tenue / 4);
+  for (let t = 0; t <= source - tenue + 0.001; t += grain) {
+    const candidate = Math.round(t * 1000) / 1000;
     if (libre(candidate)) return rendre(candidate);
   }
   const place = ordre[pris % combien];
-  // Centré dans sa case : un morceau collé au bord en mordrait un autre.
+  // Centré dans sa case : un morceau collé au bord en mordrait un autre. Et si
+  // même cet instant a servi, c'est que la source est épuisée : tenir la musique
+  // vaut mieux qu'un trou.
   const milieu = place * pas + pas / 2;
   const entree = Math.max(0, Math.min(milieu - tenue / 2, source - tenue));
   return rendre(entree);
@@ -19611,6 +19663,10 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false, journ
   const ambiances = ambiancesVoulues(etiquettes)
     || [{ ambiance: "", part: 1 }];
   const trouves = [];
+  /* Une liste par ambiance, entrelacées ensuite : la pioche est plafonnée, et le
+     plafond ne doit pas manger une intention entière. Sans entrelacement, les
+     deux cents premières scènes étaient toutes de la première ambiance demandée. */
+  const parAmbiance = new Map();
   for (const entree of animes) {
     const anime = nomAnime(entree);
     const tag = tagAnime(entree);
@@ -19619,8 +19675,13 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false, journ
     for (const { ambiance, part } of ambiances) {
       const combien = Math.min(200, Math.max(12, Math.ceil(demande * part)));
       // Le tag exact quand on l'a : aucune résolution, donc aucune surprise.
+      /* Les génériques une seule fois par animé, sur la première ambiance : ils
+         ne dépendent pas d'elle, et les demander trois fois ferait trois fois
+         le même appel à AnimeThemes. */
+      const premier = ambiance === ambiances[0].ambiance;
       const cible = `/api/rushes?${tag ? `tag=${encodeURIComponent(tag)}` : `anime=${encodeURIComponent(anime)}`}`
-        + `&top=${combien}&pool=2000${ambiance ? `&mood=${ambiance}` : ""}`;
+        + `&top=${combien}&pool=2000${ambiance ? `&mood=${ambiance}` : ""}`
+        + (premier ? "&generiques=1" : "");
       try {
         // eslint-disable-next-line no-await-in-loop
         const reponse = await fetch(cible);
@@ -19632,15 +19693,29 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false, journ
            comme dans le titre de l'AMV. */
         reconnuPour = contenu.anime || anime;
         totalPour = Math.max(totalPour, contenu.total || 0);
-        (contenu.rushes || []).forEach((rush) => trouves.push({ ...rush, anime: rush.anime || reconnuPour }));
+        const lot = (contenu.rushes || []).map((rush) => ({ ...rush, anime: rush.anime || reconnuPour }));
+        if (!parAmbiance.has(ambiance)) parAmbiance.set(ambiance, []);
+        parAmbiance.get(ambiance).push(...lot);
       } catch (erreur) {
         console.warn(`aucun rush pour « ${anime} » (${ambiance || "général"}) :`, erreur.message);
       }
     }
     journal?.resolus.push({ demande: anime, trouve: reconnuPour, tag, total: totalPour });
   }
+
+  /* Entrelacer, puis plafonner.
+
+     Deux fois le nombre de coupes suffit largement à choisir, et chaque scène de
+     plus est une fiche à lire : à deux cent quarante scènes, la lecture dépassait
+     la minute accordée et cent quarante restaient muettes — donc écartées du
+     montage. On prend donc les meilleures de chaque ambiance, à tour de rôle. */
+  const listes = [...parAmbiance.values()];
+  for (let rang = 0; listes.some((liste) => rang < liste.length); rang += 1) {
+    for (const liste of listes) if (rang < liste.length) trouves.push(liste[rang]);
+  }
+  const plafond = Math.min(RUSHS_MAX, Math.max(24, voulues * 2 + 20));
   // Un même plan peut sortir de deux recherches : on ne le garde qu'une fois.
-  const uniques = [...new Map(trouves.map((r) => [String(r.id), r])).values()];
+  const uniques = [...new Map(trouves.map((r) => [String(r.id), r])).values()].slice(0, plafond);
 
   /* Le complément, en mixte seulement.
 
