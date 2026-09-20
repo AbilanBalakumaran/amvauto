@@ -916,11 +916,64 @@ main {
 }
 .veille-gestes { grid-area: geste; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .veille-ecoute.joue { border-color: var(--vert); color: var(--vert); }
-/* L'avancée du morceau : une ligne sous son titre, visible seulement quand il
-   joue. Elle ne prend pas de place quand elle est cachée. */
-.veille-avance {
-  display: block; height: 3px; border-radius: 2px; margin: 4px 0 2px;
-  background: linear-gradient(to right, var(--vert) var(--part, 0%), #2a2a2a var(--part, 0%));
+
+/* --- la barre du lecteur ---------------------------------------------------
+
+   Elle est dans la pile des bandeaux, donc déjà au-dessus de la navigation et
+   déjà à l'abri de la marge basse de l'appareil. « order » la place en dernier :
+   au plus près de la navigation, sous les notifications s'il y en a. */
+.lecteur-barre {
+  order: 1;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px) * 0);
+  border-top: 1px solid var(--trait);
+  background: rgba(14, 14, 14, .97);
+  backdrop-filter: blur(8px);
+}
+.lecteur-haut { display: flex; align-items: center; gap: 8px; }
+.lecteur-quoi {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 0.82rem/1.2 system-ui, sans-serif; color: var(--texte);
+}
+.lecteur-croix {
+  flex: none; width: 28px; height: 28px; display: grid; place-items: center;
+  border: 0; background: none; color: var(--doux); cursor: pointer; padding: 0;
+}
+.lecteur-croix svg { width: 16px; height: 16px; }
+.lecteur-bas { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lecteur-temps { font: 500 0.78rem/1 ui-monospace, monospace; color: var(--doux); }
+.lecteur-gestes { display: flex; align-items: center; gap: 8px; }
+.lecteur-geste { width: 34px; height: 34px; }
+.lecteur-geste svg { width: 17px; height: 17px; }
+.lecteur-grand { width: 44px; height: 44px; border-color: var(--vert); color: var(--vert); }
+.lecteur-grand svg { width: 20px; height: 20px; }
+
+/* Le curseur de position.
+
+   Un « input range » nu est presque invisible sur un fond sombre et sa poignée
+   est trop petite pour un doigt. On repeint la piste — remplie à gauche, vide à
+   droite — et l'on donne à la poignée la taille d'une cible. */
+.lecteur-ligne {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 22px; margin: 0; background: none; cursor: pointer;
+}
+.lecteur-ligne::-webkit-slider-runnable-track {
+  height: 5px; border-radius: 3px;
+  background: linear-gradient(to right, var(--vert) var(--part, 0%), #2e2e2e var(--part, 0%));
+}
+.lecteur-ligne::-moz-range-track {
+  height: 5px; border-radius: 3px;
+  background: linear-gradient(to right, var(--vert) var(--part, 0%), #2e2e2e var(--part, 0%));
+}
+.lecteur-ligne::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; margin-top: -7px;
+  border-radius: 50%; background: var(--vert); border: 2px solid #0e0e0e;
+}
+.lecteur-ligne::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--vert); border: 2px solid #0e0e0e;
 }
 /* La jauge : une colonne qui monte avec la tendance. On lit la hauteur avant
    de lire le chiffre. */
@@ -2153,7 +2206,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 13:31";
+const VERSION_PAGE = "2026-09-20 13:57";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2267,6 +2320,120 @@ function verifierVersion(reste = 2) {
     /* Une réponse manquée n'est pas une version identique : sur un lien mobile,
        un appel qui échoue laissait croire que tout était à jour. On retente. */
     .catch(() => { if (reste > 0) setTimeout(() => verifierVersion(reste - 1), 5000); });
+}
+
+/* La barre du lecteur, en bas, au-dessus de la barre de navigation.
+
+   Elle vit dans la même pile que les bandeaux persistants : c'est ce qui garantit
+   qu'elle ne recouvre ni la navigation ni une notification, et qu'elle suit la
+   marge basse de l'appareil sans qu'on ait à la recalculer. Son « order » la place
+   en dernier, donc au plus près de la navigation.
+
+   Elle n'existe que pendant une lecture, et disparaît avec elle. */
+function barreAudio() {
+  let barre = document.getElementById("lecteur-barre");
+  if (barre) return barre;
+  barre = document.createElement("div");
+  barre.className = "lecteur-barre";
+  barre.id = "lecteur-barre";
+  barre.innerHTML = `
+    <div class="lecteur-haut">
+      <span class="lecteur-quoi" id="lecteur-quoi"></span>
+      <button type="button" class="lecteur-croix" id="lecteur-croix"
+        aria-label="Arrêter la lecture">${icone("croix")}</button>
+    </div>
+    <input type="range" class="lecteur-ligne" id="lecteur-ligne" min="0" max="1000" value="0"
+      aria-label="Position dans la lecture">
+    <div class="lecteur-bas">
+      <span class="lecteur-temps" id="lecteur-temps">0:00 / 0:00</span>
+      <div class="lecteur-gestes">
+        <button type="button" class="rond lecteur-geste" id="lecteur-reculer"
+          aria-label="Reculer de dix secondes">${icone("reculer")}</button>
+        <button type="button" class="rond lecteur-geste lecteur-grand" id="lecteur-jouer"
+          aria-label="Pause">${icone("pause")}</button>
+        <button type="button" class="rond lecteur-geste" id="lecteur-avancer"
+          aria-label="Avancer de dix secondes">${icone("avancer")}</button>
+      </div>
+    </div>`;
+  pileBandeaux().append(barre);
+
+  const ligne = barre.querySelector("#lecteur-ligne");
+  /* Pendant qu'on tient le curseur, l'avancée ne doit pas le reprendre : sinon il
+     saute sous le doigt à chaque « timeupdate ». */
+  ligne.addEventListener("pointerdown", () => { ligne.dataset.tenu = "1"; });
+  const lacher = () => {
+    if (ligne.dataset.tenu !== "1") return;
+    ligne.dataset.tenu = "0";
+    viserAudio(tempsDuCurseur(Number(ligne.value)));
+  };
+  ligne.addEventListener("pointerup", lacher);
+  ligne.addEventListener("pointercancel", lacher);
+  ligne.addEventListener("input", () => {
+    // Au clavier comme au doigt : on suit le curseur en direct.
+    if (ligne.dataset.tenu === "1") majTempsAudio(tempsDuCurseur(Number(ligne.value)));
+    else viserAudio(tempsDuCurseur(Number(ligne.value)));
+  });
+  barre.querySelector("#lecteur-croix").addEventListener("click", () => arreterAudio());
+  barre.querySelector("#lecteur-jouer").addEventListener("click", () => basculerAudio());
+  barre.querySelector("#lecteur-reculer").addEventListener("click", () => sauterAudio(-1));
+  barre.querySelector("#lecteur-avancer").addEventListener("click", () => sauterAudio(1));
+  return barre;
+}
+
+// Le curseur va de zéro à mille ; ce qui joue va de sa borne basse à sa borne
+// haute. La conversion vit à un seul endroit.
+function bornesAudio() {
+  const audio = audioPartage.audio;
+  const haut = audioPartage.fin > 0 ? audioPartage.fin : (audio?.duration || 0);
+  return { bas: audioPartage.debut, haut: Number.isFinite(haut) ? haut : 0 };
+}
+
+function tempsDuCurseur(valeur) {
+  const { bas, haut } = bornesAudio();
+  if (!(haut > bas)) return bas;
+  return bas + ((haut - bas) * valeur) / 1000;
+}
+
+const minutesEtSecondes = (t) => {
+  const entier = Math.max(0, Math.floor(t || 0));
+  return `${Math.floor(entier / 60)}:${String(entier % 60).padStart(2, "0")}`;
+};
+
+function majTempsAudio(cible = null) {
+  const temps = document.getElementById("lecteur-temps");
+  if (!temps) return;
+  const { bas, haut } = bornesAudio();
+  const ou = cible === null ? (audioPartage.audio?.currentTime || bas) : cible;
+  temps.textContent = `${minutesEtSecondes(ou - bas)} / ${minutesEtSecondes(haut - bas)}`;
+}
+
+function majBarreAudio() {
+  const enCours = Boolean(audioPartage.quoi);
+  const barre = enCours ? barreAudio() : document.getElementById("lecteur-barre");
+  if (!barre) return;
+  if (!enCours) { barre.remove(); return; }
+
+  barre.querySelector("#lecteur-quoi").textContent = audioPartage.titre || "Lecture";
+  const enPause = Boolean(audioPartage.audio?.paused);
+  const jouer = barre.querySelector("#lecteur-jouer");
+  jouer.innerHTML = icone(enPause ? "play" : "pause");
+  jouer.setAttribute("aria-label", enPause ? "Reprendre" : "Pause");
+
+  const pas = pasDuSaut();
+  for (const [id, sens] of [["#lecteur-reculer", "Reculer"], ["#lecteur-avancer", "Avancer"]]) {
+    const bouton = barre.querySelector(id);
+    bouton.title = `${sens} de ${pas} s`;
+    bouton.setAttribute("aria-label", bouton.title);
+  }
+
+  const ligne = barre.querySelector("#lecteur-ligne");
+  const { bas, haut } = bornesAudio();
+  const ou = audioPartage.audio?.currentTime || bas;
+  if (ligne.dataset.tenu !== "1") {
+    ligne.value = String(haut > bas ? Math.round(((ou - bas) / (haut - bas)) * 1000) : 0);
+  }
+  ligne.style.setProperty("--part", `${haut > bas ? ((ou - bas) / (haut - bas)) * 100 : 0}%`);
+  majTempsAudio();
 }
 
 /* Tous les bandeaux persistants vivent dans la même pile, créée au besoin.
@@ -4076,10 +4243,12 @@ function blocMusique() {
     tunnel.rythme = null;
     tunnel.etiquettes = [];
     tunnel.montage = null;
-    arreterEcoute();
-    // Le geste qui choisit le fichier est aussi celui qui autorise la lecture :
-    // on fabrique le lecteur maintenant, il aura son en-tête avant la trame.
-    lecteurDeMusique();
+    arreterAudio();
+    /* Le geste qui choisit le fichier est aussi celui qui autorise la lecture :
+       on fabrique le lecteur et son adresse maintenant, l'en-tête aura descendu
+       avant que la trame ne s'affiche. */
+    lecteurPartage();
+    urlDeLaMusique();
     rendreCreer();
   });
   champ.addEventListener("click", () => entree.click());
@@ -4144,65 +4313,155 @@ async function analyserLaMusique() {
   }
 }
 
-/* Écouter un passage avant de lui donner une émotion.
+/* ---- Un seul lecteur, une seule barre ------------------------------------
 
-   Choisir « tension » pour la deuxième minute d'un morceau qu'on n'a pas en
-   tête, c'est deviner. Chaque ligne de la trame peut donc se jouer, de son
-   début à sa fin — et une seule à la fois : sur un iPhone, deux sons qui se
-   superposent, c'est déjà un de trop.
+   Toute lecture audio de l'application passe par ici : un passage de la trame,
+   un morceau de la veille. Il y avait deux éléments audio et deux petits états
+   parallèles — deux fois la même mécanique, et rien pour la commander sinon les
+   boutons de chaque carte. « À chaque fois qu'on fait une lecture audio je veux
+   un player en bas », donc un seul lecteur, et une barre qui le pilote.
 
-   Un seul élément audio pour toute la trame, fabriqué dès que le fichier est
-   choisi : le geste qui ouvre le sélecteur est aussi celui qui autorise la
-   lecture, et l'en-tête a tout le temps de descendre pendant l'analyse. */
-const ecoute = { lecteur: null, url: "", fichier: null, rang: -1, fin: 0 };
+   Ce que la barre sait faire : mettre en pause, revenir, avancer de dix
+   secondes, et se déplacer n'importe où dans ce qui joue. Le déplacement passe
+   par un « input range » et non par un geste maison : c'est le seul contrôle que
+   Safari sur iPhone traite comme un vrai curseur — au doigt, sans latence, et
+   avec la zone de prise qu'il faut.
 
-function lecteurDeMusique() {
-  if (!tunnel.fichier) return null;
-  // Un autre fichier : l'ancienne adresse ne vaut plus rien, et la garder
-  // retiendrait le fichier entier en mémoire.
-  if (ecoute.fichier !== tunnel.fichier) {
-    ecoute.lecteur?.pause();
-    ecoute.rang = -1;
-    if (ecoute.url) URL.revokeObjectURL(ecoute.url);
-    ecoute.url = URL.createObjectURL(tunnel.fichier);
-    ecoute.fichier = tunnel.fichier;
-    if (ecoute.lecteur) ecoute.lecteur.src = ecoute.url;
+   Un passage de trame se joue entre deux bornes ; un morceau entier n'a pas de
+   borne de fin. C'est la seule différence entre les deux, et elle tient dans un
+   champ. */
+const audioPartage = { audio: null, quoi: "", cle: "", titre: "", debut: 0, fin: 0 };
+const AUDIO_SAUT = 10;
+
+/* Le fichier de musique, sous forme d'adresse. Une autre musique invalide
+   l'ancienne : la garder retiendrait le fichier entier en mémoire. */
+const musique = { url: "", fichier: null };
+
+function urlDeLaMusique() {
+  if (!tunnel.fichier) return "";
+  if (musique.fichier !== tunnel.fichier) {
+    if (musique.url) URL.revokeObjectURL(musique.url);
+    musique.url = URL.createObjectURL(tunnel.fichier);
+    musique.fichier = tunnel.fichier;
   }
-  if (!ecoute.lecteur) {
-    const audio = new Audio();
-    audio.preload = "metadata";
-    audio.src = ecoute.url;
-    /* Un passage s'arrête à sa fin, pas à la fin du morceau. « timeupdate »
-       suffit : il arrive quatre fois par seconde, et l'oreille ne reproche pas
-       un quart de seconde de trop. */
-    audio.addEventListener("timeupdate", () => {
-      if (ecoute.rang >= 0 && audio.currentTime >= ecoute.fin) arreterEcoute();
-    });
-    audio.addEventListener("ended", () => arreterEcoute());
-    /* Une pause qui ne vient pas de nous — un appel qui arrive, un casque qu'on
-       débranche — laisserait un bouton « en train de jouer » sur du silence. */
-    audio.addEventListener("pause", () => {
-      if (ecoute.rang < 0) return;
-      ecoute.rang = -1;
-      majBoutonsEcoute();
-    });
-    ecoute.lecteur = audio;
-  }
-  return ecoute.lecteur;
+  return musique.url;
 }
 
-function arreterEcoute() {
-  if (ecoute.rang < 0 && !ecoute.lecteur) return;
-  ecoute.rang = -1;
-  ecoute.lecteur?.pause();
+function lecteurPartage() {
+  if (audioPartage.audio) return audioPartage.audio;
+  const audio = new Audio();
+  audio.preload = "metadata";
+  /* Un passage s'arrête à sa fin, pas à la fin du morceau. « timeupdate »
+     suffit : il arrive quatre fois par seconde, et l'oreille ne reproche pas un
+     quart de seconde de trop. */
+  audio.addEventListener("timeupdate", () => {
+    if (audioPartage.fin > 0 && audio.currentTime >= audioPartage.fin) { arreterAudio(); return; }
+    majBarreAudio();
+  });
+  audio.addEventListener("ended", () => arreterAudio());
+  audio.addEventListener("durationchange", () => majBarreAudio());
+  /* Une pause provoquée par le démarrage d'autre chose ne doit pas éteindre ce
+     qui commence : l'événement arrive après qu'on a posé le nouvel état. On
+     vérifie donc un peu plus tard si le lecteur est vraiment à l'arrêt. */
+  audio.addEventListener("pause", () => {
+    if (!audioPartage.quoi) return;
+    setTimeout(() => {
+      if (!audio.paused || !audioPartage.quoi) return;
+      majTousLesBoutons();
+    }, 60);
+  });
+  audio.addEventListener("play", () => majTousLesBoutons());
+  audioPartage.audio = audio;
+  return audio;
+}
+
+const audioJoue = (quoi, cle) => audioPartage.quoi === quoi
+  && audioPartage.cle === String(cle)
+  && Boolean(audioPartage.audio)
+  && !audioPartage.audio.paused;
+
+async function jouerAudio({ quoi, cle, titre, src, debut = 0, fin = 0 }) {
+  const audio = lecteurPartage();
+  if (!src) return;
+  if (audio.dataset.src !== src) {
+    audio.dataset.src = src;
+    audio.src = src;
+  }
+  audioPartage.quoi = quoi;
+  audioPartage.cle = String(cle);
+  audioPartage.titre = titre;
+  audioPartage.debut = debut;
+  audioPartage.fin = fin;
+  /* On joue d'abord, on se place ensuite : sur iPhone, l'autorisation tient au
+     geste, et attendre l'en-tête avant « play » la ferait perdre. Si l'en-tête
+     n'est pas encore là, la position est posée dès qu'il arrive. */
+  const viser = () => { try { audio.currentTime = debut; } catch { /* pas encore */ } };
+  try {
+    if (audio.readyState >= 1) viser();
+    else audio.addEventListener("loadedmetadata", viser, { once: true });
+    await audio.play();
+  } catch {
+    arreterAudio();
+    return;
+  }
+  majTousLesBoutons();
+}
+
+function arreterAudio() {
+  const rien = !audioPartage.quoi && !audioPartage.audio;
+  audioPartage.quoi = "";
+  audioPartage.cle = "";
+  audioPartage.titre = "";
+  audioPartage.fin = 0;
+  audioPartage.audio?.pause();
+  if (!rien) majTousLesBoutons();
+}
+
+function basculerAudio() {
+  const audio = audioPartage.audio;
+  if (!audio || !audioPartage.quoi) return;
+  if (audio.paused) audio.play().catch(() => {});
+  else audio.pause();
+  majTousLesBoutons();
+}
+
+/* Se déplacer, en restant dans ce qui joue : un passage ne se quitte pas par le
+   curseur, sinon on écoute le passage suivant en croyant régler celui-ci. */
+function viserAudio(secondes) {
+  const audio = audioPartage.audio;
+  if (!audio || !audioPartage.quoi) return;
+  const haut = audioPartage.fin > 0 ? audioPartage.fin : (audio.duration || 0);
+  const cible = Math.max(audioPartage.debut, Math.min(secondes, haut - 0.05));
+  try { audio.currentTime = cible; } catch { /* durée pas encore connue */ }
+  majBarreAudio();
+}
+
+/* De combien on avance.
+
+   Dix secondes vont pour un morceau entier ; sur un passage de trame de dix
+   secondes, elles envoient directement à la fin — le bouton ne sert alors qu'à
+   arrêter. Le saut suit donc ce qu'on écoute : un cinquième de la fenêtre, entre
+   une seconde et dix. */
+function pasDuSaut() {
+  const { bas, haut } = bornesAudio();
+  const large = haut - bas;
+  if (!(large > 0)) return AUDIO_SAUT;
+  return Math.min(AUDIO_SAUT, Math.max(1, Math.round(large / 5)));
+}
+
+const sauterAudio = (sens) => viserAudio((audioPartage.audio?.currentTime || 0) + sens * pasDuSaut());
+
+function majTousLesBoutons() {
   majBoutonsEcoute();
+  majBoutonsVeille();
+  majBarreAudio();
 }
 
 /* L'état se lit sur les boutons présents, pas sur ceux qu'on croit avoir posés :
    la trame est reconstruite à chaque redessin du tunnel. */
 function majBoutonsEcoute() {
   for (const bouton of document.querySelectorAll(".trame-ecoute")) {
-    const joue = Number(bouton.dataset.rang) === ecoute.rang;
+    const joue = audioJoue("passage", bouton.dataset.rang);
     bouton.classList.toggle("joue", joue);
     bouton.innerHTML = icone(joue ? "pause" : "play");
     bouton.title = joue ? "Arrêter l'écoute" : "Écouter ce passage";
@@ -4210,24 +4469,24 @@ function majBoutonsEcoute() {
   }
 }
 
+// Les deux anciens noms restent : ils disent d'où vient la demande d'arrêt, et
+// c'est le même lecteur qui s'arrête.
+const arreterEcoute = () => arreterAudio();
+
 async function ecouterPassage(rang, section) {
-  if (ecoute.rang === rang) { arreterEcoute(); return; }
-  const audio = lecteurDeMusique();
-  if (!audio) return;
-  ecoute.rang = rang;
-  ecoute.fin = section.fin;
-  majBoutonsEcoute();
-  /* On joue d'abord, on se place ensuite : sur iPhone, l'autorisation tient au
-     geste et attendre l'en-tête avant « play » la ferait perdre. Si l'en-tête
-     n'est pas encore là, la position est posée dès qu'il arrive. */
-  const viser = () => { try { audio.currentTime = section.debut; } catch { /* pas encore */ } };
-  try {
-    if (audio.readyState >= 1) viser();
-    else audio.addEventListener("loadedmetadata", viser, { once: true });
-    await audio.play();
-  } catch {
-    arreterEcoute();
+  if (audioPartage.quoi === "passage" && audioPartage.cle === String(rang)) {
+    if (audioPartage.audio?.paused) { basculerAudio(); return; }
+    arreterAudio();
+    return;
   }
+  await jouerAudio({
+    quoi: "passage",
+    cle: rang,
+    titre: `Passage ${minutageCourt(section.debut)} → ${minutageCourt(section.fin)}`,
+    src: urlDeLaMusique(),
+    debut: section.debut,
+    fin: section.fin,
+  });
 }
 
 /* Faire entendre les paroles au serveur.
@@ -4878,55 +5137,20 @@ async function prendreLaPiste(piste, bouton) {
 
 /* Écouter un morceau avant de le prendre.
 
-   « Je veux pouvoir lire la lecture du son. » Un pourcentage de tendance et trois
-   mots-clés ne disent pas si un morceau va sur des images : il faut l'entendre.
-   Chaque carte se joue donc, et une seule à la fois — même règle que la trame,
-   pour la même raison : deux sons superposés sur un téléphone, c'est un de trop.
+   Un pourcentage de tendance et trois mots-clés ne disent pas si un morceau va
+   sur des images : il faut l'entendre. C'est le lecteur partagé qui le joue, donc
+   la barre du bas le commande comme le reste.
 
    L'adresse du fichier n'est demandée qu'au premier appui : la liste en compte
-   vingt-cinq, et résoudre vingt-cinq adresses pour en écouter une serait vingt-
-   quatre requêtes pour rien. Elle est ensuite gardée le temps de la séance. */
-const ecouteVeille = { lecteur: null, id: "", adresses: new Map() };
+   vingt-cinq, et résoudre vingt-cinq adresses pour en écouter une serait
+   vingt-quatre requêtes pour rien. Elle est gardée le temps de la séance. */
+const adressesVeille = new Map();
 
-function lecteurDeVeille() {
-  if (!ecouteVeille.lecteur) {
-    const audio = new Audio();
-    audio.preload = "none";
-    audio.addEventListener("ended", () => { ecouteVeille.id = ""; majBoutonsVeille(); });
-    /* Une pause provoquée par le démarrage d'un AUTRE morceau ne doit pas
-       éteindre celui qui commence.
-
-       L'événement « pause » arrive après le tour de boucle : on avait déjà posé
-       le nouvel état, et le gestionnaire l'effaçait aussitôt — le morceau jouait,
-       le bouton disait le contraire. On vérifie donc soixante millisecondes plus
-       tard si le lecteur est vraiment à l'arrêt ; s'il a redémarré entre-temps, il
-       n'y a rien à dire. */
-    audio.addEventListener("pause", () => {
-      if (!ecouteVeille.id) return;
-      setTimeout(() => {
-        if (!audio.paused || !ecouteVeille.id) return;
-        ecouteVeille.id = "";
-        majBoutonsVeille();
-        majAvanceVeille();
-      }, 60);
-    });
-    audio.addEventListener("timeupdate", () => majAvanceVeille());
-    ecouteVeille.lecteur = audio;
-  }
-  return ecouteVeille.lecteur;
-}
-
-function arreterVeille() {
-  if (!ecouteVeille.id && !ecouteVeille.lecteur) return;
-  ecouteVeille.id = "";
-  ecouteVeille.lecteur?.pause();
-  majBoutonsVeille();
-  majAvanceVeille();
-}
+const arreterVeille = () => arreterAudio();
 
 function majBoutonsVeille() {
   for (const bouton of document.querySelectorAll(".veille-ecoute")) {
-    const joue = bouton.dataset.piste === ecouteVeille.id && ecouteVeille.id !== "";
+    const joue = audioJoue("piste", bouton.dataset.piste);
     bouton.classList.toggle("joue", joue);
     if (bouton.dataset.attend !== "1") bouton.innerHTML = icone(joue ? "pause" : "play");
     bouton.title = joue ? "Arrêter l'écoute" : "Écouter ce morceau";
@@ -4934,53 +5158,34 @@ function majBoutonsVeille() {
   }
 }
 
-/* L'avancée, en une barre sous le titre : c'est ce qui dit qu'un morceau se
-   charge encore, plutôt qu'un bouton qui a l'air inerte. */
-function majAvanceVeille() {
-  const audio = ecouteVeille.lecteur;
-  for (const barre of document.querySelectorAll(".veille-avance")) {
-    const sien = barre.dataset.piste === ecouteVeille.id && ecouteVeille.id !== "";
-    const part = sien && audio?.duration > 0 ? (audio.currentTime / audio.duration) * 100 : 0;
-    barre.hidden = !sien;
-    barre.style.setProperty("--part", `${Math.min(100, Math.max(0, part))}%`);
-  }
-}
-
 async function adresseDeLaPiste(piste) {
-  if (ecouteVeille.adresses.has(piste.id)) return ecouteVeille.adresses.get(piste.id);
+  if (adressesVeille.has(piste.id)) return adressesVeille.get(piste.id);
   const reponse = await fetch(`/api/veille?piste=${encodeURIComponent(piste.id)}`);
   const dit = await reponse.json();
   if (!reponse.ok || !dit.adresse) throw new Error(dit?.erreur || `le serveur a répondu ${reponse.status}`);
-  ecouteVeille.adresses.set(piste.id, dit.adresse);
+  adressesVeille.set(piste.id, dit.adresse);
   return dit.adresse;
 }
 
 async function ecouterLaPiste(piste, bouton) {
-  if (ecouteVeille.id === piste.id) { arreterVeille(); return; }
-  const audio = lecteurDeVeille();
-  arreterVeille();
+  if (audioPartage.quoi === "piste" && audioPartage.cle === piste.id) {
+    if (audioPartage.audio?.paused) { basculerAudio(); return; }
+    arreterAudio();
+    return;
+  }
   bouton.dataset.attend = "1";
   bouton.innerHTML = icone("attente");
   try {
     const adresse = await adresseDeLaPiste(piste);
-    // Le même morceau qu'avant garde son tampon ; un autre repart de zéro.
-    if (audio.dataset.piste !== piste.id) {
-      audio.dataset.piste = piste.id;
-      audio.src = adresse;
-    }
-    try { audio.currentTime = 0; } catch { /* pas encore de durée */ }
-    ecouteVeille.id = piste.id;
-    await audio.play();
+    await jouerAudio({ quoi: "piste", cle: piste.id, titre: piste.titre, src: adresse });
   } catch {
-    ecouteVeille.id = "";
     bouton.dataset.attend = "0";
     bouton.innerHTML = icone("play");
     bouton.title = "Ce morceau n'a pas pu être lu";
     return;
   }
   bouton.dataset.attend = "0";
-  majBoutonsVeille();
-  majAvanceVeille();
+  majTousLesBoutons();
 }
 
 function carteVeille(piste) {
@@ -5007,11 +5212,7 @@ function carteVeille(piste) {
   const mots = document.createElement("span");
   mots.className = "veille-mots";
   mots.textContent = piste.sujets.join(" · ");
-  const avance = document.createElement("span");
-  avance.className = "veille-avance";
-  avance.dataset.piste = piste.id;
-  avance.hidden = true;
-  texte.append(titre, avance, sous, mots);
+  texte.append(titre, sous, mots);
 
   const prendre = document.createElement("button");
   prendre.type = "button";
@@ -5092,7 +5293,6 @@ function rendreVeille() {
   vue.replaceChildren(...morceaux);
   // Les boutons d'écoute viennent de naître : ils ignorent ce qui joue déjà.
   majBoutonsVeille();
-  majAvanceVeille();
   if (!tendance.pistes.length && !tendance.occupe && !tendance.erreur) chargerVeille().catch(() => {});
 }
 
@@ -5905,8 +6105,10 @@ window.__banc = {
   fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
   clignement: () => clignement(), absence: () => absence,
   retirerLaPastille: () => retirerLaPastille(), marquerPastille: (n) => marquerPastille(n),
-  ecoute: () => ecoute, arreterEcoute: () => arreterEcoute(),
-  ecouteVeille: () => ecouteVeille, arreterVeille: () => arreterVeille(),
+  arreterEcoute: () => arreterEcoute(),
+  audio: () => audioPartage, arreterAudio: () => arreterAudio(),
+  viserAudio: (t) => viserAudio(t), sauterAudio: (n) => sauterAudio(n),
+  basculerAudio: () => basculerAudio(),
   chercherRushs: (...a) => chercherRushs(...a), phraseResolution: (j) => phraseResolution(j),
   profilDe: (...a) => profilDe(...a), ecartDIntention: (...a) => ecartDIntention(...a),
   tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
