@@ -2096,11 +2096,31 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) { absence.depuis = performance.now(); return; }
   absence.duree = absence.depuis ? performance.now() - absence.depuis : Infinity;
   absence.depuis = 0;
+  // Revenir devant l'écran, c'est avoir vu. La pastille part, clignement ou pas.
+  retirerLaPastille();
 }, { capture: true });
 
 /* Vrai quand on vient de rentrer d'une absence trop courte pour être un
    départ. Les gestionnaires de retour s'en servent pour ne rien faire. */
 const clignement = () => absence.duree < CLIGNEMENT;
+
+/* « L'icône affiche 1, et il n'y a rien dans l'application. »
+
+   Deux choses portaient ce 1, et aucune ne savait s'éteindre. La pastille
+   elle-même, posée par « setAppBadge » pendant une préparation — le seul appel
+   qui l'effaçait vivait dans une fonction désormais muette, donc plus rien ne
+   l'effaçait. Et la bannière d'avancement : iOS compte une notification non
+   balayée comme un message non lu, et la rend sur l'icône. Une préparation
+   interrompue par la fermeture de l'application laissait les deux en place,
+   pour toujours.
+
+   Ouvrir l'application est la preuve qu'on a vu. On retire donc les deux à
+   chaque fois qu'elle passe devant, et au lancement — sans condition, puisque
+   rien de ce qui se passe hors de l'écran ne mérite un compteur. */
+function retirerLaPastille() {
+  try { navigator.clearAppBadge?.(); } catch { /* pas de pastille ici */ }
+  fermerToutesNotifications();
+}
 
 
 // L'écran de démarrage, allumé ou éteint. On le rallume juste avant un
@@ -2108,7 +2128,7 @@ const clignement = () => absence.duree < CLIGNEMENT;
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 07:28";
+const VERSION_PAGE = "2026-09-20 07:38";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2119,6 +2139,7 @@ if ("serviceWorker" in navigator) {
     try {
       const enregistrement = await navigator.serviceWorker.register("sw.js");
       enregistrement.update().catch(() => {});
+      retirerLaPastille();
       // Toutes les heures aussi, pour une application laissée ouverte.
       setInterval(() => enregistrement.update().catch(() => {}), 3600000);
 
@@ -5316,6 +5337,7 @@ window.__banc = {
   tunnel: () => tunnel, rendreCreer: () => rendreCreer(),
   fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
   clignement: () => clignement(), absence: () => absence,
+  retirerLaPastille: () => retirerLaPastille(), marquerPastille: (n) => marquerPastille(n),
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
   automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
@@ -14179,7 +14201,9 @@ const RYTHME_AVIS = 20000;
    seule bannière, toujours, au prix d'une alerte par mise à jour : d'où les
    vingt secondes entre deux, et le texte qui doit avoir changé. */
 function majNotificationTransfert() {
-  if (!APERCU_MONTRE) return;
+  // Tant que l'aperçu ne se montre pas, il n'y a jamais rien à annoncer : on
+  // s'assure surtout que l'icône ne garde pas la trace d'une version d'avant.
+  if (!APERCU_MONTRE) { marquerPastille(0); return; }
   if (!sentinelle.prevenir || !("serviceWorker" in navigator)) return;
   const projet = projetActif();
   if (!projet) return;
