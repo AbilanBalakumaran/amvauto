@@ -812,6 +812,77 @@ main {
   font: 600 0.82rem/1 system-ui, sans-serif; cursor: pointer;
 }
 
+/* --- le tunnel : cinq blocs à la suite ---------------------------------
+   Une seule colonne, chaque bloc numéroté. On descend, on ne navigue pas. */
+.tunnel { padding: var(--e4); display: flex; flex-direction: column; gap: var(--e4); }
+.tunnel-bloc {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: var(--e4);
+  border: 1px solid var(--trait); border-radius: 14px;
+  background: var(--surface, #141414);
+}
+.tunnel-tete { display: flex; align-items: flex-start; gap: 12px; }
+.tunnel-rang {
+  flex: none; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff; font: 700 0.82rem/1 system-ui, sans-serif;
+}
+.tunnel-textes { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tunnel-titre { font: 700 1rem/1.2 system-ui, sans-serif; color: var(--texte); }
+.tunnel-sous { font: 400 0.8rem/1.35 system-ui, sans-serif; color: var(--doux); }
+.tunnel-dit { margin: 0; font: 400 0.8rem/1.4 system-ui, sans-serif; color: var(--doux); }
+
+/* Le champ où l'on dépose sa musique : grand, et il dit ce qu'il attend. */
+.tunnel-depot {
+  width: 100%; padding: 26px 16px;
+  border: 1px dashed var(--trait); border-radius: 12px;
+  background: rgba(255, 255, 255, .03);
+  color: var(--doux); font: 500 0.92rem/1.3 system-ui, sans-serif;
+  text-align: center; cursor: pointer;
+}
+.tunnel-depot.rempli { border-style: solid; color: var(--texte); }
+.tunnel-geste { width: 100%; }
+.tunnel-champ {
+  width: 100%; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid var(--trait); background: #0f0f0f; color: var(--texte);
+  font: 400 0.92rem/1.2 system-ui, sans-serif;
+}
+.tunnel-suggest { position: static; margin-top: 6px; }
+
+/* La trame : un passage par ligne, son moment à gauche, son émotion à droite.
+   La barre de couleur dit l'intensité d'un coup d'œil, sans avoir à lire. */
+.tunnel-trame { display: flex; flex-direction: column; gap: 6px; }
+.trame-ligne {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 10px;
+  background: #101010; border-left: 3px solid var(--trait);
+}
+.trame-ligne[data-emotion="calme"] { border-left-color: #3d6f8e; }
+.trame-ligne[data-emotion="emotion"] { border-left-color: #7a5ba6; }
+.trame-ligne[data-emotion="tension"] { border-left-color: #b8863b; }
+.trame-ligne[data-emotion="elan"] { border-left-color: #2f9e57; }
+.trame-ligne[data-emotion="action"] { border-left-color: #c1121f; }
+.trame-ligne[data-emotion="choc"] { border-left-color: #e0523a; }
+.trame-quand { font: 500 0.84rem/1 ui-monospace, monospace; color: var(--doux); }
+.trame-choix {
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--trait); background: #161616; color: var(--texte);
+  font: 500 0.84rem/1 system-ui, sans-serif;
+}
+
+/* Ce qu'on copie pour publier. */
+.tunnel-sortie { display: flex; flex-direction: column; gap: 6px; }
+.tunnel-sortie-tete {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font: 600 0.82rem/1 system-ui, sans-serif; color: var(--doux);
+}
+.tunnel-sortie-texte {
+  width: 100%; padding: 10px 12px; border-radius: 10px; resize: vertical;
+  border: 1px solid var(--trait); background: #0f0f0f; color: var(--texte);
+  font: 400 0.84rem/1.45 system-ui, sans-serif;
+}
+
 .note-action {
   display: block;
   margin: 14px auto 0;
@@ -1765,7 +1836,10 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
 
 <nav class="bottom-nav">
   <div class="bottom-nav-inner">
-    <button type="button" class="tab-btn active" data-tab="explorer" title="Explorer" aria-label="Explorer">
+    <button type="button" class="tab-btn active" data-tab="creer" title="Créer" aria-label="Créer un AMV">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l10-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
+    </button>
+    <button type="button" class="tab-btn" data-tab="explorer" title="Explorer" aria-label="Explorer">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
     </button>
     <button type="button" class="tab-btn" data-tab="projet" title="Projet" aria-label="Projet">
@@ -1799,7 +1873,11 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
   </header>
 
   <main>
-    <section id="vue-explorer">
+    <!-- Le tunnel : une seule page, cinq blocs à la suite. On y entre par une
+         musique et l'on en sort avec un AMV. -->
+    <section id="vue-creer" class="tunnel"></section>
+
+    <section id="vue-explorer" hidden>
       <div class="search">
         <div class="search-row">
           <input type="search" id="anime" placeholder="Un animé : Chainsaw Man, Frieren…" autocomplete="off" spellcheck="false" aria-label="Nom de l'animé">
@@ -1991,7 +2069,7 @@ const clignement = () => absence.duree < CLIGNEMENT;
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 04:44";
+const VERSION_PAGE = "2026-09-20 04:56";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2245,6 +2323,7 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
   bouton.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === bouton));
     const onglet = bouton.dataset.tab;
+    $("vue-creer").hidden = onglet !== "creer";
     $("vue-explorer").hidden = onglet !== "explorer";
     $("vue-projet").hidden = onglet !== "projet";
     $("vue-histoire").hidden = onglet !== "histoire";
@@ -3747,6 +3826,473 @@ async function peindreRendusEnLigne() {
    presque toujours pour la même chose. */
 let histoireFace = "rendus";
 
+/* ======================================================================
+   LE TUNNEL — une musique entre, un AMV sort
+   ----------------------------------------------------------------------
+   Cinq blocs à la suite sur une seule page, chacun apparaissant quand le
+   précédent a rendu ce qu'on lui demandait. On n'y choisit pas de plans, on
+   n'y déplace rien : on décrit ce qu'on veut entendre, et l'outil monte.
+   ====================================================================== */
+
+/* Les étiquettes d'un passage.
+
+   Elles viennent du vocabulaire d'un film, pas de celui d'un encodeur : ce que
+   l'on ressent à tel moment, et non le niveau sonore qui l'a fait deviner.
+   Chacune porte une énergie — c'est elle que le montage consulte pour choisir
+   la longueur des coupes et l'intensité des scènes — et une affinité de tags
+   Sakugabooru, qui l'oriente vers le bon geste d'animation. */
+const EMOTIONS = [
+  { cle: "calme", nom: "Calme", energie: 0,
+    tags: ["background_animation", "character_acting", "walk_cycle"] },
+  { cle: "emotion", nom: "Émotion", energie: 1,
+    tags: ["character_acting", "hair", "crying"] },
+  { cle: "tension", nom: "Tension", energie: 1,
+    tags: ["effects", "smears", "background_animation"] },
+  { cle: "elan", nom: "Élan", energie: 2,
+    tags: ["running", "effects", "flying"] },
+  { cle: "action", nom: "Action", energie: 3,
+    tags: ["fighting", "effects", "explosions"] },
+  { cle: "choc", nom: "Choc", energie: 3,
+    tags: ["impact_frames", "debris", "smears", "lightning"] },
+];
+
+const emotionDe = (cle) => EMOTIONS.find((e) => e.cle === cle) || EMOTIONS[3];
+
+/* L'étiquette proposée d'office, déduite de l'énergie que l'analyse a mesurée.
+   On ne devine pas mieux qu'elle ; on laisse simplement la main de changer. */
+const emotionSuggeree = (energie) => (
+  energie >= 3 ? "action" : energie === 2 ? "elan" : energie === 1 ? "tension" : "calme");
+
+const tunnel = {
+  fichier: null, rythme: null, etiquettes: [],
+  portee: "mixte", animes: [], montage: null, occupe: "", message: "",
+};
+
+/* Ce que le tunnel a à dire vit dans son état, pas dans un nœud.
+
+   « dire » écrivait dans le paragraphe d'avancement — que le redessin suivant
+   remplaçait. Le message final était donc systématiquement perdu, y compris
+   celui qui explique pourquoi la génération n'a rien donné : on voyait un
+   tunnel muet là où il y avait une cause. */
+function direTunnel(quoi) {
+  tunnel.message = quoi;
+  const vivant = $("tunnel-etat");
+  if (vivant) vivant.textContent = quoi;
+}
+
+const minutageCourt = (secondes) => {
+  const m = Math.floor(Math.max(0, secondes) / 60);
+  const r = Math.round(Math.max(0, secondes) - m * 60);
+  return `${m}:${String(r).padStart(2, "0")}`;
+};
+
+function blocTunnel(numero, titre, sous) {
+  const boite = document.createElement("section");
+  boite.className = "tunnel-bloc";
+  const tete = document.createElement("div");
+  tete.className = "tunnel-tete";
+  const rang = document.createElement("span");
+  rang.className = "tunnel-rang";
+  rang.textContent = String(numero);
+  const textes = document.createElement("span");
+  textes.className = "tunnel-textes";
+  const h = document.createElement("span");
+  h.className = "tunnel-titre";
+  h.textContent = titre;
+  textes.append(h);
+  if (sous) {
+    const d = document.createElement("span");
+    d.className = "tunnel-sous";
+    d.textContent = sous;
+    textes.append(d);
+  }
+  tete.append(rang, textes);
+  boite.append(tete);
+  return boite;
+}
+
+/* --- 1. La musique ---------------------------------------------------- */
+function blocMusique() {
+  const boite = blocTunnel(1, "Ta musique", "C'est elle qui décide du rythme des coupes.");
+
+  const champ = document.createElement("button");
+  champ.type = "button";
+  champ.className = "tunnel-depot";
+  champ.textContent = tunnel.fichier ? tunnel.fichier.name : "Insérer votre musique";
+  champ.classList.toggle("rempli", Boolean(tunnel.fichier));
+
+  const entree = document.createElement("input");
+  entree.type = "file";
+  entree.accept = "audio/*";
+  entree.hidden = true;
+  entree.addEventListener("change", () => {
+    const fichier = entree.files?.[0];
+    if (!fichier) return;
+    tunnel.fichier = fichier;
+    tunnel.rythme = null;
+    tunnel.etiquettes = [];
+    tunnel.montage = null;
+    rendreCreer();
+  });
+  champ.addEventListener("click", () => entree.click());
+
+  const analyser = document.createElement("button");
+  analyser.type = "button";
+  analyser.className = "archive-action fort tunnel-geste";
+  analyser.textContent = tunnel.occupe === "musique" ? "Analyse en cours…" : "Analyser votre musique";
+  analyser.disabled = !tunnel.fichier || tunnel.occupe === "musique";
+  analyser.addEventListener("click", () => analyserLaMusique().catch(() => {}));
+
+  boite.append(champ, entree, analyser);
+  if (tunnel.rythme) {
+    const dit = document.createElement("p");
+    dit.className = "tunnel-dit";
+    dit.textContent = `${Math.round(tunnel.rythme.bpm)} BPM · ${minutageCourt(tunnel.rythme.duree)}`
+      + ` · ${tunnel.rythme.sections.length} passages repérés`;
+    boite.append(dit);
+  }
+  return boite;
+}
+
+async function analyserLaMusique() {
+  if (!tunnel.fichier || tunnel.occupe) return;
+  tunnel.occupe = "musique";
+  rendreCreer();
+  try {
+    const octets = await tunnel.fichier.arrayBuffer();
+    const rythme = await analyserRythme(octets);
+    if (!rythme) throw new Error("ce fichier n'a pas pu être décodé");
+    tunnel.rythme = rythme;
+    /* Une étiquette par passage, proposée d'après l'énergie mesurée. */
+    tunnel.etiquettes = rythme.sections.map((section) => emotionSuggeree(section.energie));
+  } catch (erreur) {
+    alert(`La musique n'a pas pu être analysée : ${erreur.message}.\n\n`
+      + "Si c'est un morceau de la bibliothèque Musique, il est protégé et aucune "
+      + "application ne peut l'ouvrir : passe par un fichier téléchargé, dans Fichiers.");
+  } finally {
+    tunnel.occupe = "";
+    rendreCreer();
+  }
+}
+
+/* --- 2. La piste narrative -------------------------------------------- */
+function blocNarration() {
+  const boite = blocTunnel(2, "La trame",
+    "Chaque passage reçoit une émotion. C'est elle qui oriente le choix des scènes.");
+  const liste = document.createElement("div");
+  liste.className = "tunnel-trame";
+
+  tunnel.rythme.sections.forEach((section, rang) => {
+    const ligne = document.createElement("div");
+    ligne.className = "trame-ligne";
+
+    const quand = document.createElement("span");
+    quand.className = "trame-quand";
+    quand.textContent = `${minutageCourt(section.debut)} → ${minutageCourt(section.fin)}`;
+
+    const choix = document.createElement("select");
+    choix.className = "trame-choix";
+    choix.setAttribute("aria-label", `Émotion du passage ${minutageCourt(section.debut)}`);
+    for (const emotion of EMOTIONS) {
+      const option = document.createElement("option");
+      option.value = emotion.cle;
+      option.textContent = emotion.nom;
+      if (emotion.cle === tunnel.etiquettes[rang]) option.selected = true;
+      choix.append(option);
+    }
+    choix.addEventListener("change", () => {
+      tunnel.etiquettes[rang] = choix.value;
+      tunnel.montage = null;
+      ligne.dataset.emotion = choix.value;
+    });
+    ligne.dataset.emotion = tunnel.etiquettes[rang];
+
+    ligne.append(quand, choix);
+    liste.append(ligne);
+  });
+
+  boite.append(liste);
+  return boite;
+}
+
+/* --- 3. L'animé ------------------------------------------------------- */
+function blocAnime() {
+  const boite = blocTunnel(3, "L'animé", "Un seul titre, ou un mélange de tout ce qui va.");
+
+  const rangee = document.createElement("div");
+  rangee.className = "pastilles";
+  for (const [cle, nom] of [["mixte", "Animé mixte"], ["unique", "Un seul animé"]]) {
+    const pastille = document.createElement("button");
+    pastille.type = "button";
+    pastille.className = `pastille${tunnel.portee === cle ? " on" : ""}`;
+    pastille.textContent = nom;
+    pastille.addEventListener("click", () => {
+      tunnel.portee = cle;
+      tunnel.montage = null;
+      rendreCreer();
+    });
+    rangee.append(pastille);
+  }
+  boite.append(rangee);
+
+  if (tunnel.portee === "unique") {
+    const champ = document.createElement("input");
+    champ.type = "search";
+    champ.className = "tunnel-champ";
+    champ.placeholder = "Chainsaw Man, Frieren…";
+    champ.autocomplete = "off";
+    champ.spellcheck = false;
+    champ.value = tunnel.animes[0] || "";
+    champ.setAttribute("aria-label", "Nom de l'animé");
+
+    const propositions = document.createElement("div");
+    propositions.className = "suggest tunnel-suggest";
+    propositions.hidden = true;
+
+    let attente = null;
+    const proposer = async () => {
+      const cherche = champ.value.trim();
+      if (cherche.length < 2) { propositions.hidden = true; return; }
+      try {
+        const reponse = await fetch(`/api/suggest?q=${encodeURIComponent(cherche)}`);
+        const { series } = await reponse.json();
+        const trouves = (series || []).slice(0, 6);
+        propositions.replaceChildren(...trouves.map((serie) => {
+          const ligne = document.createElement("button");
+          ligne.type = "button";
+          ligne.className = "suggest-ligne";
+          ligne.textContent = serie.display;
+          ligne.addEventListener("click", () => {
+            tunnel.animes = [serie.display];
+            tunnel.montage = null;
+            rendreCreer();
+          });
+          return ligne;
+        }));
+        propositions.hidden = !trouves.length;
+      } catch { propositions.hidden = true; }
+    };
+
+    champ.addEventListener("input", () => {
+      tunnel.animes = champ.value.trim() ? [champ.value.trim()] : [];
+      tunnel.montage = null;
+      clearTimeout(attente);
+      attente = setTimeout(proposer, 250);
+    });
+    boite.append(champ, propositions);
+  }
+  return boite;
+}
+
+/* --- 4. Générer ------------------------------------------------------- */
+function blocGenerer() {
+  const boite = blocTunnel(4, "L'AMV", "Les scènes sont choisies, coupées et posées sur les temps.");
+
+  const lancer = document.createElement("button");
+  lancer.type = "button";
+  lancer.className = "archive-action fort tunnel-geste";
+  lancer.textContent = tunnel.occupe === "montage" ? "Génération…" : "Générer l'AMV";
+  lancer.disabled = Boolean(tunnel.occupe)
+    || (tunnel.portee === "unique" && !tunnel.animes.length);
+  lancer.addEventListener("click", () => genererLAmv().catch(() => {}));
+  boite.append(lancer);
+
+  const etat = document.createElement("p");
+  etat.className = "tunnel-dit";
+  etat.id = "tunnel-etat";
+  etat.style.whiteSpace = "pre-line";
+  etat.textContent = tunnel.message;
+  boite.append(etat);
+  return boite;
+}
+
+/* --- 5. Le résultat --------------------------------------------------- */
+function titreDuTunnel() {
+  const anime = tunnel.portee === "unique" && tunnel.animes[0] ? tunnel.animes[0] : "AMV Mixte";
+  const musique = (tunnel.fichier?.name || "").replace(/\.[a-z0-9]+$/i, "").trim() || "sans titre";
+  return `${anime} — ${musique}`;
+}
+
+function descriptionDuTunnel() {
+  const anime = tunnel.portee === "unique" && tunnel.animes[0] ? tunnel.animes[0] : "plusieurs animés";
+  const musique = (tunnel.fichier?.name || "").replace(/\.[a-z0-9]+$/i, "").trim() || "une musique originale";
+  const coupes = tunnel.montage?.length || 0;
+  const trame = [...new Set(tunnel.etiquettes.map((c) => emotionDe(c).nom.toLowerCase()))].join(", ");
+  return `AMV ${anime} sur ${musique}. ${coupes} plans d'animation montés sur le tempo,`
+    + ` du plus ${trame || "calme"} au plus intense.\n\n`
+    + `Montage automatique réalisé avec AMVAuto : les scènes sont choisies pour leur énergie,`
+    + ` coupées en fin de plan et calées sur les frappes de la musique.\n\n`
+    + `Toutes les images appartiennent à leurs ayants droit. Aucune revendication de propriété.`;
+}
+
+function tagsDuTunnel() {
+  const anime = tunnel.portee === "unique" && tunnel.animes[0] ? tunnel.animes[0] : "";
+  const base = ["amv", "anime edit", "anime amv", "sakuga", "edit", "anime music video"];
+  const parEmotion = [...new Set(tunnel.etiquettes)].map((c) => `${emotionDe(c).nom.toLowerCase()} amv`);
+  return [...(anime ? [anime, `${anime} amv`, `${anime} edit`] : ["mixed anime amv"]),
+    ...base, ...parEmotion].join(", ");
+}
+
+function champCopiable(intitule, contenu, lignes = 1) {
+  const bloc = document.createElement("div");
+  bloc.className = "tunnel-sortie";
+  const haut = document.createElement("div");
+  haut.className = "tunnel-sortie-tete";
+  const nom = document.createElement("span");
+  nom.textContent = intitule;
+  const copier = document.createElement("button");
+  copier.type = "button";
+  copier.className = "archive-action";
+  copier.textContent = "Copier";
+  copier.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(contenu);
+      copier.textContent = "Copié";
+      setTimeout(() => { copier.textContent = "Copier"; }, 1600);
+    } catch {
+      copier.textContent = "Copie refusée";
+    }
+  });
+  haut.append(nom, copier);
+  const texte = document.createElement(lignes > 1 ? "textarea" : "input");
+  texte.className = "tunnel-sortie-texte";
+  texte.readOnly = true;
+  if (lignes > 1) { texte.rows = lignes; texte.value = contenu; } else { texte.value = contenu; }
+  bloc.append(haut, texte);
+  return bloc;
+}
+
+function blocResultat() {
+  const boite = blocTunnel(5, "À publier", "Le titre, la description et les tags, prêts à coller.");
+  boite.append(
+    champCopiable("Titre", titreDuTunnel()),
+    champCopiable("Description", descriptionDuTunnel(), 6),
+    champCopiable("Tags", tagsDuTunnel(), 3),
+  );
+
+  const telecharger = document.createElement("button");
+  telecharger.type = "button";
+  telecharger.className = "archive-action fort tunnel-geste";
+  telecharger.textContent = tunnel.occupe === "rendu" ? "Rendu en cours…" : "Télécharger l'AMV";
+  telecharger.disabled = Boolean(tunnel.occupe);
+  telecharger.addEventListener("click", () => rendreLeTunnel().catch(() => {}));
+  boite.append(telecharger);
+
+  const note = document.createElement("p");
+  note.className = "tunnel-dit";
+  note.textContent = "Le fichier est assemblé sur un serveur, puis rangé dans l'Historique."
+    + " Compte quelques minutes.";
+  boite.append(note);
+  return boite;
+}
+
+function rendreCreer() {
+  const vue = $("vue-creer");
+  if (!vue) return;
+  const morceaux = [blocMusique()];
+  if (tunnel.rythme) morceaux.push(blocNarration(), blocAnime(), blocGenerer());
+  if (tunnel.montage?.length) morceaux.push(blocResultat());
+  vue.replaceChildren(...morceaux);
+}
+
+/* Le montage, depuis ce que le tunnel a recueilli.
+
+   Rien de neuf sous le capot : c'est la même recherche, la même lecture des
+   en-têtes et le même constructeur que l'automatisation. Ce qui change est
+   l'entrée — ce ne sont plus des réglages épars, c'est une trame d'émotions. */
+async function genererLAmv() {
+  if (tunnel.occupe || !tunnel.rythme) return;
+  if (tunnel.portee === "unique" && !tunnel.animes.length) return;
+  tunnel.occupe = "montage";
+  tunnel.montage = null;
+  rendreCreer();
+  const dire = direTunnel;
+
+  try {
+    /* Le projet est le support du montage : il porte la musique, la trame et
+       les plans. Il reste invisible dans le tunnel — on ne le montre plus. */
+    const projet = projetActif() || creerProjet(titreDuTunnel());
+    projet.nom = titreDuTunnel();
+    /* Chaque passage prend l'énergie de son émotion : c'est par là que le choix
+       de l'étiquette atteint le choix des scènes. */
+    projet.rythme = {
+      ...tunnel.rythme,
+      sections: tunnel.rythme.sections.map((section, rang) => ({
+        ...section,
+        energie: emotionDe(tunnel.etiquettes[rang]).energie,
+        emotion: tunnel.etiquettes[rang],
+      })),
+    };
+    projet.amv = { portee: tunnel.portee, animes: [...tunnel.animes], ordre: "libre", lire: false };
+    projet.audio = { nom: tunnel.fichier.name, duree: tunnel.rythme.duree };
+    /* Les octets restent sous la main : c'est eux que le rendu déporté dépose,
+       et les chercher en base pouvait échouer en silence. */
+    lecture.audioFichier = tunnel.fichier;
+    lecture.audioProjet = projet.id;
+    faireDeLaPlace(tunnel.fichier.size || 0)
+      .catch(() => 0)
+      .then(() => ecrireBase(cleMusique(projet), tunnel.fichier))
+      .catch(() => {});
+
+    dire("Recherche des scènes…");
+    const trouves = await chercherRushs(tunnel.animes, tunnel.rythme.duree,
+      casesAttendues(projet), tunnel.portee !== "unique");
+    if (!trouves.length) {
+      dire("Aucune scène trouvée. Vérifie l'orthographe, ou passe en animé mixte.");
+      return;
+    }
+    const connus = new Set(projet.plans.map((x) => String(idRush(x))));
+    projet.plans.push(...trouves
+      .filter((r) => !connus.has(String(r.id)))
+      .map((rush) => ({ ...rush, duree: null, entree: 0, sortie: null })));
+    projet.rushs = [...new Map(projet.plans.map((plan) => [String(idRush(plan)),
+      { ...plan, id: idRush(plan), rush: undefined, entree: 0, sortie: null }])).values()];
+
+    dire(`${projet.rushs.length} scènes trouvées. Lecture de leurs en-têtes…`);
+    await mesurerEnTetes(projet.rushs, 6, (n, total) =>
+      dire(`${projet.rushs.length} scènes trouvées. Lecture des en-têtes… ${n}/${total}`));
+
+    const surs = projet.rushs.filter((plan) => dureeConnue(plan));
+    if (!surs.length) {
+      dire("Aucune durée n'a pu être lue : le montage ne se pose pas sur des suppositions.");
+      return;
+    }
+    const montage = construireMontage(projet, { ordre: "libre", depuis: surs, graine: nouvelleGraine() });
+    if (!montage?.length) { dire("Le montage n'a pas pu être construit."); return; }
+    projet.plans = montage;
+    tunnel.montage = montage;
+    sauver();
+    enregistrer(projet);
+    dire(`${montage.length} coupes sur ${surs.length} scènes, aucune deux fois.`
+      + phraseCouverture(projet));
+  } catch (erreur) {
+    dire(`Génération interrompue : ${erreur.message}`);
+  } finally {
+    tunnel.occupe = "";
+    rendreCreer();
+  }
+}
+
+/* Le fichier, assemblé au loin puis rangé dans l'Historique. */
+async function rendreLeTunnel() {
+  const projet = projetActif();
+  if (!projet || tunnel.occupe) return;
+  tunnel.occupe = "rendu";
+  rendreCreer();
+  const etat = document.createElement("p");
+  etat.className = "tunnel-dit";
+  etat.style.whiteSpace = "pre-line";
+  const faux = document.createElement("button");
+  try {
+    $("vue-creer")?.append(etat);
+    await lancerRenduDistant(projet, faux, etat);
+  } catch (erreur) {
+    etat.textContent = `Le rendu n'a pas pu partir : ${erreur.message}`;
+  } finally {
+    tunnel.occupe = "";
+  }
+}
+
 function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
@@ -4550,6 +5096,7 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
+  tunnel: () => tunnel, rendreCreer: () => rendreCreer(),
   fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
   clignement: () => clignement(), absence: () => absence,
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
@@ -20156,6 +20703,7 @@ function telecharger(nom, contenu) {
 
 charger();
 chargerCoffre();
+rendreCreer();
 
 /* Au lancement, le coffre est consulté : si l'autre appareil a monté depuis, sa
    version arrive ici. La fusion se fait projet par projet, la plus récente
