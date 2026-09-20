@@ -39,7 +39,7 @@ from urllib.parse import quote
 from rendu import HOTES, telecharger, ffmpeg          # noqa: F401  (même liste blanche)
 
 POIGNEE = 1.0            # secondes de marge de part et d'autre de chaque coupe
-CRF = "21"
+CRF = "23"   # un plan de travail, pas un master : on le remontera de toute façon
 
 
 def sonder(fichier):
@@ -237,14 +237,20 @@ def main():
             arret = min(duree_rush, sortie_plan + POIGNEE) if duree_rush else sortie_plan + POIGNEE
             fichier = f"{rang + 1:03d} - plan.mp4"
             chemin = os.path.join(sources, fichier)
-            # Réencodé au cadre commun, comme au rendu : des sources qui n'ont ni
-            # la même définition ni la même cadence ne se montent pas ensemble.
+            # Jamais agrandi, et jamais complété de noir.
+            #
+            # Le rendu normalise tout au cadre commun parce qu'il colle les plans
+            # bout à bout sans réencoder : il leur faut la même définition. Un
+            # projet, lui, se monte dans Resolve, qui met chaque plan à l'échelle
+            # de la ligne de temps tout seul. Agrandir un rush de 854 sur 480 vers
+            # 1280 sur 720 ne lui ajoute aucun détail et multiplie son poids par
+            # deux — mesuré : 2,7 Mo pour trois plans, soit plus de cent mégaoctets
+            # pour un AMV entier, au-dessus de ce que le grenier accepte.
             ffmpeg(
                 "-ss", f"{depart:.3f}", "-i", rush, "-t", f"{max(0.08, arret - depart):.3f}",
                 "-an",
-                "-vf", (f"scale={largeur}:{hauteur}:force_original_aspect_ratio=decrease,"
-                        f"pad={largeur}:{hauteur}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                        f"fps={cadence},setsar=1"),
+                "-vf", (f"scale='min({largeur},iw)':'min({hauteur},ih)'"
+                        f":force_original_aspect_ratio=decrease,fps={cadence},setsar=1"),
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", CRF,
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", chemin)
             coupes.append({
@@ -302,7 +308,23 @@ def main():
                     zip_.write(dans, sous)
 
         octets = os.path.getsize(sortie)
+        with zipfile.ZipFile(sortie) as zip_:
+            dedans = set(zip_.namelist())
+            manquants = [c["fichier"] for c in coupes
+                         if os.path.join(racine, "Sources", c["fichier"]) not in dedans]
+            print(f"archive : {len(dedans)} entrées", flush=True)
+            for nom_entree in sorted(dedans)[:8]:
+                print(f"  {nom_entree}", flush=True)
+            if len(dedans) > 8:
+                print(f"  … et {len(dedans) - 8} autres", flush=True)
+        if manquants:
+            print(f"le montage pointe vers {len(manquants)} fichiers absents de l'archive",
+                  file=sys.stderr)
+            return 1
         print(f"projet : {octets / 1e6:.1f} Mo, {len(coupes)} plans", flush=True)
+        if octets > 95_000_000:
+            print("l'archive dépasse 95 Mo : le grenier la refusera, "
+                  "elle restera dans les artefacts de la course", flush=True)
         return 0
     finally:
         shutil.rmtree(dossier, ignore_errors=True)
