@@ -2137,7 +2137,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 10:33";
+const VERSION_PAGE = "2026-09-20 10:56";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -3508,10 +3508,24 @@ async function dureeParEntete(plan) {
   if (deja) return deja;
   const adresse = mediaDe(plan);
   if (!adresse || plan.youtube) return null;
+  /* Les octets passent par le relais, jamais par la source directement.
+
+     Sakugabooru n'envoie aucun en-tête CORS. Vérifié : le préflight d'une
+     requête par plage répond 405 sans un seul « access-control-* », et la
+     réponse d'un GET n'en porte pas davantage. Un « fetch » avec un en-tête
+     « Range » depuis la page échouait donc TOUJOURS, et avec lui toutes les
+     durées — donc toutes les scènes, écartées faute de durée. Sur le banc, la
+     requête était servie par un relais de test qui, lui, supprimait la règle :
+     c'est ce qui l'avait caché.
+
+     Le relais est de même origine, la question ne se pose plus, et il garde le
+     fichier un mois au bord du réseau — la lecture d'en-tête d'un rush déjà vu
+     ne ressort même pas de Cloudflare. */
+  const source = locales.get(adresse) || `/api/media?u=${encodeURIComponent(adresse)}`;
   for (const plage of [`bytes=0-${TETE_DUREE - 1}`, `bytes=-${QUEUE_DUREE}`]) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      const reponse = await fetch(adresse, { headers: { Range: plage } });
+      const reponse = await fetch(source, { headers: { Range: plage } });
       if (!reponse.ok) continue;
       /* Un serveur qui ignore « Range » rend le fichier entier : dix mégaoctets
          pour lire quatre octets, et sur un forfait mobile. On ne le lit pas. */
@@ -4271,7 +4285,7 @@ function blocAnime() {
     champ.placeholder = "Chainsaw Man, Frieren…";
     champ.autocomplete = "off";
     champ.spellcheck = false;
-    champ.value = tunnel.animes[0] || "";
+    champ.value = nomAnime(tunnel.animes[0]) || "";
     champ.disabled = Boolean(tunnel.occupe);
     champ.setAttribute("aria-label", "Nom de l'animé");
 
@@ -4296,20 +4310,29 @@ function blocAnime() {
       try {
         const reponse = await fetch(`/api/suggest?q=${encodeURIComponent(cherche)}`);
         const { series } = await reponse.json();
-        const trouves = (series || []).slice(0, 6);
+        /* Huit propositions, et non six : le catalogue du site en rend
+           plusieurs par titre — « Naruto », « Naruto Shippuden », « Naruto
+           (2002) », les films — et n'en montrer que six revenait à cacher la
+           série mère derrière ses suites. */
+        const trouves = (series || []).slice(0, 8);
         verdict.hidden = false;
         verdict.textContent = trouves.length
           ? `Sakugabooru reconnaît : ${trouves[0].display}`
-            + (trouves.length > 1 ? ` (${trouves.length - 1} autre${trouves.length > 2 ? "s" : ""} possible${trouves.length > 2 ? "s" : ""})` : "")
+            + (trouves[0].scenes ? ` · ${trouves[0].scenes} scènes` : "")
+            + (trouves.length > 1 ? ` — ${trouves.length - 1} autre${trouves.length > 2 ? "s" : ""} juste en dessous` : "")
           : `Sakugabooru ne connaît pas « ${cherche} » : essaie le titre original,`
             + " ou passe en animé mixte.";
         propositions.replaceChildren(...trouves.map((serie) => {
           const ligne = document.createElement("button");
           ligne.type = "button";
           ligne.className = "suggest-ligne";
-          ligne.textContent = serie.display;
+          // Le nombre de scènes est ce qui permet de choisir entre deux titres
+          // voisins : « Naruto » en porte 2833, « Naruto Shippuden » 1699.
+          ligne.textContent = serie.scenes
+            ? `${serie.display} · ${serie.scenes} scènes`
+            : serie.display;
           ligne.addEventListener("click", () => {
-            tunnel.animes = [serie.display];
+            tunnel.animes = [{ nom: serie.display, tag: serie.tag || "" }];
             tunnel.montage = null;
             rendreCreer();
           });
@@ -4377,13 +4400,13 @@ function noeudDeRendu() {
 
 /* --- 5. Le résultat --------------------------------------------------- */
 function titreDuTunnel() {
-  const anime = tunnel.portee === "unique" && tunnel.animes[0] ? tunnel.animes[0] : "AMV Mixte";
+  const anime = (tunnel.portee === "unique" && nomAnime(tunnel.animes[0])) || "AMV Mixte";
   const musique = (tunnel.fichier?.name || "").replace(/\.[a-z0-9]+$/i, "").trim() || "sans titre";
   return `${anime} — ${musique}`;
 }
 
 function descriptionDuTunnel() {
-  const anime = tunnel.portee === "unique" && tunnel.animes[0] ? tunnel.animes[0] : "plusieurs animés";
+  const anime = (tunnel.portee === "unique" && nomAnime(tunnel.animes[0])) || "plusieurs animés";
   const musique = (tunnel.fichier?.name || "").replace(/\.[a-z0-9]+$/i, "").trim() || "une musique originale";
   const coupes = tunnel.montage?.length || 0;
   const trame = [...new Set(tunnel.etiquettes.map((c) => emotionDe(c).nom.toLowerCase()))].join(", ");
@@ -4395,7 +4418,7 @@ function descriptionDuTunnel() {
 }
 
 function tagsDuTunnel() {
-  const anime = tunnel.portee === "unique" && tunnel.animes[0] ? tunnel.animes[0] : "";
+  const anime = (tunnel.portee === "unique" && nomAnime(tunnel.animes[0])) || "";
   const base = ["amv", "anime edit", "anime amv", "sakuga", "edit", "anime music video"];
   const parEmotion = [...new Set(tunnel.etiquettes)].map((c) => `${emotionDe(c).nom.toLowerCase()} amv`);
   return [...(anime ? [anime, `${anime} amv`, `${anime} edit`] : ["mixed anime amv"]),
@@ -4517,7 +4540,8 @@ async function genererLAmv() {
         emotion: tunnel.etiquettes[rang],
       })),
     };
-    projet.amv = { portee: tunnel.portee, animes: [...tunnel.animes], ordre: "libre", lire: false };
+    projet.amv = { portee: tunnel.portee, animes: tunnel.animes.map(nomAnime),
+      ordre: "libre", lire: false };
     projet.audio = { nom: tunnel.fichier.name, duree: tunnel.rythme.duree };
     /* Les octets restent sous la main : c'est eux que le rendu déporté dépose,
        et les chercher en base pouvait échouer en silence. */
@@ -4539,10 +4563,10 @@ async function genererLAmv() {
     }
     /* Le titre porte le nom du site, pas la frappe : « chainsaw man » devient
        « Chainsaw Man », et c'est lui qui partira sur YouTube. */
-    const reconnus = journal.resolus.filter((x) => x.trouve).map((x) => x.trouve);
+    const reconnus = journal.resolus.filter((x) => x.trouve);
     if (tunnel.portee === "unique" && reconnus.length) {
-      tunnel.animes = [reconnus[0]];
-      projet.amv.animes = [...tunnel.animes];
+      tunnel.animes = [{ nom: reconnus[0].trouve, tag: reconnus[0].tag || "" }];
+      projet.amv.animes = tunnel.animes.map(nomAnime);
       projet.nom = titreDuTunnel();
     }
     /* La pioche est remplacée, pas complétée : ce que le tunnel demande
@@ -18828,6 +18852,13 @@ async function chercherPartout(voulues) {
   return melange;
 }
 
+/* Un animé demandé : soit un titre tapé à la main, soit une proposition du
+   catalogue — qui porte, elle, le tag exact du site. Le tag vaut mieux que le
+   titre : il ne se redevine pas, et c'est ce qui empêche « Naruto » de
+   redevenir « Naruto Shippuden » en repassant par la recherche par nom. */
+const nomAnime = (x) => (typeof x === "string" ? x : x?.nom || "");
+const tagAnime = (x) => (typeof x === "string" ? "" : x?.tag || "");
+
 /* Ce que le site a reconnu, en une phrase.
 
    « L'outil ne détecte pas l'animé que je rentre » : il le détectait, mais rien
@@ -18866,10 +18897,21 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false, journ
     }
     return [...pris.values()].slice(0, RUSHS_MAX);
   }
+  /* Une marge, et non le compte juste.
+
+     On demandait exactement le nombre de cases. Chaque scène ne servant qu'une
+     fois, il suffisait qu'une seule soit trop courte pour sa case, ou illisible,
+     pour que la fin de la musique reste sans image. Un tiers de plus coûte
+     quelques en-têtes et sauve la couverture. */
   const parAnime = Math.ceil(voulues / Math.max(1, animes.length));
+  const demande = Math.min(200, Math.ceil(parAnime * 1.35) + 8);
   const trouves = [];
-  for (const anime of animes) {
-    const cible = `/api/rushes?anime=${encodeURIComponent(anime)}&top=${Math.min(200, parAnime)}&pool=2000`;
+  for (const entree of animes) {
+    const anime = nomAnime(entree);
+    const tag = tagAnime(entree);
+    // Le tag exact quand on l'a : aucune résolution, donc aucune surprise.
+    const cible = `/api/rushes?${tag ? `tag=${encodeURIComponent(tag)}` : `anime=${encodeURIComponent(anime)}`}`
+      + `&top=${demande}&pool=2000`;
     try {
       const reponse = await fetch(cible);
       const contenu = await reponse.json();
@@ -18878,10 +18920,11 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false, journ
          tapé : « chainsaw » doit s'écrire « Chainsaw Man » — sur les plans
          comme dans le titre de l'AMV. */
       const reconnu = contenu.anime || anime;
-      journal?.resolus.push({ demande: anime, trouve: reconnu, total: contenu.total || 0 });
+      journal?.resolus.push({ demande: anime, trouve: reconnu, tag: contenu.tag || tag,
+        total: contenu.total || 0 });
       (contenu.rushes || []).forEach((rush) => trouves.push({ ...rush, anime: rush.anime || reconnu }));
     } catch (erreur) {
-      journal?.resolus.push({ demande: anime, trouve: "", total: 0 });
+      journal?.resolus.push({ demande: anime, trouve: "", tag: "", total: 0 });
       console.warn(`aucun rush pour « ${anime} » :`, erreur.message);
     }
   }

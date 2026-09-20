@@ -19,7 +19,7 @@ import { copyrightTags, rushes, rushesPartout, searchSeries, serieDe } from "./s
 import { rendu } from "./rendu.js";
 import { veille } from "./veille.js";
 import { MOODS, TAGS_MONTAGE, TAG_PHARE, moodsOf, qualityFlags, rank } from "./scoring.js";
-import { findCurated, suggest } from "./series.js";
+import { findCurated, SERIES, suggest } from "./series.js";
 import { VERSION } from "./version.js";
 
 const JSON_HEADERS = {
@@ -249,6 +249,40 @@ async function handleTree(url) {
   });
 }
 
+/* Les propositions : le raccourci d'abord, puis tout le catalogue du site.
+
+   « Quand j'écris Naruto ça me propose que Naruto Shippuden. » C'était vrai :
+   les propositions ne sortaient que d'une liste écrite à la main de
+   soixante-treize séries, où « naruto » est un alias de Shippuden. Or le tag
+   « naruto » existe sur le site et porte 2833 posts — presque deux fois
+   Shippuden. Le raccourci, censé être un garde-fou, fermait la porte.
+
+   On interroge donc le catalogue des tags de copyright, qui en compte des
+   milliers, et l'on annonce pour chacun le nombre de posts. Le raccourci reste
+   devant quand il répond : c'est lui qui sait rattraper les titres déformés du
+   site — homoglyphes, titres de code — qu'aucune recherche par nom ne retrouve. */
+async function propositions(question, limite = 10) {
+  const vus = new Set();
+  const liste = [];
+  for (const { display, tag } of suggest(question, limite)) {
+    if (vus.has(tag)) continue;
+    vus.add(tag);
+    liste.push({ display, tag, raccourci: true });
+  }
+  if (!question.trim()) return liste.slice(0, limite);
+  try {
+    for (const tag of await searchSeries(question)) {
+      if (vus.has(tag.name)) continue;
+      vus.add(tag.name);
+      liste.push({ display: joliTag(tag.name), tag: tag.name, scenes: tag.count });
+    }
+  } catch { /* le site ne répond pas : le raccourci suffit */ }
+  return liste.slice(0, limite);
+}
+
+// Un tag de copyright, écrit pour être lu : « naruto_(2002) » → « Naruto (2002) ».
+const joliTag = (nom) => nom.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
 async function handleRushes(url) {
   const query = (url.searchParams.get("anime") || "").trim();
 
@@ -257,6 +291,45 @@ async function handleRushes(url) {
 
   const top = Math.min(200, Math.max(1, Number(url.searchParams.get("top")) || 24));
   const pool = Math.min(2000, Math.max(top, Number(url.searchParams.get("pool")) || 1000));
+
+  /* Un tag exact court-circuite toute résolution.
+
+     Quand la proposition vient du catalogue, la page connaît déjà le tag : le
+     renvoyer en clair évite de repasser par une recherche par nom, qui pouvait
+     retomber sur le raccourci — « Naruto » redevenait « Naruto Shippuden ». */
+  const tagExact = (url.searchParams.get("tag") || "").trim();
+  if (tagExact) {
+    /* Un tag est un seul mot du catalogue, jamais une requête.
+
+       Il part dans une recherche Sakugabooru — « <tag> order:score ». Une
+       espace y ajouterait un second terme : on n'en accepte aucune. Le
+       deux-points, en revanche, appartient à de vrais tags du site —
+       « boruto:_naruto_next_generations », « naruto_shippuuden_movie_3:_… » —,
+       on ne peut donc pas l'interdire. On refuse seulement ce qui, avant ce
+       deux-points, est un opérateur de recherche, et la négation en tête.
+
+       Les raccourcis écrits à la main font exception : certains sont justement
+       une alternative entre plusieurs tags, espaces comprises. */
+    const OPERATEURS = new Set(["order", "rating", "user", "md5", "id", "score", "source",
+      "width", "height", "date", "parent", "pool", "limit", "vote", "holds", "unlocked"]);
+    const connuDavance = SERIES.find(([, tag]) => tag === tagExact);
+    const premierMot = tagExact.split(":")[0].toLowerCase();
+    if (!connuDavance && (/\s/.test(tagExact) || tagExact.startsWith("-")
+      || (tagExact.includes(":") && OPERATEURS.has(premierMot)))) {
+      return json({ error: `Tag invalide : « ${tagExact} ».` }, 400);
+    }
+    const posts = await rushes(tagExact, pool);
+    if (!posts.length) {
+      return json({ error: `Aucun rush vidéo sous le tag « ${tagExact} ».` }, 404);
+    }
+    return json({
+      anime: connuDavance ? connuDavance[0] : joliTag(tagExact),
+      tag: tagExact,
+      mood,
+      total: posts.length,
+      rushes: rank(posts, mood, top).map(serialize),
+    });
+  }
 
   /* Sans animé : l'AMV mixte. On ne choisit pas les séries, on prend les
      meilleurs cuts du site et l'animé de chaque plan est lu dans ses tags — il
@@ -336,7 +409,8 @@ export default {
         if (url.pathname === "/api/tree") return await garder(coffreBord, request, ctx, await handleTree(url));
         if (url.pathname === "/api/rushes") return await garder(coffreBord, request, ctx, await handleRushes(url));
         if (url.pathname === "/api/suggest") {
-          return await garder(coffreBord, request, ctx, json({ series: suggest(url.searchParams.get("q") || "", 10) }));
+          return await garder(coffreBord, request, ctx,
+            json({ series: await propositions(url.searchParams.get("q") || "", 10) }));
         }
         if (url.pathname === "/api/media") return await relayerMedia(request, url);
         if (url.pathname === "/api/extrait") return await extrait(request, url, env, ctx);
