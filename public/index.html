@@ -877,6 +877,8 @@ main {
 .trame-ligne[data-emotion="action"] { border-left-color: #c1121f; }
 .trame-ligne[data-emotion="choc"] { border-left-color: #e0523a; }
 .trame-quand { font: 500 0.84rem/1 ui-monospace, monospace; color: var(--doux); }
+/* Le titre retenu : vert, et il ne ressemble pas à une suggestion. */
+.verdict-pris { color: var(--vert); font-weight: 600; }
 .trame-vers {
   margin: -2px 0 2px 46px; font: 400 0.76rem/1.35 system-ui, sans-serif;
   color: var(--doux); font-style: italic;
@@ -2206,7 +2208,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 14:51";
+const VERSION_PAGE = "2026-09-20 17:52";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4587,8 +4589,9 @@ async function ecouterLesParoles() {
     }
     tunnel.paroles.push(...dit.lignes);
     direTunnel(`${tunnel.paroles.length} vers entendus.`);
-    // Les vers se posent sous leur passage à mesure qu'ils arrivent.
-    rendreCreer();
+    // Les vers se posent sous leur passage à mesure qu'ils arrivent — et rien
+    // d'autre ne bouge, surtout pas ce que l'utilisateur est en train de toucher.
+    majVersDeLaTrame();
   }
   if (!tunnel.paroles.length) direTunnel("Aucune parole entendue.");
 }
@@ -4689,23 +4692,44 @@ function blocNarration() {
     ecouter.setAttribute("aria-label", ecouter.title);
     ecouter.addEventListener("click", () => { ecouterPassage(rang, section).catch(() => {}); });
 
+    ligne.dataset.debut = String(section.debut);
+    ligne.dataset.fin = String(section.fin);
     ligne.append(ecouter, quand, choix);
     liste.append(ligne);
 
     /* Le vers entendu, sous son passage. C'est ce qui rend l'illustration
        vérifiable : si l'outil a entendu « fire » là où la chanson dit autre
-       chose, cela se voit avant de générer, pas après. */
-    const dit = parolesDuPassage(section.debut, section.fin);
-    if (dit) {
-      const vers = document.createElement("p");
-      vers.className = "trame-vers";
-      vers.textContent = `« ${dit.length > 120 ? `${dit.slice(0, 118)}…` : dit} »`;
-      liste.append(vers);
-    }
+       chose, cela se voit avant de générer, pas après.
+
+       Il est posé vide et rempli à part : les paroles arrivent en arrière-plan,
+       et redessiner tout le tunnel pour les poser arrachait la liste des
+       propositions d'animé sous le doigt qui venait d'en toucher une. */
+    const vers = document.createElement("p");
+    vers.className = "trame-vers";
+    vers.hidden = true;
+    liste.append(vers);
   });
 
   boite.append(liste);
+  majVersDeLaTrame();
   return boite;
+}
+
+/* Poser les vers sous leur passage, sans toucher au reste.
+
+   C'est la seule mise à jour qui vient de l'arrière-plan. Tout redessiner pour
+   elle revenait à remplacer, quatre fois de suite, la liste des propositions
+   d'animé — et un doigt posé sur « Naruto · 2833 scènes » touchait alors un
+   élément qui n'existait plus. Le clic n'atteignait rien, et rien ne se
+   sélectionnait. */
+function majVersDeLaTrame() {
+  for (const ligne of document.querySelectorAll(".trame-ligne[data-debut]")) {
+    const vers = ligne.nextElementSibling;
+    if (!vers?.classList.contains("trame-vers")) continue;
+    const dit = parolesDuPassage(Number(ligne.dataset.debut), Number(ligne.dataset.fin));
+    vers.hidden = !dit;
+    vers.textContent = dit ? `« ${dit.length > 120 ? `${dit.slice(0, 118)}…` : dit} »` : "";
+  }
 }
 
 /* --- 3. L'animé ------------------------------------------------------- */
@@ -4784,6 +4808,22 @@ function blocAnime() {
     verdict.className = "tunnel-dit";
     verdict.hidden = true;
 
+    /* Choisir, et le montrer.
+
+       Le champ disait déjà « Naruto » avant le choix ; après, il disait encore
+       « Naruto ». Rien ne changeait à l'écran, et la liste se rouvrait aussitôt
+       sous le doigt — d'où « quand je clique sur Naruto ça ne sélectionne pas »,
+       alors même que le tag était pris. Le choix ferme donc la liste et s'écrit
+       en toutes lettres, avec le nombre de scènes qui a fait la différence. */
+    const choisirLAnime = (serie) => {
+      tunnel.animes = [{ nom: serie.display, tag: serie.tag || "", scenes: serie.scenes || 0 }];
+      tunnel.montage = null;
+      propositions.hidden = true;
+      champ.value = serie.display;
+      champ.blur();
+      rendreCreer();
+    };
+
     let attente = null;
     const proposer = async () => {
       const cherche = champ.value.trim();
@@ -4812,11 +4852,19 @@ function blocAnime() {
           ligne.textContent = serie.scenes
             ? `${serie.display} · ${serie.scenes} scènes`
             : serie.display;
-          ligne.addEventListener("click", () => {
-            tunnel.animes = [{ nom: serie.display, tag: serie.tag || "" }];
-            tunnel.montage = null;
-            rendreCreer();
-          });
+          /* « pointerdown », et non « click ».
+
+             Sur un téléphone, le premier contact fait perdre le focus au champ,
+             ce qui referme le clavier et déplace la page : le « click » qui suit
+             tombe alors à côté, ou sur un élément que le redessin a remplacé. On
+             prend donc le geste à son début, et l'on empêche le champ de réagir. */
+          const prendre = (evt) => {
+            evt.preventDefault();
+            choisirLAnime(serie);
+          };
+          ligne.addEventListener("pointerdown", prendre);
+          // Sans pointeur — clavier, lecteur d'écran — le clic reste le geste.
+          ligne.addEventListener("click", (evt) => { if (!evt.detail) prendre(evt); });
           return ligne;
         }));
         propositions.hidden = !trouves.length;
@@ -4824,14 +4872,29 @@ function blocAnime() {
     };
 
     champ.addEventListener("input", () => {
+      // Taper défait le choix : le tag ne vaut plus pour un autre titre.
       tunnel.animes = champ.value.trim() ? [champ.value.trim()] : [];
       tunnel.montage = null;
       clearTimeout(attente);
       attente = setTimeout(proposer, 250);
     });
     boite.append(champ, propositions, verdict);
-    // Le champ garde son texte d'un redessin à l'autre : on redit ce qu'il vaut.
-    if (champ.value.trim().length >= 2) proposer();
+
+    /* Un animé choisi ne redemande pas la liste.
+
+       Le redessin relançait la recherche, et la liste se rouvrait sur le titre
+       qu'on venait de choisir : impossible de voir qu'il avait été pris. */
+    const pris = tunnel.animes[0];
+    if (pris && typeof pris !== "string" && pris.tag) {
+      verdict.hidden = false;
+      verdict.classList.add("verdict-pris");
+      verdict.textContent = `✓ ${pris.nom}${pris.scenes ? ` · ${pris.scenes} scènes` : ""}`
+        + " — c'est là qu'on cherchera les plans.";
+      propositions.hidden = true;
+    } else if (champ.value.trim().length >= 2) {
+      // Le champ garde son texte d'un redessin à l'autre : on redit ce qu'il vaut.
+      proposer();
+    }
   }
   return boite;
 }
@@ -6188,6 +6251,7 @@ window.__banc = {
   chercherRushs: (...a) => chercherRushs(...a), phraseResolution: (j) => phraseResolution(j),
   profilDe: (...a) => profilDe(...a), ecartDIntention: (...a) => ecartDIntention(...a),
   tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
+  majVersDeLaTrame: () => majVersDeLaTrame(),
   parolesDuPassage: (a, b) => parolesDuPassage(a, b),
   grilleDeCoupes: (...a) => grilleDeCoupes(...a), attendreCles: (...a) => attendreCles(...a),
   mesurerEnTetes: (...a) => mesurerEnTetes(...a), dureeParEntete: (x) => dureeParEntete(x),
