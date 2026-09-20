@@ -894,6 +894,18 @@ main {
   font: 500 0.84rem/1 system-ui, sans-serif;
 }
 
+/* La fiche à publier, sous une carte d'historique. Repliée, elle ne coûte
+   qu'une ligne ; dépliée, elle donne les trois champs à copier. */
+.archive-bloc { display: flex; flex-direction: column; gap: 0; }
+.fiche-seo {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: -6px 0 0; padding: 10px 12px 12px;
+  border: 1px solid var(--trait); border-top: 0;
+  border-radius: 0 0 12px 12px; background: #101010;
+}
+.fiche-bascule { align-self: flex-start; }
+.fiche-contenu { display: flex; flex-direction: column; gap: 8px; }
+
 /* Ce qu'on copie pour publier. */
 .tunnel-sortie { display: flex; flex-direction: column; gap: 6px; }
 .tunnel-sortie-tete {
@@ -2208,7 +2220,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 17:52";
+const VERSION_PAGE = "2026-09-20 18:17";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4969,6 +4981,49 @@ function tagsDuTunnel() {
     ...base, ...parEmotion].join(", ");
 }
 
+/* La fiche à publier, enregistrée avec le montage.
+
+   Elle n'existait que sur l'écran du tunnel, recalculée à chaque affichage à
+   partir de l'état courant : quitter la page la perdait, et l'on ne pouvait plus
+   retrouver le titre ni les tags d'un AMV fait la veille. Or c'est au moment de
+   publier qu'on en a besoin, pas au moment de générer.
+
+   Elle est donc posée sur le projet, comme ses plans et sa musique — donc
+   enregistrée, donc déposée au coffre, donc retrouvée sur un autre appareil. */
+function ficheDuTunnel() {
+  return {
+    titre: titreDuTunnel(),
+    description: descriptionDuTunnel(),
+    tags: tagsDuTunnel(),
+    quand: Date.now(),
+  };
+}
+
+/* La fiche d'un montage, dépliable. Repliée par défaut : une carte d'historique
+   doit rester une ligne qu'on parcourt, pas un pavé de texte. */
+function blocFicheSeo(fiche, ouverte = false) {
+  const bloc = document.createElement("div");
+  bloc.className = "fiche-seo";
+
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.className = "archive-action fiche-bascule";
+  const contenu = document.createElement("div");
+  contenu.className = "fiche-contenu";
+  contenu.hidden = !ouverte;
+  contenu.append(
+    champCopiable("Titre", fiche.titre),
+    champCopiable("Description", fiche.description, 6),
+    champCopiable("Tags", fiche.tags, 3),
+  );
+  const dire = () => { bouton.textContent = contenu.hidden ? "Fiche à publier" : "Replier la fiche"; };
+  dire();
+  bouton.addEventListener("click", () => { contenu.hidden = !contenu.hidden; dire(); });
+
+  bloc.append(bouton, contenu);
+  return bloc;
+}
+
 function champCopiable(intitule, contenu, lignes = 1) {
   const bloc = document.createElement("div");
   bloc.className = "tunnel-sortie";
@@ -4999,11 +5054,16 @@ function champCopiable(intitule, contenu, lignes = 1) {
 }
 
 function blocResultat() {
-  const boite = blocTunnel(5, "À publier", "Le titre, la description et les tags, prêts à coller.");
+  const boite = blocTunnel(5, "À publier",
+    "Le titre, la description et les tags, prêts à coller. Ils sont enregistrés"
+    + " avec le montage : on les retrouve dans l'Historique.");
+  // Celle qui est enregistrée, pas une recalculée : ce qu'on lit ici est
+  // exactement ce qu'on relira demain.
+  const fiche = projetActif()?.seo || ficheDuTunnel();
   boite.append(
-    champCopiable("Titre", titreDuTunnel()),
-    champCopiable("Description", descriptionDuTunnel(), 6),
-    champCopiable("Tags", tagsDuTunnel(), 3),
+    champCopiable("Titre", fiche.titre),
+    champCopiable("Description", fiche.description, 6),
+    champCopiable("Tags", fiche.tags, 3),
   );
 
   const telecharger = document.createElement("button");
@@ -5166,6 +5226,9 @@ async function genererLAmv() {
     }
     projet.plans = montage;
     tunnel.montage = montage;
+    // Le titre, la description et les tags suivent le montage : ils sont faits
+    // de la même matière, et c'est plus tard qu'on en aura besoin.
+    projet.seo = ficheDuTunnel();
     sauver();
     enregistrer(projet);
     dire(`${phraseResolution(journal)}${montage.length} coupes sur ${surs.length} scènes,`
@@ -5587,7 +5650,20 @@ function rendreHistoire() {
 
     gestes.append(etat, renommer, jeter);
     carte.append(vignette, texte, gestes);
-    liste.append(carte);
+
+    /* La fiche sous la carte, quand le montage en a une.
+
+       Elle est dans un enveloppe plutôt que dans la carte : la carte est une
+       grille de trois colonnes, et un pavé de texte y aurait sa place à côté de
+       la vignette au lieu d'être dessous. */
+    if (projet.seo?.titre) {
+      const enveloppe = document.createElement("div");
+      enveloppe.className = "archive-bloc";
+      enveloppe.append(carte, blocFicheSeo(projet.seo));
+      liste.append(enveloppe);
+    } else {
+      liste.append(carte);
+    }
   }
   morceaux.push(liste);
   morceaux.push(note("La flèche qui rentre dans la boîte range un montage : il quitte la barre des projets sans rien perdre, et ses plans, ses coupes et sa musique l'attendent. La flèche qui s'échappe du cadre le remet en place et le rouvre, sans quitter cette liste."));
@@ -6251,7 +6327,8 @@ window.__banc = {
   chercherRushs: (...a) => chercherRushs(...a), phraseResolution: (j) => phraseResolution(j),
   profilDe: (...a) => profilDe(...a), ecartDIntention: (...a) => ecartDIntention(...a),
   tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
-  majVersDeLaTrame: () => majVersDeLaTrame(),
+  majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
+  rendreHistoire: () => rendreHistoire(),
   parolesDuPassage: (a, b) => parolesDuPassage(a, b),
   grilleDeCoupes: (...a) => grilleDeCoupes(...a), attendreCles: (...a) => attendreCles(...a),
   mesurerEnTetes: (...a) => mesurerEnTetes(...a), dureeParEntete: (x) => dureeParEntete(x),
@@ -17859,6 +17936,14 @@ function carteDeRendu(rendu, { octets, adresse, supprimer }) {
   });
 
   carte.append(vignette, titre, gestes);
+
+  /* La fiche du montage dont cette vidéo est sortie. Le grenier garde le nom du
+     projet avec le fichier : c'est ce nom qui fait le lien. Et c'est ici, devant
+     la vidéo prête, qu'on a besoin du titre et des tags. */
+  const source = state.projets.find((projet) => projet.seo?.titre
+    && projet.nom === (rendu.projet || ""));
+  if (source) carte.append(blocFicheSeo(source.seo));
+
   return carte;
 }
 
