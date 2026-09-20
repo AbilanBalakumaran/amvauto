@@ -232,7 +232,8 @@ export async function grenier(request, url, env, ctx) {
     const mot = (nomChamp, combien = 80) =>
       String(url.searchParams.get(nomChamp) || "").slice(0, combien);
     const meta = {
-      projet: mot("projet"),
+      // Cent vingt : un titre de montage porte le nom du morceau en entier.
+      projet: mot("projet", 120),
       duree: mot("duree", 12),
       plans: mot("plans", 6),
       source: mot("source", 20),

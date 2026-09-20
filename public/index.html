@@ -1406,7 +1406,37 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 .rendu-titre { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .rendu-titre strong { font-size: .88rem; }
 .rendu-titre span { font-size: .74rem; color: var(--doux); text-align: left; }
-.rendu-lecteur { width: 100%; }
+.rendu-lecteur {
+  width: 100%; display: block; border-radius: 10px; background: #000;
+  aspect-ratio: 16 / 9;
+}
+
+/* La page d'un rendu : une colonne, un seul écart entre les groupes.
+
+   Chaque morceau portait sa propre marge — un peu de padding ici, rien là — et
+   le résultat se lisait comme un empilement de blocs sans hiérarchie : le titre
+   contre sa ligne d'infos, les remarques aussi lourdes que les boutons. Un écart
+   unique entre les groupes, et les groupes serrés à l'intérieur : ce qui va
+   ensemble se voit sans avoir à lire. */
+.page-rendu { display: flex; flex-direction: column; gap: var(--e5); }
+.rendu-retour { align-self: flex-start; }
+.rendu-entete { display: flex; flex-direction: column; gap: var(--e1); }
+.rendu-nom {
+  margin: 0; font: 700 1.06rem/1.3 system-ui, sans-serif; color: var(--texte);
+  /* Un titre de montage porte le nom du morceau tout entier, emoji compris :
+     il doit pouvoir se couper n'importe où plutôt que déborder. */
+  overflow-wrap: anywhere;
+}
+.rendu-faire { display: flex; flex-direction: column; gap: var(--e3); }
+.rendu-faire:empty, .rendu-faire .tunnel-dit:empty { display: none; }
+.rendu-fin {
+  display: flex; padding-top: var(--e4);
+  border-top: 1px solid var(--trait);
+}
+/* La fiche remonte de six points sous son bouton quand elle suit une carte
+   d'historique. Ici elle est un groupe parmi les autres, et l'écart est celui de
+   la page. */
+.page-rendu .fiche-seo { margin: 0; }
 
 /* La ligne entière est le bouton, pas un carré posé dessus : ce qu'on touche sur
    un téléphone doit faire la largeur du pouce. */
@@ -2253,7 +2283,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 20:12";
+const VERSION_PAGE = "2026-09-20 20:32";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6385,6 +6415,7 @@ window.__banc = {
   majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
   journal: () => journalTunnel, noter: (t, n) => noter(t, n),
   rendreHistoire: () => rendreHistoire(), renduOuvert: () => renduOuvert,
+  peindreRendusEnLigne: () => peindreRendusEnLigne(),
   courses: () => [...courses.values()], rendreLeTunnel: () => rendreLeTunnel(),
   abonnerAuxPoussees: () => abonnerAuxPoussees(), poussees: () => poussees,
   garderRendu: (pr, b, e) => garderRendu(pr, b, e),
@@ -16467,7 +16498,10 @@ async function lancerRenduDistant(projet, bouton, etat, termine = null, options 
         /* Ce que le rendu emportera avec lui dans la liste : sans cela, un
            historique ne dit que « rendu.mp4, 93 Mo », ce qui ne distingue rien
            d'un montage à l'autre. */
-        projet: String(projet.nom || "").slice(0, 80),
+        /* Cent vingt caractères : un titre de montage porte le nom du morceau en
+           entier, et quatre-vingts le coupaient au milieu — la liste, la page et
+           la notification n'en montraient qu'un bout. */
+        projet: String(projet.nom || "").slice(0, 120),
         duree: String(Math.round(total(projet))),
         plans: String(projet.plans.length),
       } }),
@@ -18211,10 +18245,7 @@ function boutonEnregistrer(chercher, nom, titre, libelle = "") {
    est déjà sur l'appareil : c'est la même que la piste montre. On la retrouve
    par le nom, et à défaut la vignette reste noire avec son triangle. */
 function imageDuRendu(rendu) {
-  const nom = (rendu.projet || "").trim().toLowerCase();
-  if (!nom) return "";
-  const projet = (state.projets || []).find((x) => (x.nom || "").trim().toLowerCase() === nom);
-  return projet?.plans?.find((plan) => plan.preview)?.preview || "";
+  return projetDuRendu(rendu)?.plans?.find((plan) => plan.preview)?.preview || "";
 }
 
 /* Une carte de rendu, quelle que soit sa provenance.
@@ -18240,7 +18271,7 @@ function carteDeRendu(rendu, acces) {
   const titre = document.createElement("span");
   titre.className = "rendu-titre";
   const nom = document.createElement("strong");
-  nom.textContent = rendu.projet || rendu.nom;
+  nom.textContent = nomDuRendu(rendu, acces);
   const sous = document.createElement("span");
   sous.textContent = direRendu(rendu, false);
   titre.append(nom, sous);
@@ -18278,14 +18309,35 @@ function fermerRendu() {
    lien sûr. Un rendu descendu du grenier ne porte que son nom de projet, parce
    que c'est tout ce que le dépôt garde — on le retrouve par là, et parfois pas
    du tout : un rendu fait depuis un autre téléphone n'a pas son montage ici. */
+/* Le nom à montrer. Le grenier n'a gardé qu'un début — c'est sa limite de
+   métadonnée —, mais le montage, lui, porte le nom entier : quand on l'a
+   retrouvé, c'est le sien qu'on écrit, et le titre ne s'arrête plus au milieu
+   d'un mot. */
+const nomDuRendu = (rendu, acces) =>
+  projetDuRendu(rendu, acces)?.nom || rendu.projet || rendu.nom;
+
 function projetDuRendu(rendu, acces) {
   if (acces?.projetId) {
     const par = (state.projets || []).find((x) => x.id === acces.projetId);
     if (par) return par;
   }
-  const nom = (rendu.projet || "").trim().toLowerCase();
+  const propre = (x) => String(x || "").trim().toLowerCase();
+  const nom = propre(rendu.projet);
   if (!nom) return null;
-  return (state.projets || []).find((x) => (x.nom || "").trim().toLowerCase() === nom) || null;
+  const projets = state.projets || [];
+  const exact = projets.find((x) => propre(x.nom) === nom);
+  if (exact) return exact;
+  /* Le grenier ne garde que les quatre-vingts premiers caractères du nom : un
+     montage dont le titre porte celui du morceau en entier — et ils sont longs —
+     ne se retrouvait donc jamais, et la page annonçait que le montage n'était pas
+     sur l'appareil alors qu'il y était. On compare ce qui a été gardé.
+
+     Soixante caractères, pas quatre-vingts : une coupe à quatre-vingts peut
+     tomber au milieu d'un emoji et laisser une moitié de caractère, qui ne
+     ressemble alors plus à rien. */
+  const tete = nom.slice(0, 60);
+  if (tete.length < 20) return null;
+  return projets.find((x) => propre(x.nom).startsWith(tete)) || null;
 }
 
 /* La page d'un rendu : la vidéo, et les trois choses qu'on en fait.
@@ -18296,23 +18348,30 @@ function projetDuRendu(rendu, acces) {
    taille d'un ongle et une vidéo large de trois cents points. Ici, la vidéo
    prend la page, et chaque geste porte son nom. */
 function pageDeRendu({ rendu, acces }) {
-  const morceaux = [];
+  /* Une page, pas une pile. Les morceaux étaient posés à la suite avec des
+     marges chacun à sa façon : le titre collait à sa ligne d'infos, les deux
+     remarques pesaient autant que les boutons, et rien ne disait ce qui allait
+     avec quoi. Ici, une seule colonne, un seul écart entre les groupes, et les
+     groupes se serrent à l'intérieur. */
+  const page = document.createElement("div");
+  page.className = "page-rendu";
 
   const retour = document.createElement("button");
   retour.type = "button";
-  retour.className = "archive-action";
+  retour.className = "archive-action rendu-retour";
   retour.textContent = "‹ Tous les rendus";
   retour.addEventListener("click", fermerRendu);
-  morceaux.push(retour);
 
-  const titre = document.createElement("div");
-  titre.className = "lecteur-titre";
-  titre.style.padding = "var(--e3) 0 0";
-  titre.textContent = rendu.projet || rendu.nom;
+  // Le titre et ce qu'il pèse ne font qu'un : ils se serrent l'un contre l'autre.
+  const entete = document.createElement("div");
+  entete.className = "rendu-entete";
+  const titre = document.createElement("h2");
+  titre.className = "rendu-nom";
+  titre.textContent = nomDuRendu(rendu, acces);
   const sous = document.createElement("p");
   sous.className = "tunnel-dit";
   sous.textContent = direRendu(rendu, false);
-  morceaux.push(titre, sous);
+  entete.append(titre, sous);
 
   /* Le lecteur est là dès l'arrivée : on est venu pour le regarder. Il ne
      charge que son en-tête tant qu'on ne le lance pas. */
@@ -18323,8 +18382,6 @@ function pageDeRendu({ rendu, acces }) {
   lecteur.preload = "metadata";
   const image = imageDuRendu(rendu);
   if (image) lecteur.poster = image;
-  lecteur.style.cssText = "width:100%;border-radius:10px;display:block;background:#000";
-  morceaux.push(lecteur);
   /* Refermer proprement : une balise retirée du document tient sa session de
      décodage tant qu'elle garde sa source, et WebKit n'en accorde qu'une
      poignée. */
@@ -18346,31 +18403,48 @@ function pageDeRendu({ rendu, acces }) {
   suivi.className = "tunnel-dit";
   suivi.style.whiteSpace = "pre-line";
 
+  /* Ce qu'on fait de ce rendu : les gestes ensemble, et sous eux ce qu'ils
+     disent d'eux-mêmes. */
+  const faire = document.createElement("div");
+  faire.className = "rendu-faire";
   const gestes = document.createElement("div");
   gestes.className = "tunnel-sorties";
-  gestes.append(boutonEnregistrer(acces.octets, rendu.nom, rendu.projet || rendu.nom,
+  gestes.append(boutonEnregistrer(acces.octets, rendu.nom, nomDuRendu(rendu, acces),
     "Télécharger en MP4"));
 
   /* Reprendre le montage demande le montage, pas la vidéo : sans lui, le bouton
-     mentirait. On dit alors pourquoi il n'est pas là. */
+     mentirait. On dit alors pourquoi il n'est pas là — en une remarque, pas en
+     un panneau : ce n'est pas l'objet de la page. */
   const projet = projetDuRendu(rendu, acces);
   if (projet?.plans?.length) gestes.append(boutonProjetDaVinci(projet, suivi));
-  morceaux.push(gestes);
+  faire.append(gestes);
   if (!projet?.plans?.length) {
-    morceaux.push(note("L'export DaVinci demande le montage dont cette vidéo est sortie —"
+    const sans = document.createElement("p");
+    sans.className = "tunnel-dit";
+    sans.textContent = "L'export DaVinci demande le montage dont cette vidéo est sortie —"
       + " ses plans, leurs points d'entrée et sa musique. Il n'est pas sur cet appareil :"
-      + " ce rendu a été fait ailleurs, ou son montage a été supprimé depuis."));
+      + " ce rendu a été fait ailleurs, ou son montage a été supprimé depuis.";
+    faire.append(sans);
   }
-  morceaux.push(suivi);
+  faire.append(suivi);
+
+  page.append(retour, entete, lecteur, faire);
 
   /* La fiche dépliée : sur la page d'un rendu, c'est ce qu'on vient chercher
      pour publier. Dans une liste, elle était pliée pour ne pas la remplir. */
-  if (projet?.seo?.titre) morceaux.push(blocFicheSeo(projet.seo, true));
+  if (projet?.seo?.titre) page.append(blocFicheSeo(projet.seo, true));
   else {
-    morceaux.push(note("Aucune fiche à publier n'a été gardée pour ce rendu."
-      + " Les montages faits depuis l'ajout de la fiche en ont une."));
+    const sans = document.createElement("p");
+    sans.className = "tunnel-dit";
+    sans.textContent = "Aucune fiche à publier n'a été gardée pour ce rendu."
+      + " Les montages faits depuis l'ajout de la fiche en ont une.";
+    page.append(sans);
   }
 
+  // Le geste qui détruit, à l'écart et sous un trait : on ne l'atteint pas par
+  // mégarde en remontant la page.
+  const bas = document.createElement("div");
+  bas.className = "rendu-fin";
   const jeter = document.createElement("button");
   jeter.type = "button";
   jeter.className = "archive-action danger";
@@ -18378,12 +18452,9 @@ function pageDeRendu({ rendu, acces }) {
   jeter.addEventListener("click", async () => {
     if (await acces.supprimer(jeter)) fermerRendu();
   });
-  const bas = document.createElement("div");
-  bas.className = "tunnel-sorties";
-  bas.style.padding = "var(--e3) 0 0";
   bas.append(jeter);
-  morceaux.push(bas);
-  return morceaux;
+  page.append(bas);
+  return [page];
 }
 
 /* Ce qu'on sait faire du fichier d'un rendu du grenier. Séparé de la carte : on
