@@ -2253,7 +2253,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 19:41";
+const VERSION_PAGE = "2026-09-20 20:12";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6385,6 +6385,8 @@ window.__banc = {
   majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
   journal: () => journalTunnel, noter: (t, n) => noter(t, n),
   rendreHistoire: () => rendreHistoire(), renduOuvert: () => renduOuvert,
+  courses: () => [...courses.values()], rendreLeTunnel: () => rendreLeTunnel(),
+  abonnerAuxPoussees: () => abonnerAuxPoussees(), poussees: () => poussees,
   garderRendu: (pr, b, e) => garderRendu(pr, b, e),
   parolesDuPassage: (a, b) => parolesDuPassage(a, b),
   grilleDeCoupes: (...a) => grilleDeCoupes(...a), attendreCles: (...a) => attendreCles(...a),
@@ -14594,6 +14596,11 @@ const sentinelle = {
 };
 sentinelle.autorisee = permissionNotifs() === "granted";
 
+/* Où en est l'abonnement aux poussées. Déclaré ici, avant le panneau qui le
+   lit : les réglages sont dessinés pendant le chargement, bien avant que
+   l'abonnement soit tenté. */
+let poussees = { etat: "", endpoint: "", code: "" };
+
 function majReglages() {
   const bouton = $("btn-notifs");
   if (!bouton) return;
@@ -14618,13 +14625,15 @@ function majReglages() {
     else if (permission === "denied") etat.textContent = "Refusées par l'appareil\u00a0: rien ne peut s'afficher tant que ce n'est pas rouvert dans ses réglages.";
     else if (!reglages.notifications) etat.textContent = "Coupées\u00a0: l'application n'affiche plus rien, même pendant un chargement.";
     else if (permission === "default") etat.textContent = "L'autorisation n'a pas encore été demandée — elle le sera au premier chargement.";
-    else etat.textContent = "L'appareil autorise, et l'application s'en sert.";
+    else if (poussees.etat === "abonné") {
+      etat.textContent = "L'appareil autorise, et tu seras prévenu même application fermée.";
+    } else etat.textContent = `L'appareil autorise${poussees.etat ? ` — mais pas application fermée : ${poussees.etat}` : ""}.`;
   }
 
   const note = $("note-notifs");
   if (note && Date.now() - messageEssai > 25000) {
-    note.textContent = "Deux notifications existent\u00a0: l'avancement du chargement — silencieuse, remplacée à chaque plan arrivé plutôt qu'empilée — et «\u00a0ton AMV est prêt\u00a0». "
-      + "Sur iPhone, aucune bannière ne s'affiche pour l'application qu'on regarde\u00a0: celle du chargement est reposée au moment où tu quittes l'application. "
+    note.textContent = "«\u00a0Ton AMV est prêt\u00a0» arrive de deux endroits\u00a0: de l'application quand elle tourne encore, et du serveur quand elle est fermée — c'est celle-là qui compte, et «\u00a0Tester\u00a0» la met à l'épreuve pour de vrai. "
+      + "Sur iPhone, elle demande que l'application soit sur l'écran d'accueil, et aucune bannière ne s'affiche pour l'application qu'on regarde. "
       + "Ce réglage ne retire pas l'autorisation donnée à l'appareil, il fait taire l'application\u00a0: pour la retirer vraiment, c'est Réglages puis Notifications sur iPhone, "
       + "les réglages du site sur Android.";
   }
@@ -15129,11 +15138,38 @@ async function testerNotif() {
         ? "Notification d'essai acceptée par l'appareil. Si tu ne l'as pas vue passer, regarde le centre de notifications — elle y est."
         : "L'appareil a pris la demande sans rien afficher. Sur iPhone, cela arrive quand l'application n'a pas été ajoutée à l'écran d'accueil.";
     }
+    /* Et l'autre moitié, celle qui compte : la bannière que le SERVEUR envoie.
+       C'est elle qui arrive application fermée, et rien dans la page ne peut en
+       tenir lieu — il faut la demander pour de vrai. */
+    if (note) note.textContent += ` ${await essayerLaPoussee()}`;
   } catch (erreur) {
     if (note) note.textContent = `L'appareil a refusé la notification d'essai (${erreur?.message || "raison inconnue"}).`;
   }
   messageEssai = Date.now();
   setTimeout(majReglages, 26000);
+}
+
+/* Demander au serveur de pousser une bannière d'essai, et dire ce qu'il en est
+   en une phrase — c'est un diagnostic qu'on lit sur un téléphone, debout. */
+async function essayerLaPoussee() {
+  if (!(await abonnerAuxPoussees())) {
+    return `Prévenu application fermée : non (${poussees.etat || "impossible ici"}).`;
+  }
+  try {
+    const reponse = await fetch("/api/pousser", {
+      method: "PUT", headers: { "x-coffre": coffre.code },
+    });
+    const dit = await reponse.json().catch(() => ({}));
+    if (!reponse.ok) return `Le serveur n'a pas pu pousser (${dit.error || reponse.status}).`;
+    if (dit.sansCles) return "Le serveur n'a pas de clé de poussée : rien ne peut partir de là-bas.";
+    if (!dit.envoyes) {
+      return `Aucune bannière n'est partie du serveur (${dit.abonnes || 0} appareil(s) inscrit(s)).`;
+    }
+    return `Le serveur en a poussé une vers ${dit.envoyes} appareil(s) :`
+      + " celle-là arrive même application fermée.";
+  } catch {
+    return "Le serveur est injoignable : l'essai de poussée n'a pas pu être fait.";
+  }
 }
 
 $("btn-notifs")?.addEventListener("click", () => { basculerNotifs().catch(() => {}); });
@@ -16265,6 +16301,95 @@ async function deposerPiste(projet) {
   return dit.url || null;
 }
 
+/* S'abonner aux poussées du serveur : c'est ce qui prévient application fermée.
+
+   Trois conditions, et aucune n'est acquise. La permission — sur iPhone, elle
+   n'existe que si l'application a été ajoutée à l'écran d'accueil. Un service
+   worker, donc une page servie en https. Et une clé publique posée sur le Worker :
+   sans elle, il n'y a personne pour signer l'envoi, et l'on ne s'abonne pas pour
+   rien.
+
+   L'abonnement est refait à chaque lancement : le navigateur peut le révoquer de
+   son côté — il le fait quand l'application reste des semaines sans servir — et
+   c'est silencieux. Le serveur reconnaît l'adresse et ne la garde qu'une fois. */
+async function abonnerAuxPoussees() {
+  /* Déjà fait pour ce code : « noterCoffre » passe par ici à chaque dépôt, et
+     deux requêtes par sauvegarde pour rien, c'est une sauvegarde plus lente. */
+  if (poussees.etat === "abonné" && poussees.code === coffre.code) return true;
+  poussees = { etat: "", endpoint: "", code: "" };
+  if (!reglages.notifications) { poussees.etat = "réglage coupé"; return false; }
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    poussees.etat = "ce navigateur ne sait pas être prévenu application fermée";
+    return false;
+  }
+  if (permissionNotifs() !== "granted") { poussees.etat = "permission pas encore donnée"; return false; }
+  if (!coffre.code) { poussees.etat = "pas de code de sauvegarde"; return false; }
+  try {
+    const cle = await fetch("/api/pousser", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null)).then((x) => x?.cle || "");
+    if (!cle) { poussees.etat = "le serveur n'a pas de clé de poussée"; return false; }
+    const enregistrement = await navigator.serviceWorker.ready;
+    /* Une souscription déjà là peut porter une autre clé — un changement de
+       serveur, ou une clé régénérée. Elle serait alors chiffrée pour personne :
+       on la refait. */
+    const dejaLa = await enregistrement.pushManager.getSubscription();
+    const memeCle = dejaLa && enB64uDepuis(dejaLa.options?.applicationServerKey) === cle;
+    if (dejaLa && !memeCle) await dejaLa.unsubscribe().catch(() => {});
+    const abonnement = memeCle ? dejaLa : await enregistrement.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: octetsDeB64u(cle),
+    });
+    const dit = abonnement.toJSON();
+    const reponse = await fetch("/api/pousser", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-coffre": coffre.code },
+      body: JSON.stringify({ endpoint: dit.endpoint, keys: dit.keys }),
+    });
+    if (!reponse.ok) { poussees.etat = `le serveur a refusé l'abonnement (${reponse.status})`; return false; }
+    poussees = { etat: "abonné", endpoint: dit.endpoint, code: coffre.code };
+    return true;
+  } catch (erreur) {
+    poussees.etat = `abonnement impossible (${erreur?.name || "erreur"})`;
+    return false;
+  }
+}
+
+/* Les deux conversions que le protocole impose : la clé publique voyage en
+   base64url, et « subscribe » veut des octets. */
+const octetsDeB64u = (texte) => {
+  const propre = String(texte).replace(/-/g, "+").replace(/_/g, "/");
+  const brut = atob(propre + "=".repeat((4 - (propre.length % 4)) % 4));
+  const octets = new Uint8Array(brut.length);
+  for (let i = 0; i < brut.length; i += 1) octets[i] = brut.charCodeAt(i);
+  return octets;
+};
+
+const enB64uDepuis = (tampon) => {
+  if (!tampon) return "";
+  let texte = "";
+  for (const octet of new Uint8Array(tampon)) texte += String.fromCharCode(octet);
+  return btoa(texte).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+
+/* La permission de prévenir, demandée une seule fois et jamais d'office.
+
+   « default » est le seul cas où l'on demande : « denied » ne se retourne pas
+   depuis une page — il faut passer par les réglages du système — et « granted »
+   n'a rien à demander. */
+async function demanderNotifications() {
+  if (!reglages.notifications) return false;
+  try {
+    if ("Notification" in window && Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  } catch { /* refusée : la pastille de l'icône restera le seul signal */ }
+  if (permissionNotifs() !== "granted") return false;
+  /* La permission vient d'être donnée : c'est le moment de s'abonner, pas au
+     prochain lancement. Le rendu qui part maintenant doit pouvoir prévenir. */
+  await abonnerAuxPoussees();
+  return true;
+}
+
 /* Déclencher le rendu, puis suivre la course sans la bloquer.
 
    On ne télécharge pas l'artefact ici : GitHub ne le sert qu'à une requête
@@ -16286,6 +16411,15 @@ async function deposerPiste(projet) {
 async function lancerRenduDistant(projet, bouton, etat, termine = null, options = {}) {
   const flux = options.flux || "rendu.yml";
   const quoi = options.quoi || "rendu";
+  /* Le bon moment pour demander la permission, et le seul : c'est un appui, et
+     un appui dont on sait exactement ce qu'il attend — trois minutes d'attente
+     qu'on n'a pas envie de passer à regarder l'écran. Un navigateur refuse une
+     demande qui ne vient pas d'un geste, et l'utilisateur refuse une demande
+     qu'il n'a pas provoquée.
+
+     Sans l'attendre : une demande de permission qu'on écarte d'un geste latéral
+     ne se résout jamais — l'attendre aurait retenu le rendu pour toujours. */
+  demanderNotifications().catch(() => {});
   if (!coffre.code) {
     etat.textContent = "Il faut un code de sauvegarde : c'est lui qui sert de laissez-passer au rendu."
       + "\nLe panneau Setting en crée un.";
@@ -16361,77 +16495,223 @@ async function lancerRenduDistant(projet, bouton, etat, termine = null, options 
   }
 }
 
-/* Suivre la course jusqu'au bout, sans empêcher de faire autre chose. */
+/* Suivre une course jusqu'au bout, même quand plus personne ne regarde.
+
+   Le suivi vivait dans la boucle qui écrivait à l'écran : « if
+   (!document.body.contains(etat)) » l'arrêtait dès que le nœud quittait la page,
+   et il quittait la page à chaque redessin. Changer d'onglet pendant les trois
+   minutes du rendu suffisait donc à ne jamais apprendre qu'il était prêt — il
+   fallait revenir et deviner.
+
+   La course est maintenant suivie pour elle-même, dans un registre écrit sur
+   l'appareil. L'écran s'y branche s'il est là ; s'il n'est pas là, le suivi
+   continue, et la fin se dit par une notification et par la pastille de l'icône.
+   Le registre survit à un rechargement : rouvrir l'application reprend l'attente
+   où elle en était, et une course terminée pendant l'absence est annoncée tout
+   de suite.
+
+   Ce qui ne peut PAS venir d'ici : une notification quand l'application est
+   fermée pour de bon. Un onglet fermé n'exécute plus rien — c'est ce que la
+   notification poussée du serveur va chercher, et elle vit ailleurs. */
+const CLE_COURSES = "amvauto-courses";
+/* Trois quarts d'heure : une course de rendu en prend deux à quatre minutes, et
+   la file d'attente de GitHub en a déjà pris vingt un mauvais jour. Au-delà,
+   l'attente ne sert plus à rien et le registre ne doit pas la garder pour
+   toujours. */
+const OUBLI_COURSE = 45 * 60 * 1000;
+const RYTHME_COURSE = 5000;
+const courses = new Map();
+let battement = null;
+
+const coursesEnregistrees = () => {
+  try { return JSON.parse(localStorage.getItem(CLE_COURSES) || "[]"); } catch { return []; }
+};
+
+/* On n'écrit que ce qui a un sens demain : un nœud de page et une fonction de
+   rappel ne se rechargent pas. */
+function garderLesCourses() {
+  try {
+    localStorage.setItem(CLE_COURSES, JSON.stringify([...courses.values()]
+      .map(({ id, page, depuis, quoi }) => ({ id, page, depuis, quoi }))));
+  } catch { /* stockage plein : le suivi vit alors le temps de la page */ }
+}
+
+function battreLesCourses() {
+  if (!courses.size) {
+    clearInterval(battement);
+    battement = null;
+    return;
+  }
+  if (battement) return;
+  battement = setInterval(() => {
+    for (const suivi of [...courses.values()]) {
+      if (!suivi.occupe) tourDeCourse(suivi).catch(() => { suivi.occupe = false; });
+    }
+  }, RYTHME_COURSE);
+}
+
+/* Rendre la main au bouton, et cesser de suivre : deux choses différentes.
+
+   La course finie, le bouton doit redevenir pressable tout de suite — c'est la
+   fin des minutes d'Actions, et un second appui ne lancerait plus un doublon. La
+   réception du fichier, elle, peut prendre une demi-minute de plus ; la
+   confondre avec la fin gardait le bouton éteint tout ce temps. */
+function rendreLaMain(suivi) {
+  if (suivi.rendu) return;
+  suivi.rendu = true;
+  suivi.termine?.();
+}
+
+function finirCourse(suivi) {
+  courses.delete(suivi.id);
+  garderLesCourses();
+  battreLesCourses();
+  rendreLaMain(suivi);
+}
+
+async function tourDeCourse(suivi) {
+  suivi.occupe = true;
+  try {
+    if (Date.now() - suivi.depuis > OUBLI_COURSE) {
+      suivi.dire?.(`${suivi.quoi} : plus de nouvelles depuis trois quarts d'heure.`
+        + " La page GitHub dit où il en est.");
+      finirCourse(suivi);
+      return;
+    }
+    const reponse = await fetch(`/api/rendu?course=${encodeURIComponent(suivi.id)}`,
+      { headers: { "x-coffre": coffre.code || "" } }).catch(() => null);
+    if (!reponse?.ok) return;
+    const dit = await reponse.json().catch(() => null);
+    if (!dit) return;
+    if (dit.etat !== "completed") {
+      suivi.dire?.(`${suivi.quoi} en cours sur GitHub —`
+        + ` ${dit.etat === "queued" ? "en file" : "en train de travailler"}…`);
+      return;
+    }
+    // La course est finie : le bouton est rendu, quoi qu'il arrive au fichier.
+    rendreLaMain(suivi);
+    if (dit.verdict !== "success") {
+      suivi.dire?.(`${suivi.quoi} en échec (${dit.verdict}). La page GitHub dit à quelle étape.`);
+      await prevenirCourse(null, suivi);
+      finirCourse(suivi);
+      return;
+    }
+    /* Le fichier est déposé par la dernière étape du workflow, juste après la fin
+       de la course : il peut manquer d'une poignée de secondes. On le cherche
+       donc quelques tours avant de renvoyer vers GitHub. */
+    const rendus = await listerGrenier();
+    const neuf = rendus.find((r) => r.quand >= suivi.depuis - 60000);
+    if (!neuf) {
+      suivi.attentes = (suivi.attentes || 0) + 1;
+      if (suivi.attentes <= 8) {
+        suivi.dire?.(`${suivi.quoi} terminé. Réception du fichier…`);
+        return;
+      }
+      suivi.dire?.(`${suivi.quoi} terminé, mais il n'est pas arrivé dans le grenier.`
+        + " Le secret AMVAUTO_CODE manque peut-être au dépôt — le fichier reste dans"
+        + " les artefacts de la course.");
+      finirCourse(suivi);
+      return;
+    }
+    suivi.montrer?.(neuf);
+    await prevenirCourse(neuf, suivi);
+    /* La liste de l'Historique ne se rafraîchit pas d'elle-même : si elle est à
+       l'écran, le rendu doit y paraître sans qu'on ait à revenir. */
+    if (!$("vue-histoire").hidden) rendreHistoire();
+    finirCourse(suivi);
+  } finally {
+    suivi.occupe = false;
+  }
+}
+
+/* Dire que c'est prêt à quelqu'un qui n'est pas devant l'écran.
+
+   La pastille d'abord : elle ne demande aucune permission et elle survit à tout
+   — c'est le seul signal qui marche même quand les notifications sont refusées.
+   Puis la bannière, si elle est permise.
+
+   Sur iPhone, une bannière n'est jamais montrée pour l'application qui est au
+   premier plan : c'est normal, et ce n'est pas une panne. Quand l'application est
+   devant, elle a déjà le rendu sous les yeux. */
+async function prevenirCourse(rendu, suivi) {
+  marquerPastille(1);
+  if (!reglages.notifications) return false;
+  if (!("serviceWorker" in navigator) || permissionNotifs() !== "granted") return false;
+  const enregistrement = await navigator.serviceWorker.ready.catch(() => null);
+  if (!enregistrement) return false;
+  const projet = rendu ? `« ${rendu.projet || rendu.nom} »` : "Le montage";
+  const poids = rendu ? `${(rendu.taille / 1e6).toFixed(rendu.taille < 1e7 ? 1 : 0)} Mo` : "";
+  const zip = /\.zip$/i.test(rendu?.nom || "");
+  await enregistrement.showNotification(
+    !rendu ? `${suivi.quoi} en échec`
+      : zip ? "Ton projet DaVinci est prêt" : "Ton AMV est prêt",
+    {
+      body: rendu
+        ? `${projet} · ${poids} — ouvre AMVAuto pour le télécharger.`
+        : `${projet} n'a pas pu être rendu. L'application dit à quelle étape.`,
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      tag: "amvauto-rendu",
+      data: rendu ? { rendu: rendu.nom } : {},
+    }).catch(() => { /* refusée : la pastille aura suffi */ });
+  return true;
+}
+
+/* Suivre la course, et s'y brancher à l'écran quand l'écran est là. */
 function montrerCourse(course, etat, depuis = Date.now(), termine = null, quoi = "Rendu") {
   const lien = course.html_url;
-  const dire = (quoi) => { etat.innerHTML = ""; etat.append(quoi); };
   const ligne = (texte) => {
     const bloc = document.createElement("div");
     bloc.textContent = texte;
+    const tout = document.createElement("div");
+    tout.append(bloc);
+    if (!lien) return tout;
     const a = document.createElement("a");
     a.href = lien;
     a.target = "_blank";
     a.rel = "noopener";
     a.textContent = "Ouvrir la course sur GitHub";
     a.style.cssText = "display:inline-block;margin-top:6px;color:var(--vert);text-decoration:underline";
-    const tout = document.createElement("div");
-    tout.append(bloc, a);
+    tout.append(a);
     return tout;
   };
-  dire(ligne(`${quoi} en cours sur GitHub — compte deux à quatre minutes.`));
-
-  let tours = 0;
-  // Fini, pour n'importe quelle raison : celui qui attend doit l'apprendre une
-  // fois et une seule.
-  let rendu = false;
-  const fini = () => {
-    clearInterval(suivre);
-    if (rendu) return;
-    rendu = true;
-    termine?.();
+  /* L'écran est facultatif : s'il n'est plus dans la page, on n'écrit nulle part
+     et le suivi continue. */
+  const dire = (texte) => {
+    if (!etat || !document.body.contains(etat)) return;
+    etat.innerHTML = "";
+    etat.append(ligne(texte));
   };
-  const suivre = setInterval(async () => {
-    tours += 1;
-    if (!document.body.contains(etat) || tours > 80) { fini(); return; }
-    /* Le suivi passe aussi par le Worker : c'est lui qui a le jeton. */
-    const reponse = await fetch(`/api/rendu?course=${encodeURIComponent(course.id)}`,
-      { headers: { "x-coffre": coffre.code || "" } }).catch(() => null);
-    if (!reponse?.ok) return;
-    const dit = await reponse.json().catch(() => null);
-    if (!dit) return;
-    if (dit.etat !== "completed") {
-      dire(ligne(`${quoi} en cours sur GitHub — ${dit.etat === "queued" ? "en file" : "en train de travailler"}…`));
-      return;
-    }
-    fini();
-    if (dit.verdict !== "success") {
-      dire(ligne(`${quoi} en échec (${dit.verdict}). La page GitHub dit à quelle étape.`));
-      return;
-    }
-    /* Le fichier est déposé par la dernière étape du workflow, juste après la
-       fin de la course : il peut manquer d'une poignée de secondes. On le
-       cherche donc quelques fois avant de renvoyer vers GitHub. */
-    dire(ligne(`${quoi} terminé. Réception du fichier…`));
-    for (let essai = 0; essai < 10; essai += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      const rendus = await listerGrenier();
-      const neuf = rendus.find((r) => r.quand >= depuis - 60000);
-      if (neuf) {
-        etat.innerHTML = "";
-        const dire_ = document.createElement("div");
-        dire_.textContent = `${quoi} terminé — il est aussi dans l'onglet Historique.`;
-        dire_.style.marginBottom = "8px";
-        etat.append(dire_, carteRendu(neuf, () => { etat.textContent = "Rendu supprimé."; }));
-        return;
-      }
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((suite) => setTimeout(suite, 4000));
-    }
-    dire(ligne(`${quoi} terminé, mais il n'est pas arrivé dans le grenier.`
-      + " Le secret AMVAUTO_CODE manque peut-être au dépôt — le fichier reste dans les artefacts de la course."));
-  }, 5000);
+  const montrer = (rendu) => {
+    if (!etat || !document.body.contains(etat)) return;
+    etat.innerHTML = "";
+    const dit = document.createElement("div");
+    dit.textContent = `${quoi} terminé — il est aussi dans l'onglet Historique.`;
+    dit.style.marginBottom = "8px";
+    etat.append(dit, carteRendu(rendu, () => { etat.textContent = "Rendu supprimé."; }));
+  };
+
+  const suivi = { id: String(course.id), page: lien, depuis, quoi, dire, montrer, termine };
+  courses.set(suivi.id, suivi);
+  garderLesCourses();
+  battreLesCourses();
+  dire(`${quoi} en cours sur GitHub — compte deux à quatre minutes.`);
 }
 
+/* Reprendre les courses d'avant : une application rouverte doit finir ce qu'elle
+   avait commencé, et annoncer ce qui a abouti pendant qu'elle était fermée. */
+function reprendreLesCourses() {
+  for (const brut of coursesEnregistrees()) {
+    if (!brut?.id || courses.has(String(brut.id))) continue;
+    if (Date.now() - (brut.depuis || 0) > OUBLI_COURSE) continue;
+    courses.set(String(brut.id), {
+      id: String(brut.id), page: brut.page || "", depuis: brut.depuis || Date.now(),
+      quoi: brut.quoi || "Rendu",
+    });
+  }
+  garderLesCourses();
+  battreLesCourses();
+}
 
 /* Ce qui empêche de rendre, en une phrase — ou rien du tout.
 
@@ -18106,8 +18386,10 @@ function pageDeRendu({ rendu, acces }) {
   return morceaux;
 }
 
-function carteRendu(rendu, apres) {
-  return carteDeRendu(rendu, {
+/* Ce qu'on sait faire du fichier d'un rendu du grenier. Séparé de la carte : on
+   y arrive aussi par une notification, sans jamais avoir vu la liste. */
+function accesDuGrenier(rendu, apres) {
+  return {
     octets: () => fetch(adresseRendu(rendu), { cache: "no-store" })
       .then((r) => (r.ok ? r.blob() : null)),
     // Lu par tranches : la lecture démarre sans avoir reçu les quatre-vingt-
@@ -18124,7 +18406,22 @@ function carteRendu(rendu, apres) {
       apres?.();
       return true;
     },
-  });
+  };
+}
+
+function carteRendu(rendu, apres) {
+  return carteDeRendu(rendu, accesDuGrenier(rendu, apres));
+}
+
+/* Ouvrir un rendu dont on n'a que le nom : c'est ce que donne une notification
+   tapée. Si le fichier n'est plus là — effacé depuis, ou déposé sous un autre
+   code —, on laisse l'Historique tel qu'il est plutôt que d'ouvrir une page vide. */
+async function ouvrirRenduParNom(nom) {
+  if (!nom) return false;
+  const rendu = (await listerGrenier()).find((x) => x.nom === nom);
+  if (!rendu) return false;
+  ouvrirRendu(rendu, accesDuGrenier(rendu, () => peindreRendusEnLigne()));
+  return true;
 }
 
 function lienGrenier(rendu) {
@@ -22401,6 +22698,7 @@ function noterCoffre() {
   try {
     localStorage.setItem(CLE_COFFRE, JSON.stringify({ code: coffre.code, actif: coffre.actif, dernier: coffre.dernier }));
   } catch { /* le coffre est un confort : son réglage peut se perdre */ }
+  abonnerAuxPoussees();
 }
 
 /* Le dépôt est différé : on monte par petites touches, et chaque geste appelle
@@ -22984,6 +23282,31 @@ function telecharger(nom, contenu) {
 charger();
 chargerCoffre();
 rendreCreer();
+
+/* Les rendus qui étaient en route quand l'application s'est fermée. Après le
+   coffre : le suivi a besoin du code pour interroger la course. */
+reprendreLesCourses();
+
+/* L'abonnement aux poussées, s'il a déjà été permis une fois. Le navigateur peut
+   l'avoir révoqué de son côté pendant l'absence, sans rien dire : on le repose. */
+abonnerAuxPoussees().catch(() => {});
+
+/* Arriver par la notification. Deux chemins, parce qu'il y a deux cas : le
+   service worker a ouvert une fenêtre neuve — le nom du rendu est alors dans
+   l'adresse — ou il a ramené celle qui existait déjà, et il le dit par message. */
+{
+  const demande = new URLSearchParams(location.search).get("rendu");
+  if (demande) {
+    ouvrirRenduParNom(demande).catch(() => {});
+    /* L'adresse est nettoyée tout de suite : rechargée plus tard, elle rouvrirait
+       un rendu qu'on n'a pas demandé. */
+    history.replaceState(null, "", location.pathname);
+  }
+  navigator.serviceWorker?.addEventListener("message", (evt) => {
+    const nom = evt.data?.rendu;
+    if (nom) ouvrirRenduParNom(nom).catch(() => {});
+  });
+}
 
 /* Au lancement, le coffre est consulté : si l'autre appareil a monté depuis, sa
    version arrive ici. La fusion se fait projet par projet, la plus récente

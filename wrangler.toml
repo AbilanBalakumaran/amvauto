@@ -33,3 +33,12 @@ bucket_name = "amvauto-rendus"
 # — une chanson en coûte une quarantaine.
 [ai]
 binding = "AI"
+
+# La notification poussée : ce qui prévient que le rendu est prêt quand
+# l'application est fermée. La clé PUBLIQUE est ici — elle descend dans le
+# navigateur à chaque abonnement, c'est sa raison d'être, et elle ne permet que
+# de vérifier une signature. Sa moitié privée est un secret du Worker,
+# « VAPID_PRIVEE », posée par « wrangler secret put » et jamais écrite ici.
+[vars]
+VAPID_PUBLIQUE = "BKTXzete1LImCyMUzydUy4vHK7bePzayfb_zHu2PlxcSll8zYTEyjHLLmMXj3C3cCYgE41XqXzERfenHUXNEpkY"
+VAPID_CONTACT = "mailto:amvauto@mangateamz2.workers.dev"

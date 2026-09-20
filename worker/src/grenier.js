@@ -19,6 +19,7 @@
    quoi que ce soit. */
 
 import { codeValide } from "./coffre.js";
+import { annoncerDepot } from "./pousser.js";
 
 const POIDS_MAX = 100_000_000;   // la limite d'un corps de requête chez Cloudflare
 
@@ -139,7 +140,7 @@ function aJeter(rendus) {
   return partants;
 }
 
-export async function grenier(request, url, env) {
+export async function grenier(request, url, env, ctx) {
   if (!env.GRENIER) return texte("grenier indisponible", 503);
 
   const code = nettoyer(url.searchParams.get("code"));
@@ -271,7 +272,16 @@ export async function grenier(request, url, env) {
       // eslint-disable-next-line no-await-in-loop
       await env.GRENIER.delete(`${code}/${vieux.nom}`).catch(() => null);
     }
-    return donnees({ rendus: await inventaire(env, code) });
+    const inventaireFinal = await inventaire(env, code);
+
+    /* Un dépôt, c'est un rendu prêt : c'est le seul moment où l'on a quelque
+       chose à annoncer, et le seul endroit qui le sait à coup sûr. Le runner qui
+       dépose n'attend pas la poussée — elle part après la réponse. */
+    const prevenir = annoncerDepot(env, code, inventaireFinal.find((x) => x.nom === nom))
+      .catch(() => null);
+    if (ctx?.waitUntil) ctx.waitUntil(prevenir); else await prevenir;
+
+    return donnees({ rendus: inventaireFinal });
   }
 
   if (request.method === "DELETE") {

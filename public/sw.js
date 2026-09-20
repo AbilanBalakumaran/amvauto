@@ -6,7 +6,7 @@
 // ouverte. Sans cette estampille automatique, il faudrait penser à incrémenter
 // un numéro à chaque déploiement — et l'oublier une fois suffit à figer
 // l'application chez l'utilisateur.
-const VERSION = "2026-09-20 19:41";
+const VERSION = "2026-09-20 20:12";
 const CACHE = `amvauto-${VERSION}`;
 
 const COQUILLE = [
@@ -57,6 +57,33 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+/* La notification poussée par le serveur : la seule qui arrive quand
+   l'application est fermée.
+
+   Tout le reste des bannières est posé par la page, qui suit la course du rendu
+   et prévient à la fin — ce qui suppose qu'elle tourne encore. Un onglet fermé
+   n'exécute rien, et c'est précisément le moment où l'on veut être prévenu.
+
+   Le message arrive chiffré pour cet appareil et déchiffré par le navigateur : il
+   dit déjà quoi afficher, et rien n'a besoin d'être demandé au serveur. Il faut
+   TOUJOURS montrer quelque chose — une poussée qui n'affiche rien finit par faire
+   retirer la permission au site —, d'où la bannière générique quand le message
+   manque. */
+self.addEventListener("push", (event) => {
+  let dit = null;
+  try { dit = event.data?.json() || null; } catch { dit = null; }
+  event.waitUntil((async () => {
+    await self.registration.showNotification(dit?.titre || "Ton AMV est prêt", {
+      body: dit?.corps || "Ouvre AMVAuto pour le télécharger.",
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      tag: "amvauto-rendu",
+      data: dit?.rendu ? { rendu: dit.rendu } : {},
+    });
+    try { await self.navigator.setAppBadge?.(1); } catch { /* pas de pastille ici */ }
+  })());
+});
+
 /* Une notification tapée ramène dans l'application plutôt que d'ouvrir un
    second onglet. Si une fenêtre est déjà là, on la remet devant. */
 self.addEventListener("notificationclick", (event) => {
@@ -84,12 +111,22 @@ self.addEventListener("notificationclick", (event) => {
     return;
   }
   event.notification.close();
+  /* Le rendu que la bannière annonçait : on ne ramène pas seulement dans
+     l'application, on ramène sur sa page — c'est là qu'est le bouton qui le
+     télécharge. Une fenêtre déjà ouverte l'apprend par message ; une fenêtre
+     neuve le lit dans son adresse. */
+  const nom = event.notification.data?.rendu;
   event.waitUntil((async () => {
     const fenetres = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const fenetre of fenetres) {
-      if ("focus" in fenetre) return fenetre.focus();
+      if ("focus" in fenetre) {
+        if (nom) fenetre.postMessage({ rendu: nom });
+        return fenetre.focus();
+      }
     }
-    if (self.clients.openWindow) return self.clients.openWindow("./");
+    if (self.clients.openWindow) {
+      return self.clients.openWindow(nom ? `./?rendu=${encodeURIComponent(nom)}` : "./");
+    }
     return undefined;
   })());
 });
