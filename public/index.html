@@ -883,6 +883,38 @@ main {
   font: 400 0.84rem/1.45 system-ui, sans-serif;
 }
 
+/* --- la veille : ce qui monte ------------------------------------------ */
+.veille { padding: var(--e4); display: flex; flex-direction: column; gap: var(--e3); }
+.veille-tete { display: flex; flex-direction: column; gap: 4px; }
+.veille-liste { display: flex; flex-direction: column; gap: 8px; }
+.veille-carte {
+  display: grid; grid-template-columns: 54px 1fr; grid-template-areas: "jauge texte" "geste geste";
+  align-items: center; gap: 8px 12px;
+  padding: 12px; border-radius: 12px;
+  border: 1px solid var(--trait); background: var(--surface, #141414);
+}
+.veille-carte .archive-action { grid-area: geste; justify-self: end; }
+/* La jauge : une colonne qui monte avec la tendance. On lit la hauteur avant
+   de lire le chiffre. */
+.veille-jauge {
+  grid-area: jauge;
+  position: relative; width: 54px; height: 54px; border-radius: 10px;
+  background: #101010; overflow: hidden;
+  display: grid; place-items: center;
+}
+.veille-jauge::before {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--part, 4%);
+  background: linear-gradient(180deg, var(--vert), var(--vert-fonce));
+  opacity: .5;
+}
+.veille-chiffre {
+  position: relative; font: 700 0.82rem/1 system-ui, sans-serif; color: var(--texte);
+}
+.veille-texte { grid-area: texte; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.veille-titre { font: 600 0.9rem/1.25 system-ui, sans-serif; color: var(--texte); }
+.veille-sous { font: 400 0.76rem/1.3 system-ui, sans-serif; color: var(--doux); }
+.veille-mots { font: 400 0.72rem/1.3 system-ui, sans-serif; color: var(--doux); opacity: .7; }
+
 .note-action {
   display: block;
   margin: 14px auto 0;
@@ -1842,8 +1874,8 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
     <button type="button" class="tab-btn" data-tab="explorer" title="Explorer" aria-label="Explorer">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
     </button>
-    <button type="button" class="tab-btn" data-tab="projet" title="Projet" aria-label="Projet">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 6v12M17 6v12"/></svg>
+    <button type="button" class="tab-btn" data-tab="veille" title="Veille" aria-label="Veille musicale">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18V9"/><path d="M10 18V5"/><path d="M16 18v-7"/><path d="M22 18V8"/></svg>
       <span class="tab-badge" id="badge" hidden>0</span>
     </button>
     <button type="button" class="tab-btn" data-tab="histoire" title="Historique" aria-label="Historique">
@@ -1889,6 +1921,10 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
       <div id="sortie"></div>
     </section>
 
+    <section id="vue-veille" class="veille" hidden></section>
+
+    <!-- L'atelier n'a plus d'onglet : le tunnel a pris sa place. Il reste dans
+         la page parce que le montage s'y construit encore, sans être montré. -->
     <section id="vue-projet" hidden></section>
 
     <section id="vue-histoire" hidden></section>
@@ -2069,7 +2105,7 @@ const clignement = () => absence.duree < CLIGNEMENT;
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 04:56";
+const VERSION_PAGE = "2026-09-20 06:33";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2324,8 +2360,10 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === bouton));
     const onglet = bouton.dataset.tab;
     $("vue-creer").hidden = onglet !== "creer";
+    $("vue-veille").hidden = onglet !== "veille";
+    if (onglet === "veille") rendreVeille();
     $("vue-explorer").hidden = onglet !== "explorer";
-    $("vue-projet").hidden = onglet !== "projet";
+    $("vue-projet").hidden = true;
     $("vue-histoire").hidden = onglet !== "histoire";
     $("vue-apropos").hidden = onglet !== "apropos";
     document.querySelector("main").classList.toggle("montage", onglet === "projet");
@@ -4293,6 +4331,163 @@ async function rendreLeTunnel() {
   }
 }
 
+/* ======================================================================
+   LA VEILLE — ce qui monte, et qu'on a le droit d'employer
+   ----------------------------------------------------------------------
+   Une liste de morceaux sous licence libre, classés par ce que les gens en
+   prennent CETTE SEMAINE — pas depuis dix ans. Le score dit la part du plus
+   demandé de la page : cent pour cent, c'est celui du moment.
+
+   Choisir un morceau le pose directement dans le tunnel, à l'étape 1.
+   ====================================================================== */
+
+const tendance = { pistes: [], cherche: "", occupe: false, erreur: "", pris: "" };
+
+async function chargerVeille() {
+  if (tendance.occupe) return;
+  tendance.occupe = true;
+  tendance.erreur = "";
+  rendreVeille();
+  try {
+    const adresse = `/api/veille${tendance.cherche ? `?q=${encodeURIComponent(tendance.cherche)}` : ""}`;
+    const reponse = await fetch(adresse);
+    const dit = await reponse.json();
+    if (!reponse.ok) throw new Error(dit?.erreur || `le serveur a répondu ${reponse.status}`);
+    tendance.pistes = dit.pistes || [];
+  } catch (erreur) {
+    tendance.erreur = erreur.message;
+    tendance.pistes = [];
+  } finally {
+    tendance.occupe = false;
+    rendreVeille();
+  }
+}
+
+/* Prendre un morceau : on va chercher le fichier, on le pose dans le tunnel, et
+   l'on y va. L'analyse reste un geste de l'utilisateur — c'est elle qui coûte,
+   et il n'a pas forcément arrêté son choix. */
+async function prendreLaPiste(piste, bouton) {
+  const avant = bouton.textContent;
+  bouton.disabled = true;
+  bouton.textContent = "Chargement…";
+  try {
+    const reponse = await fetch(`/api/veille?piste=${encodeURIComponent(piste.id)}`);
+    const dit = await reponse.json();
+    if (!reponse.ok) throw new Error(dit?.erreur || `le serveur a répondu ${reponse.status}`);
+    const octets = await fetch(dit.adresse);
+    if (!octets.ok) throw new Error(`le fichier n'a pas pu être récupéré (${octets.status})`);
+    const blob = await octets.blob();
+    const fichier = new File([blob], `${piste.titre.slice(0, 60)}.mp3`, { type: blob.type || "audio/mpeg" });
+    tunnel.fichier = fichier;
+    tunnel.rythme = null;
+    tunnel.etiquettes = [];
+    tunnel.montage = null;
+    tunnel.message = "";
+    tendance.pris = piste.id;
+    rendreCreer();
+    document.querySelector('[data-tab="creer"]')?.click();
+  } catch (erreur) {
+    bouton.textContent = "Indisponible";
+    setTimeout(() => { bouton.textContent = avant; bouton.disabled = false; }, 2200);
+    return;
+  }
+  bouton.disabled = false;
+  bouton.textContent = avant;
+}
+
+function carteVeille(piste) {
+  const carte = document.createElement("div");
+  carte.className = "veille-carte";
+
+  const jauge = document.createElement("span");
+  jauge.className = "veille-jauge";
+  jauge.style.setProperty("--part", `${Math.max(4, piste.tendance)}%`);
+  const chiffre = document.createElement("span");
+  chiffre.className = "veille-chiffre";
+  chiffre.textContent = `${piste.tendance}%`;
+  jauge.append(chiffre);
+
+  const texte = document.createElement("span");
+  texte.className = "veille-texte";
+  const titre = document.createElement("span");
+  titre.className = "veille-titre";
+  titre.textContent = piste.titre;
+  const sous = document.createElement("span");
+  sous.className = "veille-sous";
+  sous.textContent = [piste.artiste || "artiste inconnu", piste.licence.nom,
+    `${piste.semaine} téléchargements cette semaine`].join(" · ");
+  const mots = document.createElement("span");
+  mots.className = "veille-mots";
+  mots.textContent = piste.sujets.join(" · ");
+  texte.append(titre, sous, mots);
+
+  const prendre = document.createElement("button");
+  prendre.type = "button";
+  prendre.className = "archive-action fort";
+  prendre.textContent = tendance.pris === piste.id ? "Reprendre" : "Utiliser";
+  prendre.addEventListener("click", () => prendreLaPiste(piste, prendre).catch(() => {}));
+
+  carte.append(jauge, texte, prendre);
+  return carte;
+}
+
+function rendreVeille() {
+  const vue = $("vue-veille");
+  if (!vue) return;
+  const morceaux = [];
+
+  const entete = document.createElement("div");
+  entete.className = "veille-tete";
+  const titre = document.createElement("h2");
+  titre.className = "tunnel-titre";
+  titre.textContent = "Ce qui monte";
+  const sous = document.createElement("p");
+  sous.className = "tunnel-sous";
+  sous.textContent = "Des morceaux sous licence libre, classés par ce qu'on en prend cette semaine."
+    + " Le pourcentage compare au plus demandé du moment.";
+  entete.append(titre, sous);
+  morceaux.push(entete);
+
+  const barre = document.createElement("div");
+  barre.className = "search-row";
+  const champ = document.createElement("input");
+  champ.type = "search";
+  champ.className = "tunnel-champ";
+  champ.placeholder = "Un genre, un mot : punk, soul, rap…";
+  champ.value = tendance.cherche;
+  champ.setAttribute("aria-label", "Chercher dans la veille");
+  champ.addEventListener("keydown", (evt) => {
+    if (evt.key !== "Enter") return;
+    tendance.cherche = champ.value.trim();
+    chargerVeille().catch(() => {});
+  });
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "btn-go";
+  go.textContent = "Chercher";
+  go.addEventListener("click", () => {
+    tendance.cherche = champ.value.trim();
+    chargerVeille().catch(() => {});
+  });
+  barre.append(champ, go);
+  morceaux.push(barre);
+
+  if (tendance.occupe) morceaux.push(note("Lecture de la tendance…"));
+  else if (tendance.erreur) morceaux.push(note(`La veille n'a pas répondu : ${tendance.erreur}`));
+  else if (!tendance.pistes.length) morceaux.push(note("Rien pour cette recherche."));
+  else {
+    const liste = document.createElement("div");
+    liste.className = "veille-liste";
+    for (const piste of tendance.pistes) liste.append(carteVeille(piste));
+    morceaux.push(liste);
+  }
+
+  morceaux.push(note("Les licences Creative Commons demandent presque toutes de citer"
+    + " l'auteur. Le nom de l'artiste est sur chaque carte — recopie-le dans ta description."));
+  vue.replaceChildren(...morceaux);
+  if (!tendance.pistes.length && !tendance.occupe && !tendance.erreur) chargerVeille().catch(() => {});
+}
+
 function rendreHistoire() {
   const vue = $("vue-histoire");
   if (!vue) return;
@@ -5096,6 +5291,7 @@ window.__phrase = () => { try { return phraseAvancement(projetActif()) || ""; } 
    poser un bloc illisible sur un lecteur, ou faire relire le cache. On expose
    donc, et seulement pour cela, les quelques rouages que les bancs manipulent. */
 window.__banc = {
+  rendreProjet: () => rendreProjet(),
   tunnel: () => tunnel, rendreCreer: () => rendreCreer(),
   fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
   clignement: () => clignement(), absence: () => absence,
@@ -14885,20 +15081,12 @@ $("btn-export").addEventListener("click", () => {
 
    Le jeton, lui, ne quitte jamais l'appareil : il n'est envoyé qu'à
    « api.github.com », et rangé dans le navigateur de son propriétaire. */
-const CLE_GITHUB = "amvauto-github";
-const DEPOT_PAR_DEFAUT = "AbilanBalakumaran/amvauto";
+/* Le jeton GitHub ne vit plus sur l'appareil.
 
-function lireGitHub() {
-  try {
-    const su = JSON.parse(localStorage.getItem(CLE_GITHUB) || "{}");
-    return { depot: su.depot || DEPOT_PAR_DEFAUT, jeton: su.jeton || "" };
-  } catch { return { depot: DEPOT_PAR_DEFAUT, jeton: "" }; }
-}
-
-function noterGitHub(quoi) {
-  try { localStorage.setItem(CLE_GITHUB, JSON.stringify(quoi)); }
-  catch { /* le navigateur refuse d'écrire : on fera sans mémoire */ }
-}
+   Il y était rangé en clair, à recopier sur chaque téléphone. Il est devenu un
+   secret du Worker. On efface donc ce qui traîne encore chez ceux qui l'avaient
+   saisi : un jeton oublié dans un stockage local reste un jeton en circulation. */
+try { localStorage.removeItem("amvauto-github"); } catch { /* rien à effacer */ }
 
 /* La feuille de route : ce que le runner a besoin de savoir, et pas un mot de
    plus. Les plans sans adresse publique n'y sont pas — un rush importé à la
@@ -14962,9 +15150,23 @@ async function deposerPiste(projet) {
    navigateur. Le lien vers la course, lui, s'ouvre dans l'onglet GitHub où l'on
    est déjà identifié — deux touches, et le MP4 est dans les fichiers du
    téléphone. */
+/* Le rendu part par le Worker, plus par le navigateur.
+
+   Le jeton GitHub était saisi sur chaque appareil et rangé dans le stockage
+   local : lisible par tout ce qui tourne dans la page, à recopier partout, et
+   facile à coller là où il ne faut pas. Il est devenu un secret du Worker —
+   « GITHUB_TOKEN » —, et c'est le Worker qui ajoute l'autorisation. Le
+   navigateur, lui, ne présente que son code de coffre, qui ne vaut que pour ce
+   compte-là.
+
+   Ce qu'on y gagne : le jeton ne descend plus jamais, il se change en un seul
+   endroit, et un appareil neuf n'a rien à saisir. */
 async function lancerRenduDistant(projet, bouton, etat) {
-  const { depot, jeton } = lireGitHub();
-  if (!jeton) { etat.textContent = "Il manque le jeton GitHub — le champ est juste en dessous."; return; }
+  if (!coffre.code) {
+    etat.textContent = "Il faut un code de sauvegarde : c'est lui qui sert de laissez-passer au rendu."
+      + "\nLe panneau Setting en crée un.";
+    return;
+  }
 
   const avant = bouton.textContent;
   bouton.disabled = true;
@@ -14979,17 +15181,17 @@ async function lancerRenduDistant(projet, bouton, etat) {
       return;
     }
 
-    const { feuille, ecartes } = feuilleDeRoute(projet, musique);
+    const { feuille } = feuilleDeRoute(projet, musique);
     if (!feuille.plans.length) {
       etat.textContent = "Aucun plan n'a d'adresse publique : le rendu déporté ne peut rien aller chercher.";
       return;
     }
 
-    etat.textContent = "Demande envoyée à GitHub…";
-    const depuis = new Date(Date.now() - 60000).toISOString();
-    const envoi = await githubAppel(`/repos/${depot}/actions/workflows/rendu.yml/dispatches`, jeton, {
+    etat.textContent = "Demande envoyée…";
+    const reponse = await fetch("/api/rendu", {
       method: "POST",
-      body: JSON.stringify({ ref: "main", inputs: {
+      headers: { "x-coffre": coffre.code, "content-type": "application/json" },
+      body: JSON.stringify({ entrees: {
         montage: JSON.stringify(feuille),
         nom: nomDeFichier(projet).slice(0, 60) || "amv",
         /* Ce que le rendu emportera avec lui dans la liste : sans cela, un
@@ -15000,37 +15202,19 @@ async function lancerRenduDistant(projet, bouton, etat) {
         plans: String(projet.plans.length),
       } }),
     });
-    if (!envoi.ok) {
-      const dit = await envoi.text().catch(() => "");
-      etat.textContent = envoi.status === 404
-        ? `GitHub répond « introuvable » pour ${depot}. Vérifie le nom du dépôt, et que le jeton a bien le droit « Actions : lecture et écriture » sur CE dépôt.`
-        : envoi.status === 401 || envoi.status === 403
-          ? "GitHub a refusé le jeton. Il lui faut le droit « Actions : lecture et écriture » sur ce dépôt."
-          : `GitHub a refusé la demande (${envoi.status}). ${dit.slice(0, 200)}`;
+    const dit = await reponse.json().catch(() => ({}));
+    if (!reponse.ok) {
+      etat.textContent = reponse.status === 503
+        ? "Le rendu déporté n'est pas encore configuré côté serveur : il manque le secret GITHUB_TOKEN."
+        : `Le rendu a été refusé : ${dit.erreur || reponse.status}`;
       return;
     }
-
-    /* La réponse d'un déclenchement est vide : il faut retrouver la course. */
-    etat.textContent = "Rendu lancé. Recherche de la course…";
-    let course = null;
-    for (let essai = 0; essai < 12 && !course; essai += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((suite) => setTimeout(suite, 2500));
-      // eslint-disable-next-line no-await-in-loop
-      const liste = await githubAppel(
-        `/repos/${depot}/actions/workflows/rendu.yml/runs?per_page=5&created=>${depuis}`, jeton);
-      if (!liste.ok) continue;
-      // eslint-disable-next-line no-await-in-loop
-      const dit = await liste.json().catch(() => null);
-      course = dit?.workflow_runs?.[0] || null;
-    }
-    if (!course) {
+    if (!dit.course) {
       etat.textContent = "Le rendu est lancé, mais la course n'a pas été retrouvée tout de suite."
-        + `\nRegarde l'onglet Actions de ${depot} dans une minute.`;
+        + "\nRegarde l'onglet Actions du dépôt dans une minute.";
       return;
     }
-
-    montrerCourse(course, etat, depot, jeton, Date.parse(depuis) || Date.now());
+    montrerCourse({ id: dit.course, html_url: dit.page }, etat);
   } finally {
     bouton.disabled = false;
     bouton.textContent = avant;
@@ -15038,7 +15222,7 @@ async function lancerRenduDistant(projet, bouton, etat) {
 }
 
 /* Suivre la course jusqu'au bout, sans empêcher de faire autre chose. */
-function montrerCourse(course, etat, depot, jeton, depuis = Date.now()) {
+function montrerCourse(course, etat, depuis = Date.now()) {
   const lien = course.html_url;
   const dire = (quoi) => { etat.innerHTML = ""; etat.append(quoi); };
   const ligne = (texte) => {
@@ -15060,17 +15244,19 @@ function montrerCourse(course, etat, depot, jeton, depuis = Date.now()) {
   const suivre = setInterval(async () => {
     tours += 1;
     if (!document.body.contains(etat) || tours > 80) { clearInterval(suivre); return; }
-    const reponse = await githubAppel(`/repos/${depot}/actions/runs/${course.id}`, jeton).catch(() => null);
+    /* Le suivi passe aussi par le Worker : c'est lui qui a le jeton. */
+    const reponse = await fetch(`/api/rendu?course=${encodeURIComponent(course.id)}`,
+      { headers: { "x-coffre": coffre.code || "" } }).catch(() => null);
     if (!reponse?.ok) return;
     const dit = await reponse.json().catch(() => null);
     if (!dit) return;
-    if (dit.status !== "completed") {
-      dire(ligne(`Rendu en cours sur GitHub — ${dit.status === "queued" ? "en file" : "en train de rendre"}…`));
+    if (dit.etat !== "completed") {
+      dire(ligne(`Rendu en cours sur GitHub — ${dit.etat === "queued" ? "en file" : "en train de rendre"}…`));
       return;
     }
     clearInterval(suivre);
-    if (dit.conclusion !== "success") {
-      dire(ligne(`Le rendu a échoué (${dit.conclusion}). La page GitHub dit à quelle étape.`));
+    if (dit.verdict !== "success") {
+      dire(ligne(`Le rendu a échoué (${dit.verdict}). La page GitHub dit à quelle étape.`));
       return;
     }
     /* Le fichier est déposé par la dernière étape du workflow, juste après la
@@ -15097,19 +15283,6 @@ function montrerCourse(course, etat, depot, jeton, depuis = Date.now()) {
   }, 5000);
 }
 
-async function githubAppel(chemin, jeton, options = {}) {
-  const reponse = await fetch(`https://api.github.com${chemin}`, {
-    ...options,
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${jeton}`,
-      "x-github-api-version": "2022-11-28",
-      ...(options.body ? { "content-type": "application/json" } : {}),
-      ...(options.headers || {}),
-    },
-  });
-  return reponse;
-}
 
 /* Ce qui empêche de rendre, en une phrase — ou rien du tout.
 
@@ -15405,48 +15578,18 @@ function ouvrirExport(projet) {
   distant.title = "Le rendu se fait sur un runner GitHub : le téléphone n'encode rien";
   distant.addEventListener("click", () => lancerRenduDistant(projet, distant, etat));
 
+  /* Le champ du jeton a disparu.
+
+     Il demandait de coller un jeton GitHub sur chaque appareil, et le rangeait
+     dans le stockage local : lisible par tout ce qui tourne dans la page, à
+     recopier partout, et facile à coller là où il ne faut pas. Le jeton vit
+     maintenant en secret du Worker, qui ajoute l'autorisation lui-même. Il ne
+     reste ici qu'un laissez-passer : le code du compte, juste en dessous. */
   const compteGitHub = document.createElement("div");
   compteGitHub.className = "lecteur-meta";
   compteGitHub.style.marginTop = "8px";
-  const peindreGitHub = () => {
-    const su = lireGitHub();
-    compteGitHub.innerHTML = "";
-    const dit = document.createElement("div");
-    dit.textContent = su.jeton
-      ? `Rendu déporté prêt — dépôt ${su.depot}, jeton enregistré sur cet appareil.`
-      : "Rendu déporté : il faut un jeton GitHub « fine-grained » avec le droit"
-        + " « Actions : lecture et écriture » sur ton dépôt. Il reste sur cet appareil"
-        + " et n'est envoyé qu'à api.github.com.";
-    const champ = document.createElement("input");
-    champ.type = "password";
-    champ.autocomplete = "off";
-    champ.placeholder = su.jeton ? "jeton enregistré — colle-en un autre pour le remplacer" : "github_pat_…";
-    champ.style.cssText = "width:100%;margin-top:6px;padding:7px 9px;border-radius:8px;"
-      + "border:1px solid var(--trait);background:#141414;color:var(--texte);font:inherit;font-size:0.78rem";
-    const ou = document.createElement("input");
-    ou.type = "text";
-    ou.value = su.depot;
-    ou.placeholder = "utilisateur/dépôt";
-    ou.style.cssText = champ.style.cssText;
-    const garder = document.createElement("button");
-    garder.type = "button";
-    garder.textContent = "Enregistrer";
-    garder.style.cssText = "margin-top:6px;padding:5px 12px;border-radius:999px;border:1px solid var(--trait);"
-      + "background:#1b1b1b;color:var(--texte);font:inherit;font-size:0.74rem";
-    garder.addEventListener("click", () => {
-      const jeton = champ.value.trim() || lireGitHub().jeton;
-      noterGitHub({ depot: ou.value.trim() || DEPOT_PAR_DEFAUT, jeton });
-      peindreGitHub();
-    });
-    const oublier = document.createElement("button");
-    oublier.type = "button";
-    oublier.textContent = "Oublier le jeton";
-    oublier.style.cssText = garder.style.cssText + ";margin-left:6px";
-    oublier.addEventListener("click", () => { noterGitHub({ depot: lireGitHub().depot, jeton: "" }); peindreGitHub(); });
-    compteGitHub.append(dit, champ, ou, garder);
-    if (su.jeton) compteGitHub.append(oublier);
-  };
-  peindreGitHub();
+  compteGitHub.textContent = "Le rendu se fait sur un serveur GitHub. Rien à saisir ici :"
+    + " le jeton vit côté serveur, et c'est ton code de compte qui sert de laissez-passer.";
 
   /* Le code du compte, ici aussi : c'est la deuxième moitié du rendu déporté.
      Le jeton dit à GitHub qui demande ; le code dit où déposer la vidéo. Les
