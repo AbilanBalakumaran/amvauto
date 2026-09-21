@@ -24,7 +24,7 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
-> **Ce que l'outil est aujourd'hui — v3.0, « Elite / Akross »** (`v3.0-elite`).
+> **Ce que l'outil est aujourd'hui — v3.0, « Elite / Akross »** (`v3.0-elite-engine`).
 > La v2.0 « moteur d'impact » et la v2.1 « sakuga flow » restent le socle :
 > macro-structure en six moments, micro-rythme `{quand, force}`, éclair sur les
 > crêtes, fil d'animateur, bandes de fréquences, sens du plan, harmonisation.
