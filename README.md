@@ -95,13 +95,48 @@ CORS — donc le Worker ne relaie que du JSON et reste très léger.
 
 Routes :
 
+**Le catalogue** — ce que le tunnel interroge à l'étape « animé » :
+
 | Route | Rôle |
 |---|---|
+| `GET /api/rushes?anime=frieren&mood=combat&top=24` | liste plate, classée : la pioche du tunnel |
 | `GET /api/tree?anime=frieren` | arborescence arc → ambiance → plans |
-| `GET /api/rushes?anime=frieren&mood=combat&top=24` | liste plate, classée |
 | `GET /api/suggest?q=chain` | complétion sur le catalogue |
 | `GET /api/moods` | ambiances disponibles |
+| `GET /api/media?u=…` | relais à liste blanche pour les octets d'un rush |
+| `GET /api/cles?u=…` | durée, images-clés et courbe de mouvement d'un plan |
+| `GET /api/extrait?u=…` | vignette ou extrait calculé côté serveur |
+
+**Le montage et le rendu** :
+
+| Route | Rôle |
+|---|---|
+| `GET · POST /api/rendu` | déclenche une course GitHub, et en suit l'état |
+| `PUT /api/piste` | dépose la musique pour le rendu déporté |
+| `GET · PUT · DELETE /api/grenier` | les rendus qui attendent hors du téléphone (R2) |
+| `GET · PUT · DELETE /api/coffre` | sauvegarde d'un projet (KV), sous code |
+| `GET · POST · PUT · DELETE /api/pousser` | inscription aux notifications, et l'envoi |
+
+**La musique et les paroles** — chaque route payante passe par le code du coffre :
+
+| Route | Rôle |
+|---|---|
+| `GET /api/veille` | morceaux libres qui montent cette semaine |
+| `POST /api/musique` | génération du morceau (ACE-Step, ZeroGPU) |
+| `POST /api/paroles` | écriture des paroles |
+| `POST /api/ecoute` | transcription minutée (Whisper) |
+| `POST /api/accord` | accord des paroles sur le montage |
+| `POST /api/scene` | lecture d'une scène par le modèle |
+
+**Le service** :
+
+| Route | Rôle |
+|---|---|
 | `GET /api/version` | horodatage du déploiement |
+| `GET · POST /api/compte` | compte et codes |
+
+Les quatre routes du catalogue (`tree`, `rushes`, `suggest`, `moods`) sont servies
+depuis un cache de bord : la même demande deux fois ne repart pas chez Sakugabooru.
 
 ### Application installable
 
@@ -189,7 +224,7 @@ worker/src/          Worker Cloudflare
   cles.js            durée, images-clés et courbe de mouvement d'un fichier
   media.js           relais à liste blanche pour les octets des rushs
   extrait.js         extraits calculés côté serveur
-  coffre.js          sauvegarde des montages (KV)
+  coffre.js          sauvegarde des projets (KV), sous code
   grenier.js         dépôt des rendus (R2)
   compte.js          comptes et codes
   piste.js           dépôt de la musique pour le rendu déporté
@@ -212,6 +247,7 @@ tools/
   projet.py          archive DaVinci Resolve (XMEML + EDL + sources)
 .github/workflows/   rendu.yml, projet.yml
 wrangler.toml        config de déploiement
+HISTORIQUE.md        le journal de bord : ce qui a été essayé et mesuré
 ```
 
 `worker/src/scoring.js` est le portage de `amvauto/scoring.py` : les deux doivent rester
@@ -435,19 +471,43 @@ trouve dessous. L'EDL porte la même chose à sa syntaxe — `* TEMPO: 142 BPM`,
 
 ### Ce que le journal montre pendant la génération
 
+Relevé tel quel sur une génération de 45 s (chaque ligne porte en plus ses
+chiffres, ici en fin de ligne) :
+
 ```
-+0.0s  Génération demandée · Chainsaw Man · 45 s · instrument tempo
++0.0s  Génération demandée · Chainsaw Man · 45 s de musique · instrument tempo
+         animes=chainsaw_man bpm=150 passages=3 trame=calme>tension>action
++0.3s  « Chainsaw Man » → Chainsaw Man · 161 scènes au catalogue
 +0.3s  Pioche : 52 scènes · 44 sakugabooru, 8 animethemes · 28 coupes attendues
-+1.1s  Scènes lues : 52/52 durées · 52 courbes · 0 illisibles
-+1.1s  [0:00–0:15] Intro — ambiance et décors · 9 coupes
-+1.1s  [0:15–0:30] Couplet — acting et narration · 9 coupes
-+1.1s  [0:30–0:45] Drop — impact sakuga · 20 coupes · 2 éclairs
-+1.1s  36 coupes · 0 à cheval sur 36 mesurées · 2 éclairs d'impact
++1.1s  Scènes lues : 52/52 durées · 52 courbes de mouvement · 0 illisibles
+         en=726ms arretA=assez_lu refusees=0
++1.1s  Montage : 41 coupes · 45 s sur 45 s · 41 moments distincts
+         scenesEmployees=41/52 couverture=100%
++1.1s  [0:00–0:15] Intro — ambiance et décors · 8 coupes
+         phase=intro emotion=calme energie=0 couvert=18s coupeMoyenne=2.25s
++1.1s  [0:15–0:30] Couplet — acting et narration · 15 coupes
+         phase=couplet emotion=tension energie=1 couvert=16s coupeMoyenne=1.05s
++1.1s  [0:30–0:45] Drop — impact sakuga · 20 coupes
+         phase=drop emotion=action energie=3 couvert=15s coupeMoyenne=0.75s
++1.1s  [!] 41 coupes · 1 à cheval sur 41 mesurées · 0 éclair d'impact
++1.1s  Plans : du plus court 0.19 s au plus long 3.75 s · médian 0.79 s
++1.1s  Génération terminée · total=1.1s coupes=41 appels=57 echecs=0
 ```
 
-« Copier le rapport » y ajoute l'appareil, la version, l'état du réseau, la
-demande, les appels au serveur résumés par route — et listés un par un quand ils
-ont raté — et ce qui a alerté, en tête. Le code du coffre y est masqué.
+Une ligne marquée `[!]` est reprise en tête du rapport, sous « ce qui a alerté » :
+on colle, et ce qui a mal tourné se lit en premier. Ici la coupe à cheval — une
+coupe sur quarante et une traverse un changement de plan dans le fichier source.
+
+« Copier le rapport » ajoute l'appareil, la version, l'écran, l'état du réseau et
+de la mémoire, la demande complète (musique, tempo, trame, portée), les appels au
+serveur résumés par route — et listés un par un quand ils ont raté. Le code du
+coffre y est masqué.
+
+**Deux comptes qui ne s'additionnent pas.** La somme des coupes par passage
+(8 + 15 + 20 = 43) dépasse le total (41) : une coupe qui commence pile sur une
+frontière de passage est comptée des deux côtés, à cause de la tolérance de 10 ms
+qui sert à rattraper les arrondis. Le total, lui, est juste — c'est la longueur du
+montage. Le défaut est dans l'affichage, pas dans le montage.
 
 ### Ce qui n'a pas été touché, et pourquoi
 
@@ -471,7 +531,7 @@ Au dernier passage :
 | `entrees.mjs` | l'animé unique ou mixte, la trame, le catalogue pauvre | 16/16 |
 | `regimes.mjs` | les cinq régimes, au catalogue et au choix | 10/10 |
 | `fuite.mjs` | trois générations sans rien qui s'empile | 14/14 |
-| `rendu.mjs` | le rendu sans l'atelier : 53 images, un MP4 écrit | 12/12 |
+| `rendu.mjs` | le rendu depuis le tunnel : 53 images, un MP4 écrit | 12/12 |
 | `mp4.mjs` | Annex B, AVCC, avcC non vide, boîtes du fichier | 22/22 |
 | `resolve.py` | couleurs FCP7, marqueurs de séquence, EDL, éclair | 23/23 + 6/6 |
 | `journal.mjs` · `panne.mjs` | le rapport, et ce qu'il dit quand ça rate | 32/32 · 15/15 |
@@ -629,20 +689,14 @@ secondes, si le serveur a répondu 502 ou si le téléphone était hors ligne �
 pourtant les quatre seules réponses utiles.
 
 Sous le bouton qui lance la génération, un journal s'écrit ligne à ligne, chacune
-horodatée **depuis le début** et accompagnée de ses chiffres en `clé=valeur` :
+horodatée **depuis le début** et accompagnée de ses chiffres en `clé=valeur` — le
+relevé complet d'une génération est à
+[« Ce que le journal montre »](#ce-que-le-journal-montre-pendant-la-génération).
 
-```
-+0.3s  Pioche : 55 scènes · 47 sakugabooru, 8 animethemes · 28 coupes attendues
-       sources=sakugabooru:47/animethemes:8 avecFichier=55/55 parScene=2.0
-+1.1s  Scènes lues : 55/55 durées · 55 courbes · 0 illisibles
-       en=727ms arretA=assez lu refusees=0
-+1.1s  Passage 2 (tension) : 9 coupes sur 15 s  de=15s a=30s energie=1 couvert=16s
-```
-
-« Copier le rapport » y ajoute l'appareil, la version, l'état du réseau, la demande
-(musique, trame, animé), **les appels au serveur** — résumés par route, et listés un
-par un quand ils ont raté — et ce qui a alerté, en tête. `fetch` est enveloppé une
-fois pour toutes ; le code du coffre est masqué, parce qu'un rapport est fait pour
+Ce qui le rend collable ailleurs : `fetch` est enveloppé une fois pour toutes, donc
+chaque appel au serveur est compté, minuté et pesé sans qu'aucun appelant ait à y
+penser ; les lignes tiennent en mémoire jusqu'à trois cents, les appels jusqu'à
+quatre-vingts ; et le code du coffre est masqué, parce qu'un rapport est fait pour
 être collé dans une conversation.
 
 Une phrase qui mentait est tombée avec : « Naruto est introuvable sur Sakugabooru »
