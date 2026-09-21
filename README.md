@@ -119,6 +119,7 @@ Routes :
 | Route | Rôle |
 |---|---|
 | `GET /api/rushes?anime=frieren&mood=combat&top=24` | liste plate, classée : la pioche du tunnel |
+| `GET /api/rushes?…&main=hiroyuki_yamashita` | la même pioche, restreinte à une main : elle filtre les posts déjà gardés, sans requête de plus |
 | `GET /api/tree?anime=frieren` | arborescence arc → ambiance → plans |
 | `GET /api/suggest?q=chain` | complétion sur le catalogue |
 | `GET /api/moods` | ambiances disponibles |
@@ -156,8 +157,15 @@ Routes :
 | `GET /api/version` | horodatage du déploiement |
 | `GET · POST /api/compte` | compte et codes |
 
-Les quatre routes du catalogue (`tree`, `rushes`, `suggest`, `moods`) sont servies
-depuis un cache de bord : la même demande deux fois ne repart pas chez Sakugabooru.
+Les cinq routes du catalogue (`tree`, `rushes`, `suggest`, `moods`, `casting`) sont
+servies depuis un cache de bord : la même demande deux fois ne repart pas chez
+Sakugabooru. `casting` y est pour une raison de plus — elle demande la même pioche
+de deux mille posts que la génération réclamera ensuite, donc payer au moment où
+l'on choisit son animé fait gagner au moment où l'on génère.
+
+Sa clé de cache porte une **version de forme** (`&f=1`). Sans elle, changer la
+forme du JSON laisse la page lire l'ancienne pendant six heures : constaté en vrai,
+un menu d'animateurs vide alors que le serveur rendait bien ses trente mains.
 
 ### Application installable
 
@@ -236,13 +244,13 @@ Aucune dépendance : bibliothèque standard uniquement.
 amvauto/             moteur Python (client API, scoring, CLI)
 worker/src/          Worker Cloudflare
   index.js           routage de toutes les routes /api/
-  sakuga.js          accès à l'API, pagination, filtrage
+  sakuga.js          accès à l'API, pagination, filtrage, animateurs d'un cut
   animethemes.js     openings et endings (WebM, 1080p sans crédits)
   scoring.js         barème d'utilisabilité et ambiances
   naming.js          nom des plans et détection des arcs
   series.js          raccourcis de séries (généré depuis series.py)
   scene.js           fiche d'une scène
-  cles.js            durée, images-clés et courbe de mouvement d'un fichier
+  cles.js            durée, images-clés, courbe de mouvement — et le sens, écrit par le runner
   media.js           relais à liste blanche pour les octets des rushs
   extrait.js         extraits calculés côté serveur
   coffre.js          sauvegarde des projets (KV), sous code
@@ -265,6 +273,8 @@ public/
 tools/
   stamp.mjs          estampille page + worker + sw au déploiement
   rendu.py           rendu du MP4 sur un runner GitHub
+  sens.py            direction dominante d'un plan, par corrélation d'images
+  teinte.py          luminance, contraste, saturation — et la correction vers la médiane
   projet.py          archive DaVinci Resolve (XMEML + EDL + sources)
 .github/workflows/   rendu.yml, projet.yml
 wrangler.toml        config de déploiement
@@ -496,32 +506,53 @@ trouve dessous. L'EDL porte la même chose à sa syntaxe — `* TEMPO: 142 BPM`,
 
 ### Ce que le journal montre pendant la génération
 
-Relevé tel quel sur une génération de 45 s (chaque ligne porte en plus ses
-chiffres, ici en fin de ligne) :
+Relevé tel quel sur un montage de 2 min 30 — Naruto Shippuden, duel de deux mains,
+paroles minutées. Chaque ligne porte ses chiffres en dessous :
 
 ```
-+0.0s  Génération demandée · Chainsaw Man · 45 s de musique · instrument tempo
-         animes=chainsaw_man bpm=150 passages=3 trame=calme>tension>action
-+0.3s  « Chainsaw Man » → Chainsaw Man · 161 scènes au catalogue
-+0.3s  Pioche : 52 scènes · 44 sakugabooru, 8 animethemes · 28 coupes attendues
-+1.1s  Scènes lues : 52/52 durées · 52 courbes de mouvement · 0 illisibles
-         en=726ms arretA=assez_lu refusees=0
-+1.1s  Montage : 41 coupes · 45 s sur 45 s · 41 moments distincts
-         scenesEmployees=41/52 couverture=100%
-+1.1s  [0:00–0:15] Intro — ambiance et décors · 8 coupes
-         phase=intro emotion=calme energie=0 couvert=18s coupeMoyenne=2.25s
-+1.1s  [0:15–0:30] Couplet — acting et narration · 15 coupes
-         phase=couplet emotion=tension energie=1 couvert=16s coupeMoyenne=1.05s
-+1.1s  [0:30–0:45] Drop — impact sakuga · 20 coupes
-         phase=drop emotion=action energie=3 couvert=15s coupeMoyenne=0.75s
-+1.1s  [!] 41 coupes · 1 à cheval sur 41 mesurées · 0 éclair d'impact
-+1.1s  Plans : du plus court 0.19 s au plus long 3.75 s · médian 0.79 s
-+1.1s  Génération terminée · total=1.1s coupes=41 appels=57 echecs=0
++0.0s  Génération demandée · Naruto Shippuden · 150 s de musique · instrument caisse
+       duree=150s bpm=120 passages=8 trame=calme>emotion>elan>action>emotion>elan>action>calme
+       paroles=32 fil=hiroyuki_yamashita contre tsutomu_oshiro (duel de mains)
++0.6s  « Naruto Shippuden » → Naruto Shippuden · 1494 scènes au catalogue
++0.6s  Pioche : 172 scènes · 164 sakugabooru, 8 animethemes · 76 coupes attendues
+       sources=sakugabooru:164/animethemes:8 avecFichier=172/172 parScene=2.3
++2.2s  Scènes lues : 123/172 durées · 123 courbes de mouvement · 0 illisibles
+       en=1569ms arretA=assez lu refusees=0
++2.4s  Montage : 106 coupes · 150 s sur 150 s · 106 moments distincts
+       en=198ms scenesEmployees=106/123 couverture=100%
++2.4s  [0:00–0:19] Intro — ambiance et décors · 7 coupes
+       phase=intro emotion=calme energie=0 couvert=23s coupeMoyenne=3.25s
++2.4s  [0:19–0:38] Couplet — acting et narration · 6 coupes
++2.4s  [0:38–0:56] Montée — accélération · 20 coupes · 1 éclair
++2.4s  [0:56–1:15] Drop — impact sakuga · 19 coupes · 2 éclairs
+       phase=drop emotion=action energie=3 couvert=19s coupeMoyenne=0.99s
++2.4s  [1:15–1:34] Retombée — dispersion · 8 coupes
++2.4s  [1:34–1:53] Montée — accélération · 18 coupes
++2.4s  [1:53–2:11] Drop — impact sakuga · 20 coupes
++2.4s  [2:11–2:30] Outro — plan tenu · 9 coupes
++2.4s  106 coupes · 0 à cheval sur 106 mesurées · 3 éclairs d'impact
+       aCheval=0/106 eclairs=3 surQuoi=frappes ≥ 85 % servies par un choc
++2.4s  Fil du duel de mains : 54/106 coupes le portent (51 %) · 46 alternances · 0 plans à deux
+       portees=54/106 ensemble=0 alternances=46 vivier=55/123
++2.4s  Bandes : 71 coupes ancrées sur le grave · 5 glissées hors d'un vers
+       · 13 retirées pour la même raison
+       surLeGrave=71/75 jugees=39 glissees=5 retireesParLeBudget=13
+       resteesDansUnVers=0 source=paroles minutées (Whisper)
++2.4s  Plans : du plus court 0.25 s au plus long 4.00 s · médian 1.00 s
++2.4s  Génération terminée · total=2.4s coupes=106 appels=131 echecs=0
 ```
 
 Une ligne marquée `[!]` est reprise en tête du rapport, sous « ce qui a alerté » :
-on colle, et ce qui a mal tourné se lit en premier. Ici la coupe à cheval — une
-coupe sur quarante et une traverse un changement de plan dans le fichier source.
+on colle, et ce qui a mal tourné se lit en premier. Ce relevé-là n'en porte
+aucune — zéro coupe à cheval sur cent six, et pas un vers tranché.
+
+Les deux dernières lignes sont celles de la v2.1, et elles disent ce qu'un chiffre
+seul cacherait. Le fil : cinquante-quatre coupes sur cent six le portent, mais le
+vivier n'en offrait que cinquante-cinq sur cent vingt-trois — le montage a donc
+employé presque tout ce qu'il avait. Les bandes : trente-neuf coupes ont été jugées
+sur les passages où la voix commande, cinq déplacées vers une respiration, treize
+retirées par le budget parce que leur force avait baissé, **zéro restée dans un
+vers**.
 
 « Copier le rapport » ajoute l'appareil, la version, l'écran, l'état du réseau et
 de la mémoire, la demande complète (musique, tempo, trame, portée), les appels au
@@ -529,10 +560,11 @@ serveur résumés par route — et listés un par un quand ils ont raté. Le cod
 coffre y est masqué.
 
 **Deux comptes qui ne s'additionnent pas.** La somme des coupes par passage
-(8 + 15 + 20 = 43) dépasse le total (41) : une coupe qui commence pile sur une
-frontière de passage est comptée des deux côtés, à cause de la tolérance de 10 ms
-qui sert à rattraper les arrondis. Le total, lui, est juste — c'est la longueur du
-montage. Le défaut est dans l'affichage, pas dans le montage.
+(7 + 6 + 20 + 19 + 8 + 18 + 20 + 9 = 107) dépasse le total (106) : une coupe qui
+commence pile sur une frontière de passage est comptée des deux côtés, à cause de la
+tolérance de 10 ms qui sert à rattraper les arrondis. Le total, lui, est juste —
+c'est la longueur du montage, et la couverture est à 100 %. Le défaut est dans
+l'affichage, pas dans le montage.
 
 ### Ce qui n'a pas été touché, et pourquoi
 
@@ -645,6 +677,12 @@ personnage qui court à droite, c'est le décor qui file à gauche et la mesure 
 « gauche ». Ce n'est pas une erreur pour ce qu'on en fait — la règle parle de ce
 que l'œil poursuit, et l'œil poursuit ce qui bouge sur l'écran.
 
+**L'écriture dépend du secret `AMVAUTO_CODE`** du dépôt — le même code de coffre
+qui sert à déposer dans le grenier. Sans lui, le runner saute la mesure et le dit
+dans son journal : le rendu aboutit, mais le catalogue ne se réchauffe jamais et le
+raccord cinétique reste muet pour toujours. C'est la seule condition de
+fonctionnement du pilier, et elle est invisible depuis l'application.
+
 **La première génération sur une série ne trouve aucun sens** et monte comme
 avant ; le premier rendu réchauffe le catalogue. Mesuré, fiche connue contre fiche
 muette : 18 prolongements de flux contre 2 inversions, contre 5 contre 5 sans le
@@ -686,7 +724,16 @@ reste — et chacun reçoit une correction bornée qui parcourt deux tiers du ch
 | saturation | 72,7 | **54,6** |
 
 Bornée exprès : un plan volontairement sombre reste sombre, et l'étendue ne tombe
-pas à zéro. On rapproche, on n'uniformise pas.
+pas à zéro. On rapproche, on n'uniformise pas — et les bornes le disent :
+
+| | Plancher | Plafond |
+|---|---|---|
+| luminance (`brightness`) | −0,06 | +0,06 *(soit ±15 sur 255)* |
+| contraste | ×0,90 | ×1,14 |
+| saturation | ×0,88 | ×1,16 |
+
+Un plan déjà au milieu ne reçoit aucun filtre du tout : poser un `eq` neutre
+coûterait une passe de calcul et arrondirait des pixels pour rien.
 
 L'archive DaVinci ne reçoit ni l'une ni l'autre : elle livre les rushs tels quels
 pour qu'on puisse reprendre le montage. Une secousse et un étalonnage sont des
@@ -699,22 +746,24 @@ Au dernier passage :
 
 | Banc | Ce qu'il tient | |
 |---|---|---|
-| `macro.mjs` | les six moments, ce que chacun refuse | 13/13 |
-| `impact.mjs` | la frappe forte, la retombée, la collision, les éclairs | 13/13 |
-| `entrees.mjs` | l'animé unique ou mixte, la trame, le catalogue pauvre | 16/16 |
-| `regimes.mjs` | les cinq régimes, au catalogue et au choix | 10/10 |
-| `fuite.mjs` | trois générations sans rien qui s'empile | 14/14 |
-| `rendu.mjs` | le rendu depuis le tunnel : 53 images, un MP4 écrit | 12/12 |
-| `mp4.mjs` | Annex B, AVCC, avcC non vide, boîtes du fichier | 22/22 |
-| `resolve.py` | couleurs FCP7, marqueurs de séquence, EDL, éclair | 23/23 + 6/6 |
+| **les quatre piliers de la v2.1** | | |
 | `fil.mjs` | une main, un duel, et un fil introuvable qui ne bloque rien | 20/20 |
-| `vitesse.mjs` | trois minutes de musique, soixante rushs, le temps de calcul | 4/4 |
 | `voix.mjs` | le grave qui ancre, la voix qu'on ne coupe pas | 17/17 |
 | `raccord.mjs` | le raccord cinétique, avec et sans le sens | 15/15 |
 | `vfx.py` | la secousse qui ne décale rien, les teintes qui se resserrent | 18/18 |
-| `journal.mjs` · `panne.mjs` | le rapport, et ce qu'il dit quand ça rate | 32/32 · 15/15 |
-| `davinci.mjs` · `page-rendu.mjs` | l'archive qui part, la page du rendu | 13/13 · 19/19 |
+| **le socle de la v2.0** | | |
+| `macro.mjs` | les six moments, ce que chacun refuse | 13/13 |
+| `impact.mjs` | la frappe forte, la retombée, la collision, les éclairs | 13/13 |
+| `regimes.mjs` | les cinq régimes, au catalogue et au choix | 10/10 |
+| `entrees.mjs` | l'animé unique ou mixte, la trame, le catalogue pauvre | 16/16 |
+| **ce qui ne doit jamais régresser** | | |
+| `vitesse.mjs` | trois minutes de musique, soixante rushs, le temps de calcul | 4/4 |
+| `fuite.mjs` | trois générations sans rien qui s'empile | 14/14 |
 | `couverture.mjs` · `generique.mjs` | toute la musique, la grammaire du générique | 9/9 · 6/6 |
+| `rendu.mjs` · `mp4.mjs` | 53 images et un MP4 écrit ; Annex B, AVCC, boîtes | 12/12 · 22/22 |
+| `resolve.py` · `davinci.mjs` | couleurs FCP7, marqueurs, EDL ; l'archive qui part | 23/23 + 6/6 · 13/13 |
+| `journal.mjs` · `panne.mjs` | le rapport, et ce qu'il dit quand ça rate | 32/32 · 15/15 |
+| `page-rendu.mjs` | la page d'un rendu, sa fiche et ses boutons | 19/19 |
 
 ### Ce que tout ça coûte en temps
 
@@ -829,6 +878,11 @@ Le rendu ne se fait plus sur le téléphone. La feuille de route part sur un run
 GitHub (`tools/rendu.py`), qui télécharge les rushs, coupe, assemble, encode, et
 **dépose le fichier dans le grenier** (R2) d'où l'application le reprend. Le jeton
 GitHub est un secret du Worker : le navigateur ne présente que son code de coffre.
+
+Le runner fait deux choses de plus depuis la v2.1, parce qu'il est le seul endroit
+qui ait ffmpeg : il pose l'éclair, la secousse et l'harmonisation des teintes, et il
+**mesure le sens de déplacement de chaque rush** pour le réécrire dans la fiche de
+`/api/cles` — ce qui réchauffe le catalogue pour les générations suivantes.
 
 ### Une page par rendu, et l'accueil garde le sien
 
