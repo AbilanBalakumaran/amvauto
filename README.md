@@ -24,6 +24,16 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
+> **Où en est l'outil.** Ce fichier est un journal de bord : il s'écrit par le bas,
+> section après section, et garde la trace de ce qui a été essayé, mesuré et
+> abandonné. La forme de l'application, elle, a changé depuis les premières
+> sections : on ne parcourt plus un explorateur de rushs pour monter à la main,
+> **on donne une musique et l'AMV en sort**. Quatre onglets — Créer, Veille,
+> Historique, Infos — et l'atelier de montage n'en a plus. La section
+> [« Le tunnel »](#depuis-lexplorateur-est-devenu-un-tunnel) raconte ce virage
+> et tout ce qui a suivi ; ce qui est décrit plus bas reste vrai du moteur,
+> pas toujours de l'écran.
+
 ## Ce que l'outil fait
 
 1. **Résout la série.** « frieren », « csm », « mob psycho » → le bon tag Sakugabooru.
@@ -46,7 +56,9 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 7. **Tient la charge côté interface** : un dossier peut contenir un millier de plans, ils
    sont posés par centaines à la demande plutôt qu'en une fois.
 8. **Monte le projet** : les plans retenus vont dans un ou plusieurs **projets**, conservés
-   dans le navigateur. L'onglet Projet est un banc de montage — prévisualisation en haut,
+   dans le navigateur. *(L'atelier décrit ci-dessous n'a plus d'onglet depuis que le tunnel
+   fabrique le montage : le code vit toujours, et c'est lui qui pose les coupes, mais on
+   ne l'ouvre plus à la main.)* Le banc de montage — prévisualisation en haut,
    piste en bas à échelle continue réglée au pincement, avec une règle graduée et le timecode
    à gauche, chaque bloc large comme sa durée et rempli de vraies images du plan — la
    pellicule ne peint que la partie visible et sa densité suit le zoom, jusqu'à une image
@@ -143,13 +155,23 @@ le navigateur a déjà sa propre page de chargement : l'écran ne s'y affiche pa
 
 Cet écran n'est pas retiré du document, il est éteint — et rallumé juste avant un rechargement.
 Une mise à jour ne montre donc plus deux démarrages successifs mais un seul écran noir continu.
-Les deux mécanismes de mise à jour ne se doublonnent plus non plus : quand un service worker
-pilote la page, c'est lui qui recharge, et la comparaison de version se contente d'un bandeau au
-lieu de recharger à son tour.
+
+**La mise à jour se fait pendant que ce rideau est encore tiré.** L'écran de démarrage demande
+la version au serveur et, si elle diffère, recharge sans se lever : on n'arrive jamais dans
+l'application sur du vieux code. Deux secondes et demie au plus — une version qui n'arrive pas
+ne doit pas retenir quelqu'un sans réseau. Mesuré : 574 ms de noir en temps normal, 824 avec la
+mise à jour, 2716 quand le serveur ne répond plus. En séance, elle ne se propose plus non plus :
+elle s'applique, sauf si un rechargement détruirait quelque chose — un travail en cours, ou une
+musique choisie dont aucun montage n'est sorti, parce que le fichier vient de l'appareil et que
+rien ne peut le rouvrir à notre place. Une tentative par version : sans ce garde-fou, une
+version que le rechargement ne corrige pas faisait tourner l'application en boucle — 94
+rechargements en deux secondes, mesurés au banc. Et un bouton vert dans Infos force la mise à
+jour quand on la veut tout de suite.
 
 La barre d'onglets ne porte que des icônes, à la taille d'autoshort (29 px dans une barre de
-54) : un dossier, une pellicule et un « i » disent
-déjà ce que les mots répétaient, et la barre y gagne en hauteur utile.
+54) : une note de musique (**Créer**), un égaliseur (**Veille**), une horloge qui remonte le
+temps (**Historique**) et un « i » (**Infos**) disent déjà ce que les mots répétaient, et la
+barre y gagne en hauteur utile.
 
 ### CLI
 
@@ -164,14 +186,41 @@ Aucune dépendance : bibliothèque standard uniquement.
 ## Structure
 
 ```
-amvauto/           moteur Python (client API, scoring, CLI)
-worker/src/        Worker Cloudflare
-  sakuga.js        accès à l'API, pagination, filtrage
-  scoring.js       barème d'utilisabilité et ambiances
-  naming.js        nom des plans et détection des arcs
-  series.js        raccourcis de séries (généré depuis series.py)
-public/index.html  explorateur
-wrangler.toml      config de déploiement
+amvauto/             moteur Python (client API, scoring, CLI)
+worker/src/          Worker Cloudflare
+  index.js           routage de toutes les routes /api/
+  sakuga.js          accès à l'API, pagination, filtrage
+  animethemes.js     openings et endings (WebM, 1080p sans crédits)
+  scoring.js         barème d'utilisabilité et ambiances
+  naming.js          nom des plans et détection des arcs
+  series.js          raccourcis de séries (généré depuis series.py)
+  scene.js           fiche d'une scène
+  cles.js            durée, images-clés et courbe de mouvement d'un fichier
+  media.js           relais à liste blanche pour les octets des rushs
+  extrait.js         extraits calculés côté serveur
+  coffre.js          sauvegarde des montages (KV)
+  grenier.js         dépôt des rendus (R2)
+  compte.js          comptes et codes
+  piste.js           dépôt de la musique pour le rendu déporté
+  rendu.js           déclenchement et suivi des courses GitHub
+  pousser.js         notifications poussées (VAPID + aes128gcm)
+  musique.js         génération de musique
+  paroles.js         écriture de paroles
+  ecoute.js          transcription (Whisper)
+  accord.js          accord des paroles sur le montage
+  veille.js          morceaux libres qui montent cette semaine
+  quota.js, version.js
+public/
+  index.html         toute l'application (une page)
+  sw.js              service worker : coquille hors ligne, poussées, clics
+  decodeur.js        décodage d'avance, sur un fil
+  demux.js, mp4.js, webm.js, plage.js, copier.js, fabrique.js, juge.js
+tools/
+  stamp.mjs          estampille page + worker + sw au déploiement
+  rendu.py           rendu du MP4 sur un runner GitHub
+  projet.py          archive DaVinci Resolve (XMEML + EDL + sources)
+.github/workflows/   rendu.yml, projet.yml
+wrangler.toml        config de déploiement
 ```
 
 `worker/src/scoring.js` est le portage de `amvauto/scoring.py` : les deux doivent rester
@@ -5385,6 +5434,216 @@ ailleurs.
 - Deux coupes dans la même milliseconde produisaient deux plans de même
   identifiant, ce qui dérègle la sélection et l'historique.
 - L'export échouait sur un rush sans adresse de fichier.
+
+## Depuis, l'explorateur est devenu un tunnel
+
+Tout ce qui précède décrit un outil qu'on manœuvre : on cherche une série, on
+parcourt des dossiers, on pose des plans sur une piste, on coupe. C'est un banc de
+montage, et il marche. Mais ce n'est pas ce qu'on vient faire : on vient faire un
+AMV sur un morceau qu'on aime.
+
+L'application a donc été retournée. **Une musique entre, un AMV sort.** Cinq blocs
+à la suite sur une seule page — la musique, la trame, l'animé, la génération, ce
+qu'il y a à publier — et l'on descend sans naviguer. L'explorateur et l'atelier
+n'ont plus d'onglet ; leur code vit toujours, parce que c'est lui qui pose les
+coupes et lit les fichiers, mais on ne l'ouvre plus à la main.
+
+### Ce que le tunnel fait de la musique
+
+Le tempo, les sections et leur énergie se lisent sur l'appareil — c'est déjà
+raconté plus haut. Ce que le tunnel ajoute, c'est qu'on **nomme l'émotion de
+chaque passage** : calme, émotion, tension, élan, action. L'étiquette choisie
+décide de l'énergie de la section, donc du rythme des coupes, donc des scènes
+qu'on ira chercher.
+
+Les **paroles** sont transcrites par Whisper sur Workers AI (`/api/ecoute`), par
+tranches de quatre-vingt-dix secondes et hors du chemin critique : l'analyse rend
+la main dès que le rythme est lu, et les vers arrivent après. Ils entrent dans le
+choix des scènes par un lexique — « feu », « courir », « pleurer » deviennent des
+étiquettes que le montage cherche dans les tags des plans.
+
+Chaque passage s'écoute : un bouton par ligne de la trame, et **une barre de
+lecture unique en bas de l'écran**, au-dessus de la barre d'onglets. Elle porte le
+titre, la position, un curseur pour viser, pause, avance et recul de dix secondes.
+Un seul son à la fois dans toute l'application — un extrait qui continue sur une
+autre page, on ne sait plus d'où il vient ni comment l'arrêter.
+
+### Choisir les scènes : quatre critères plutôt qu'un score
+
+Le score de Sakugabooru dit « belle animation ». Il ne dit pas si le plan convient
+à ce passage-ci. Quatre choses s'y ajoutent :
+
+- **le mouvement**, lu dans le fichier : la taille de chaque image rapportée à sa
+  surface, en milli-octets par pixel, échantillonnée toutes les demi-secondes.
+  Une image lourde est une image qui bouge. L'écart-type de cette courbe distingue
+  un panoramique régulier d'un impact ;
+- **l'expression et le décor**, par les tags, pour les passages calmes ;
+- **les paroles** du passage, par le lexique ;
+- **le contraste** avec la coupe précédente, pour que deux plans voisins ne se
+  ressemblent pas.
+
+La courbe de mouvement et les images-clés sont lues **une fois pour tous les
+appareils** par `/api/cles`, gardées dans R2, et rendues en quelques centaines
+d'octets de JSON au lieu des quatre-vingts kilo-octets d'en-tête que chaque
+téléphone lisait lui-même.
+
+### AnimeThemes est revenu dans la pioche, en apprenant à lire le WebM
+
+Les openings sont la meilleure matière qui soit pour un AMV — cadrés pour la
+musique, 1080p, sans crédits. Ils étaient pourtant écartés : le lecteur d'en-têtes
+ne savait lire que du MP4, donc aucune durée, donc aucune coupe. `public/webm.js`
+lit désormais l'EBML — `Info/Duration`, `Tracks/PixelWidth`, et les `Cues` en fin
+de fichier qui donnent les images-clés. Vérifié sur l'ED1 de Chainsaw Man :
+91,175 s, 148 images-clés, 1920 × 1080.
+
+Ils forment leur propre lot dans la recherche : le serveur les rend en dernier, et
+l'entrelacement les noyait. Huit par génération au plus — Naruto en a cent
+quarante-sept, et les lire tous épuisait le budget de lecture avant d'avoir touché
+aux cuts.
+
+### Le montage se cale sur la grammaire d'un générique
+
+Un opening ne coupe pas au hasard : il pose une phrase, accélère, et retombe. Le
+montage fait pareil — un plan d'ouverture tenu 3,2 s, une rampe qui raccourcit
+(1,15 → 0,85 → 0,62 → 0,45 → 0,32 fois la durée de base), un pas de coupe par
+énergie (4 temps en calme, 1 en action), un plancher à 0,28 s, et un plan de
+clôture tenu. Mesuré sur un cas : ouverture 4,5 s, calme 1,46 s par coupe, refrain
+0,50 s.
+
+**Et l'AMV dure toute la musique.** Il sortait parfois cinquante secondes sur trois
+minutes : l'unicité des scènes était une règle dure, donc le montage s'arrêtait à
+court de matière. Elle est devenue une préférence — seul le même *moment* d'une
+scène est interdit, la même scène peut revenir ailleurs. Mesuré : 12 scènes pour
+180 s de musique, 100 % couvert.
+
+## La veille : ce qu'on a le droit d'employer
+
+Un onglet qui liste des morceaux sous licence libre, classés par ce que les gens en
+prennent **cette semaine**. Chaque ligne s'écoute — même barre de lecture que
+partout ailleurs — et se pose directement dans le tunnel, à l'étape 1.
+
+## Le rendu déporté, et ce qu'il en revient
+
+Le rendu ne se fait plus sur le téléphone. La feuille de route part sur un runner
+GitHub (`tools/rendu.py`), qui télécharge les rushs, coupe, assemble, encode, et
+**dépose le fichier dans le grenier** (R2) d'où l'application le reprend. Le jeton
+GitHub est un secret du Worker : le navigateur ne présente que son code de coffre.
+
+### Une page par rendu, et l'accueil garde le sien
+
+L'Historique n'a plus qu'une liste : les **rendus**. La partie « montages » —
+ouvrir, ranger, renommer, supprimer — n'avait plus d'objet depuis que le tunnel
+fabrique son montage par musique.
+
+Une ligne mène à la **page du rendu** : la vidéo en pleine largeur, « Télécharger
+en MP4 », l'export DaVinci, la fiche à publier dépliée, et la suppression sous un
+trait. Le rendu qui vient d'être fait, lui, se pose **sur l'accueil**, à l'endroit
+où on l'a lancé : il n'y a qu'un rendu à cet endroit, il n'a pas à se choisir dans
+une liste.
+
+Le grenier ne garde que les 80 premiers caractères du nom de projet dans ses
+métadonnées — 120 depuis —, ce qui faisait qu'un montage au titre long n'était
+jamais reconnu : ni son export DaVinci, ni sa fiche. Le rapprochement se fait
+maintenant sur ce qui a été gardé, et le nom affiché est celui du montage, entier.
+
+### L'export DaVinci Resolve
+
+Un rendu se publie ; il ne se remonte pas. `tools/projet.py` fabrique donc une
+archive à ouvrir sur un ordinateur : un **XMEML** et une **EDL CMX 3600**, les
+rushs découpés avec une seconde de poignée de chaque côté, la musique, et un
+LISEZ-MOI. Chaque `pathurl` est vérifié présent dans l'archive avant de la
+sceller. Le téléphone n'envoie que la feuille de route, quelques kilo-octets.
+
+## Prévenir quand c'est prêt
+
+Le rendu prend deux à quatre minutes. Rien ne le disait quand il aboutissait : le
+suivi mourait au premier redessin de l'écran — `if (!document.body.contains(etat))`
+l'arrêtait dès que le nœud d'affichage quittait la page.
+
+La course est désormais suivie **pour elle-même**, dans un registre écrit sur
+l'appareil : l'écran s'y branche s'il est là, sinon le suivi continue, et il
+survit à un rechargement. À la fin, une bannière et la pastille de l'icône.
+
+Mais une page fermée n'exécute plus rien, et c'est précisément le moment où l'on
+veut être prévenu. **Le serveur pousse donc la notification lui-même**, au dépôt du
+fichier dans le grenier : signature VAPID, message chiffré pour l'appareil
+(RFC 8291, aes128gcm, écrit à la main — il n'y a pas de bibliothèque dans un
+Worker). La clé publique est dans `wrangler.toml`, sa moitié privée est un secret.
+Les abonnements sont rangés sous le code du coffre, six par code, six mois ; un
+appareil que le service d'acheminement déclare mort (404, 410) est retiré sur
+place. Taper la bannière ouvre la page du rendu, pas seulement l'application.
+
+Ce qui continue et ce qui dort est dit à l'écran, au moment où le rendu part : le
+fichier se fabrique sur GitHub et continue écran verrouillé ; la notification, elle,
+dépend de l'abonnement, et la page ne promet pas ce qu'elle ne peut pas tenir.
+
+## Le journal : un rapport qu'on peut donner à lire
+
+« Aucune scène trouvée » ne dit pas si la requête est partie, si elle a mis vingt
+secondes, si le serveur a répondu 502 ou si le téléphone était hors ligne — ce sont
+pourtant les quatre seules réponses utiles.
+
+Sous le bouton qui lance la génération, un journal s'écrit ligne à ligne, chacune
+horodatée **depuis le début** et accompagnée de ses chiffres en `clé=valeur` :
+
+```
++0.3s  Pioche : 55 scènes · 47 sakugabooru, 8 animethemes · 28 coupes attendues
+       sources=sakugabooru:47/animethemes:8 avecFichier=55/55 parScene=2.0
++1.1s  Scènes lues : 55/55 durées · 55 courbes · 0 illisibles
+       en=727ms arretA=assez lu refusees=0
++1.1s  Passage 2 (tension) : 9 coupes sur 15 s  de=15s a=30s energie=1 couvert=16s
+```
+
+« Copier le rapport » y ajoute l'appareil, la version, l'état du réseau, la demande
+(musique, trame, animé), **les appels au serveur** — résumés par route, et listés un
+par un quand ils ont raté — et ce qui a alerté, en tête. `fetch` est enveloppé une
+fois pour toutes ; le code du coffre est masqué, parce qu'un rapport est fait pour
+être collé dans une conversation.
+
+Une phrase qui mentait est tombée avec : « Naruto est introuvable sur Sakugabooru »
+s'affichait aussi quand le catalogue rendait 502. On ne répare pas un serveur en
+corrigeant l'orthographe d'un nom.
+
+C'est ce rapport qui a remplacé la feuille « Setting » — vingt paragraphes de
+diagnostic qu'il fallait copier pour en faire quelque chose. Le bouton a disparu de
+l'en-tête ; le journal du lecteur, lui, a rejoint le rapport, et la sauvegarde a
+pris sa porte dans Infos, sans quoi un appareil neuf n'aurait plus aucun chemin vers
+ses montages en ligne.
+
+## Infos est une page de sections
+
+C'étaient quatre pastilles en haut d'un panneau : elles changeaient le contenu sous
+elles sans qu'on ait l'impression d'aller quelque part, et la barre débordait sur un
+téléphone. Deux lignes pleine largeur avec leur chevron — **Général** et **Aide** —,
+une page qui s'ouvre, un retour qui ramène. Stockage et Compte n'y sont plus
+offerts : le premier ne servait qu'à regarder des chiffres, le second se fait par le
+bouton de sauvegarde.
+
+**Revenir en arrière est un seul geste**, partout le même : le mot « Retour », le
+vert de ce qui compte ailleurs, quarante-huit points de haut. Il y avait deux
+libellés différents et deux boutons secondaires de trente-quatre points.
+
+## Le banc d'essai
+
+Chaque correction de cette période a son banc, en Playwright, dans un dossier hors
+du dépôt. Ils tournent sur la page servie en local et mesurent plutôt qu'ils ne
+supposent : les écarts en points, les statuts HTTP, le contenu du presse-papier, le
+nombre de navigations. Quelques-uns, et ce qu'ils gardent :
+
+| Banc | Ce qu'il tient |
+|---|---|
+| `journal.mjs`, `panne.mjs` | le rapport, et ce qu'il dit quand le catalogue rend 502 ou que les en-têtes sont illisibles |
+| `prevenir.mjs`, `pousse.mjs`, `pousse-route.mjs` | la notification côté page, le chiffrement déchiffré comme un navigateur le ferait, l'inscription et ce qu'elle refuse |
+| `maj.mjs`, `recharge.mjs` | la mise à jour au rideau, et la boucle de rechargement empêchée |
+| `couverture.mjs`, `generique.mjs` | l'AMV qui dure toute la musique, et la grammaire du générique |
+| `page-rendu.mjs`, `accueil.mjs`, `espace.mjs` | les pages de rendu, les écarts mesurés au pixel |
+| `davinci.mjs` | la feuille de route, le flux demandé, la fiche qui voyage |
+
+Trois pièges de ce banc-là, pour qui le reprendra : la dernière route Playwright
+enregistrée gagne, donc la générique se pose en premier ; les médias servis sur la
+même origine sont interceptés par le service worker de l'application, donc ils
+vivent sur un autre port ; et une réponse média doit porter `accept-ranges` et un
+206, sinon aucun lecteur ne s'en sert.
 
 ## Deux pièges rencontrés, et leur contournement
 
