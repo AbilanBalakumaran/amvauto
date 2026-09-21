@@ -2340,7 +2340,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 08:48";
+const VERSION_PAGE = "2026-09-21 10:35";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6970,6 +6970,7 @@ window.__banc = {
   automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
   casesAttendues: (p) => casesAttendues(p), amvDe: (p) => amvDe(p), sauver: () => sauver(),
   noterCandidat: (...a) => noterCandidat(...a), automate: () => automate,
+  phaseDuMontage: (...a) => phaseDuMontage(...a), echelleDe: (p) => echelleDe(p),
   projetActif: () => projetActif(), cleSegment: (p) => cleSegment(p),
   segmentDe: (p) => segmentDe(p), entreeLue: (p) => entreeLue(p),
   estLocal: (p) => estLocal(p), locales: () => locales, segments: () => segments,
@@ -18742,8 +18743,41 @@ function humeur(id, graine, pris = 0) {
   return (((a % 1000) / 1000) * 8 - 4) / (1 + pris);
 }
 
+/* ---- Le cadrage, tel que les étiquettes le laissent deviner --------------
+
+   Aucune source ne dit « gros plan » ou « plan large ». Mais un plan étiqueté
+   « character_acting » ou « dialogue » cadre un visage, et un plan étiqueté
+   « background_animation » ou « debris » cadre un espace : c'est assez pour
+   savoir si deux plans de suite montrent la même chose à la même distance.
+
+   Le défaut qu'on vise est le faux raccord d'échelle : deux gros plans
+   immobiles collés bout à bout se lisent comme un seul plan qui saute. Il ne
+   compte que lorsque les DEUX sont fixes — deux plans serrés qui bougent sont
+   deux gestes, pas une répétition. */
+const ECHELLES = {
+  serre: ["character_acting", "dialogue", "crying", "eating", "smoking", "hair", "fabric"],
+  large: ["background_animation", "debris", "smoke", "explosions", "beams", "wind",
+    "liquid", "ice", "creatures", "vehicle", "motorcycles"],
+};
+
+function echelleDe(plan) {
+  const tags = new Set(plan?.tags || []);
+  for (const [nom, mots] of Object.entries(ECHELLES)) {
+    if (mots.some((mot) => tags.has(mot))) return nom;
+  }
+  return "moyen";
+}
+
+// Un plan fixe : peu de mouvement, et ce peu ne varie pas.
+function estFixe(plan) {
+  const profil = profilDe(plan, entreeDe(plan) || 0, sortieDe(plan) || dureeSource(plan));
+  return Boolean(profil && profil.moyenne < 45 && profil.tenue > 0.7);
+}
+
 function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0,
-  graine = 0, fort = false) {
+  graine = 0, partFrappe = 0, phase = "") {
+  // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
+  const fort = partFrappe >= 0.62;
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
   const derniereFois = vus.get(plan.id);
   const fraicheur = derniereFois === undefined ? 0 : Math.max(0, 6 - (rang - derniereFois));
@@ -18878,8 +18912,66 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
     return profil.tenue > 0.72 && profil.moyenne < 40 ? 6 : 0;
   })();
 
+  /* ---- La macro-structure : ce que le moment du morceau interdit ----------
+
+     Ce ne sont pas des préférences. Une explosion dans les huit premières
+     secondes d'un AMV, c'est un montage qui commence par sa fin ; un plan calme
+     neutre juste après le drop, c'est l'énergie coupée net. Les pénalités sont
+     donc du même ordre que celles d'une scène déjà vue — franchissables quand
+     il ne reste vraiment que ça, jamais choisies autrement. */
+  const macro = (() => {
+    if (!phase) return 0;
+    const famille = familleDe(plan);
+    const tags = new Set(plan.tags || []);
+    let note = 0;
+
+    if (phase === "intro") {
+      // On pose : décors, regards, marche, vent. Jamais un choc.
+      if (famille === "choc") note += 55;
+      if (tags.has("impact_frames") || tags.has("explosions")) note += 25;
+      if (tags.has("background_animation") || tags.has("wind") || tags.has("walk_cycle")
+        || tags.has("character_acting")) note -= 6;
+      if (famille === "elan") note += 8;
+    } else if (phase === "couplet") {
+      // On raconte : des personnages, du geste, pas de la pyrotechnie.
+      if (famille === "choc") note += 12;
+      if (famille === "calme") note -= 4;
+    } else if (phase === "montee") {
+      // On accélère : courses, poursuites, envols, déformations.
+      if (famille === "elan") note -= 6;
+      if (tags.has("smears") || tags.has("running") || tags.has("chase")
+        || tags.has("flying")) note -= 3;
+      if (famille === "calme" && estFixe(plan)) note += 8;
+    } else if (phase === "drop") {
+      // On frappe.
+      if (famille === "choc") note -= 6;
+      if (famille === "calme") note += 14;
+      /* Les images d'impact ne se dépensent pas sur un contretemps : elles sont
+         rares dans un catalogue, et une fois vues elles ne frappent plus. On les
+         réserve aux crêtes — au moins 85 % de la frappe la plus forte. */
+      if (tags.has("impact_frames") && partFrappe < 0.85) note += 18;
+    } else if (phase === "retombee") {
+      // On laisse retomber : la poussière, la fumée, les débris. Pas le vide.
+      if (famille === "suite") note -= 12;
+      else if (famille === "calme" && estFixe(plan)) note += 20;
+      if (famille === "choc") note += 10;
+    } else if (phase === "outro") {
+      // On conclut : un plan large, un regard, une pose qui tient.
+      if (famille === "choc") note += 25;
+      if (echelleDe(plan) === "large") note -= 5;
+      if (estFixe(plan)) note -= 4;
+    }
+    return note;
+  })();
+
+  /* Deux plans fixes du même cadrage collés bout à bout se lisent comme un seul
+     plan qui saute. Deux plans serrés qui BOUGENT sont deux gestes : la règle ne
+     vaut que quand les deux sont immobiles. */
+  const jumpcut = precedent && estFixe(precedent) && estFixe(plan)
+    && echelleDe(precedent) === echelleDe(plan) ? 9 : 0;
+
   return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole + intention
-    + illustration + contraste + impact + retombee
+    + illustration + contraste + impact + retombee + macro + jumpcut
     + accordDuMouvement(precedent, plan, fort)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -19511,6 +19603,46 @@ const COUPE_MINI = 0.34;
 // Combien de frappes on garde, selon ce que le passage demande.
 const PAS_PAR_ENERGIE = { 0: 4, 1: 2, 2: 1, 3: 1 };
 // L'ouverture et la clôture, en secondes de plan tenu.
+/* ---- La macro-structure : où l'on en est dans le morceau -----------------
+
+   Le montage suivait l'énergie de chaque passage, et rien d'autre. C'est juste
+   à l'échelle d'une section, et faux à l'échelle d'un générique : un opening ne
+   se contente pas d'alterner fort et faible, il RACONTE — il pose, il installe,
+   il monte, il frappe, il laisse retomber, il conclut. Deux passages de même
+   énergie n'appellent pas les mêmes plans selon qu'ils ouvrent ou qu'ils
+   ferment.
+
+   Six moments, déduits de la position dans le morceau et de ce que le passage
+   porte. Aucun n'est deviné : la position vient du minutage, l'énergie de
+   l'analyse, l'émotion de la trame que l'utilisateur a posée. */
+const PART_INTRO = 0.18;      // les premiers dix-huit pour cent posent le décor
+const PART_OUTRO = 0.88;      // au-delà, on conclut
+
+function phaseDuMontage(section, rang, sections, duree) {
+  const debut = section?.debut || 0;
+  const energie = section?.energie ?? 2;
+  const part = duree > 0 ? debut / duree : 0;
+  const avant = sections[rang - 1];
+
+  /* La respiration d'après le choc passe avant tout le reste : c'est le seul
+     moment qui se définit par ce qui le précède, et non par lui-même. */
+  if (avant && (avant.energie ?? 0) >= 3 && energie < 3) return "retombee";
+  if (part >= PART_OUTRO || rang === sections.length - 1) return "outro";
+  /* L'intro est ce qui se passe AVANT que le morceau démarre, pas tout ce qui
+     commence tôt : un couplet qui s'ouvre à la quatorzième seconde et court
+     jusqu'à la quarantième n'est pas une pose, et le traiter comme telle
+     interdisait le moindre mouvement pendant un quart du montage. On regarde
+     donc où la section FINIT — ou, pour la toute première, qu'elle reste
+     courte. */
+  const fin = section?.fin ?? debut;
+  const dansLIntro = duree > 0
+    && (fin <= duree * PART_INTRO || (rang === 0 && fin - debut <= duree * 0.3));
+  if (dansLIntro && energie <= 2) return "intro";
+  if (energie >= 3) return "drop";
+  if (energie === 2) return "montee";
+  return "couplet";
+}
+
 const OUVERTURE = 3.2;
 const CLOTURE = 3.2;
 /* L'accélération : les écarts des derniers plans avant une montée, du plus long
@@ -19773,6 +19905,10 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
 
   sections.forEach((section, rangSection) => {
     const accord = projet.accords?.[rangSection] || projet.accords?.[String(rangSection)] || null;
+    /* Où l'on en est dans le morceau : c'est cela qui distingue un passage calme
+       qui ouvre d'un passage calme qui conclut, et qui interdit l'explosion dans
+       les premières secondes. */
+    const phase = phaseDuMontage(section, rangSection, sections, rythme.duree || 0);
     const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
     /* On remplit la section au temps, pas au compte. Un rush plus court que la
        case ne peut pas la couvrir — mesuré : cinq cases de six secondes servies
@@ -19808,7 +19944,11 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       /* Ce plan commence-t-il sur une frappe forte ? Si oui, c'est lui qui doit
          frapper : on le choisit autrement, et on le taille autour de son pic. */
       const sousLaFrappe = frappeSous(curseur);
-      const fort = forceMax > 0 && (sousLaFrappe?.force || 0) >= PART_FORTE * forceMax;
+      /* La part de la frappe la plus forte, et non plus un oui-non : les images
+         d'impact se réservent aux crêtes, et une crête n'est pas un temps fort
+         ordinaire. */
+      const partFrappe = forceMax > 0 ? (sousLaFrappe?.force || 0) / forceMax : 0;
+      const fort = partFrappe >= PART_FORTE;
 
       /* Le plan d'ouverture et le plan de clôture ne se choisissent pas comme
          les autres : un générique ouvre sur un décor qui s'installe et ferme sur
@@ -19855,7 +19995,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
             const court = dureeSource(plan) < vise ? 3 : 0;
             const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets,
-              serie, graine, fort) + court;
+              serie, graine, partFrappe, bord ? "" : phase) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) break;
