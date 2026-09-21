@@ -176,8 +176,61 @@ def rampe(pic, entree, sortie, cadence, duree_source):
     }
 
 
+# ---- La pulsation des roulements -----------------------------------------
+#
+# Dans une montée de trap, de phonk ou de drum & bass, la caisse claire et les
+# charleys roulent : des doubles croches de plus en plus serrées jusqu'au drop.
+# La page les repère et dit au rendu à quels instants elles tombent.
+#
+# Ce qu'on NE fait pas : couper à chaque frappe. Huit plans différents en une
+# seconde ne se lisent pas — l'œil n'a pas le temps de comprendre une image, et
+# le résultat est un bruit visuel, pas une accélération. Un monteur tient son
+# plan et le fait battre.
+#
+# UNE image plus claire par frappe, et rien entre : c'est un stroboscope discret,
+# calé au son. Et une seule, parce que le banc a montré ce qui se passe sinon.
+#
+# À deux images de large, les créneaux se RECOUVRENT : un roulement de doubles
+# croches frappe toutes les 80 ms, une pulsation de 83 ms déborde sur la suivante,
+# et les huit battements fondent en un seul éclaircissement de huit images. Ce
+# n'est plus un stroboscope, c'est une lampe qu'on allume. Mesuré : images 5 à 12
+# claires d'un bloc là où l'on en voulait quatre isolées.
+#
+# La pulsation doit donc tenir dans l'intervalle du roulement. Un peu moins d'une
+# image — « between » est inclusif aux deux bouts, et à 1/cadence pile il en
+# attrape deux.
+#
+# Comme tout le reste, ça ne touche ni la durée du plan ni son nombre d'images :
+# c'est un filtre de luminance, pas une coupe.
+FORCE_PULSE = 0.18
+# Sous deux images d'écart, on ne peut plus alterner clair et sombre : la
+# pulsation n'existe qu'à partir du moment où il y a un « entre ».
+ECART_MINI_PULSE = 2
+
+
+def pulsation(pulsations, cadence):
+    """Le filtre qui fait battre l'image sur les frappes d'un roulement."""
+    if not pulsations:
+        return ""
+    cadence = float(cadence)
+    largeur = 0.9 / cadence
+    # On écarte les frappes trop serrées pour que l'œil les distingue : sous deux
+    # images d'intervalle, deux pulsations n'en feraient qu'une.
+    gardees = []
+    for q in sorted(float(x) for x in pulsations if float(x) >= 0):
+        if gardees and (q - gardees[-1]) * cadence < ECART_MINI_PULSE:
+            continue
+        gardees.append(q)
+    if not gardees:
+        return ""
+    # « eq » accepte une expression pour sa luminosité, évaluée à chaque image :
+    # on somme des créneaux, un par frappe. Le plan reste le même, il bat.
+    creneaux = "+".join(f"between(t,{q:.4f},{q + largeur:.4f})" for q in gardees[:24])
+    return f"eq=brightness='{FORCE_PULSE}*({creneaux})':eval=frame"
+
+
 def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, eclair=False,
-             couleur="", pic=None, duree_source=0.0):
+             couleur="", pic=None, duree_source=0.0, pulsations=None):
     """Un plan, normalisé au cadre commun.
 
     On réencode ici, et c'est voulu : les rushs viennent de sources différentes,
@@ -211,6 +264,11 @@ def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, eclair=Fal
         # constante, et c'est cette sortie-là que l'éclair et la secousse voient.
         filtres.append(courbe["setpts"])
         filtres.append(f"fps={cadence}")
+    # La pulsation après l'harmonisation — elle s'ajoute à l'image corrigée — et
+    # avant l'éclair, qui doit rester blanc pur.
+    battement = pulsation(pulsations, cadence)
+    if battement:
+        filtres.append(battement)
     if eclair:
         # L'éclair d'impact : une seule image blanche, sur la première du plan.
         #
@@ -423,7 +481,8 @@ def main():
             decouper(rapatries[plan["video"]], plan["entree"], plan["sortie"],
                      morceau, cadence, largeur, hauteur, bool(plan.get("eclair")),
                      couleurs.get(plan["video"], ""),
-                     plan.get("pic"), durees.get(plan["video"], 0.0))
+                     plan.get("pic"), durees.get(plan["video"], 0.0),
+                     plan.get("pulsations"))
             morceaux.append(morceau)
             marques = []
             if plan.get("eclair"):
@@ -431,6 +490,8 @@ def main():
             if plan.get("eclair") and rampe(plan.get("pic"), plan["entree"], plan["sortie"],
                                             cadence, durees.get(plan["video"], 0.0)):
                 marques.append("rampe 0,65× → 1,8×")
+            if plan.get("pulsations"):
+                marques.append(f"{len(plan['pulsations'])} pulsations")
             print(f"plan {rang + 1}/{len(plans)}"
                   + (f" · {' · '.join(marques)}" if marques else ""), flush=True)
 

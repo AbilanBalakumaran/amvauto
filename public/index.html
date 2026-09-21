@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 18:19";
+const VERSION_PAGE = "2026-09-21 18:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6247,6 +6247,20 @@ async function genererLAmv() {
             .map(([phase, liste]) => `${phase}=${median(liste)}`).join(" "),
         });
       }
+      if (projet.__roulements) {
+        const battues = montage.filter((x) => x.pulsations?.length);
+        const total = battues.reduce((s, x) => s + x.pulsations.length, 0);
+        noter(`Roulements : ${projet.__roulements} rafale${projet.__roulements > 1 ? "s" : ""}`
+          + ` sur les montées · ${battues.length} plan${battues.length > 1 ? "s" : ""} qui bat`
+          + ` · ${total} pulsations`, battues.length ? "fait" : "alerte", {
+          rafales: projet.__roulements,
+          plansQuiBattent: battues.length,
+          pulsations: total,
+          // On ne coupe pas sur un roulement : huit plans en une seconde ne se
+          // lisent pas. C'est l'image qui bat, pas le montage qui accélère.
+          coupesAjoutees: 0,
+        });
+      }
       const bandes = projet.__bandes;
       if (bandes && (bandes.grave || bandes.jugees)) {
         const retirees = Math.max(0, bandes.dansLaVoix - bandes.dansLaVoixTenu);
@@ -7276,6 +7290,7 @@ window.__banc = {
   accordDuMouvement: (...a) => accordDuMouvement(...a),
   escalade: (...a) => escalade(...a), axeDeLaSerie: (s) => axeDeLaSerie(s),
   raccordChromatique: (...a) => raccordChromatique(...a),
+  roulementsDe: (...a) => roulementsDe(...a),
   teinteDuPlan: (x) => teinteDuPlan(x), ecartDeTeinte: (a, z) => ecartDeTeinte(a, z),
   chaleurDe: (a) => chaleurDe(a),
   sensDuPlan: (p) => sensDuPlan(p),
@@ -15997,6 +16012,10 @@ function feuilleDeRoute(projet, musique) {
          l'éclair, il ne va qu'au rendu — l'archive DaVinci livre les rushs tels
          quels. */
       ...(typeof plan.pic === "number" ? { pic: Math.round(plan.pic * 1000) / 1000 } : {}),
+      /* Les frappes d'un roulement, comptées depuis le début du plan : le rendu
+         y pose une pulsation de luminance. Le plan ne se coupe pas davantage —
+         huit plans différents en une seconde ne se lisent pas. */
+      ...(plan.pulsations?.length ? { pulsations: plan.pulsations } : {}),
     });
   }
 
@@ -20399,6 +20418,73 @@ const ACCELERATION = [1.15, 0.85, 0.62, 0.45, 0.32];
 
    Sur le drop, on ne déplace rien : un refrain se chante sur les frappes, et
    fuir la voix y reviendrait à fuir la musique. */
+/* ---- Les roulements de percussion ---------------------------------------
+
+   Dans une montée de trap, de phonk, de drum & bass ou de rock, la caisse claire
+   ou les charleys se mettent à rouler : des croches, puis des doubles croches,
+   de plus en plus serrées jusqu'au drop. C'est le geste le plus attendu de toute
+   la musique moderne, et le montage n'en faisait rien.
+
+   On pourrait couper à chaque frappe du roulement. Ce serait une faute : huit
+   plans différents en une seconde ne se lisent pas — l'œil n'a pas le temps de
+   comprendre une image, et le résultat est un bruit visuel, pas une accélération.
+   Un monteur fait l'inverse : il TIENT un plan et le fait pulser.
+
+   On repère donc les rafales — au moins quatre frappes à moins de 150 ms d'écart,
+   sur une montée — et on les signale au rendu, qui y pose une pulsation de
+   luminance calée sur chaque frappe. Le plan ne change pas, la coupe ne bouge
+   pas, la ligne de temps encore moins : c'est l'image qui bat.
+
+   La détection se fait sur la bande la plus fine qu'on ait — l'aigu quand il
+   frappe, la caisse sinon —, parce que c'est là que vivent les charleys. */
+const ROULEMENT_ECART = 0.15;   // 150 ms : au-delà, ce sont des frappes séparées
+const ROULEMENT_MINI = 4;       // moins de quatre, c'est un motif, pas un roulement
+const ROULEMENT_MAX = 2.4;      // un roulement plus long qu'une mesure n'en est plus un
+
+function roulementsDe(rythme, moments, sections) {
+  if (!moments || !sections?.length) return [];
+  /* L'aigu d'abord : les charleys y vivent. Quand il ne frappe pas assez, la
+     caisse fait l'affaire — un roulement de snare est tout aussi bon. */
+  const candidats = ["aigu", "caisse", rythme?.instrument].filter(Boolean);
+  let frappes = [];
+  for (const bande of candidats) {
+    const liste = (rythme?.instruments?.[bande] || [])
+      .filter((a) => a.force > 0).sort((x, y) => x.quand - y.quand);
+    if (liste.length > frappes.length) frappes = liste;
+    if (frappes.length >= 32) break;
+  }
+  if (frappes.length < ROULEMENT_MINI) return [];
+
+  const momentA = (quand) => {
+    const rang = sections.findIndex((s) => quand >= s.debut && quand < s.fin);
+    return rang >= 0 ? moments[rang] : "";
+  };
+
+  const trouves = [];
+  let debut = 0;
+  for (let i = 1; i <= frappes.length; i += 1) {
+    const colle = i < frappes.length
+      && frappes[i].quand - frappes[i - 1].quand <= ROULEMENT_ECART;
+    if (colle) continue;
+    const combien = i - debut;
+    if (combien >= ROULEMENT_MINI) {
+      const a = frappes[debut].quand;
+      const z = frappes[i - 1].quand;
+      // Un roulement n'a de sens que sur une montée : ailleurs, c'est le motif
+      // ordinaire du morceau, et le faire pulser serait un tic.
+      if (z - a <= ROULEMENT_MAX && momentA(a) === "montee") {
+        trouves.push({
+          debut: Math.round(a * 1000) / 1000,
+          fin: Math.round(z * 1000) / 1000,
+          frappes: frappes.slice(debut, i).map((f) => Math.round(f.quand * 1000) / 1000),
+        });
+      }
+    }
+    debut = i;
+  }
+  return trouves;
+}
+
 const PORTEE_GRAVE = 0.09;     // à neuf centièmes, la coupe est sur le coup
 const PRIME_GRAVE = 1.35;      // ce que vaut une coupe adossée au grave
 const MALUS_SANS_GRAVE = 0.72; // ce que vaut un drop sans rien sous 150 Hz
@@ -20435,6 +20521,7 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
     return false;
   };
   const seuilVoix = rythme?.voix ? seuilDOccupation(rythme.voix) : Infinity;
+  const roulements = roulementsDe(rythme, moments, sections);
   /* Ce que les bandes ont fait, compté à l'endroit où elles le font.
 
      Compter sur la grille finale sous-estime le travail, et faussement : une
@@ -20704,6 +20791,21 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
     ? rythme.sections
     : [{ debut: 0, fin: rythme.duree || 0, energie: 2, nom: "montee" }];
 
+  /* Les roulements de percussion du morceau, repérés une fois.
+
+     Il faut « sections » pour les situer, donc ce calcul vient après elle — un
+     banc l'a rappelé de la meilleure façon possible : posé plus haut, il levait
+     « Cannot access 'sections' before initialization » et la génération
+     s'arrêtait net, journal à l'appui.
+
+     Le plan qui recouvre un roulement ne se coupe pas davantage — le plancher de
+     la grille l'interdit déjà — mais il reçoit ses instants de pulsation, et le
+     rendu les fait battre. */
+  const momentsDuMorceau = sections.map((s, rang) =>
+    phaseDuMontage(s, rang, sections, rythme.duree || 0));
+  const roulements = roulementsDe(rythme, momentsDuMorceau, sections);
+  projet.__roulements = roulements.length;
+
   sources.forEach((plan) => { plan.__pris = 0; delete plan.__picVu; delete plan.__morceaux; delete plan.__famille; });
   const vus = new Map();
   // La famille du dernier plan posé, et depuis combien de plans elle dure.
@@ -20954,11 +21056,31 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
          le coup part. Sans pic, pas de rampe : un ralenti posé au hasard dans le
          plan étire un geste qui n'existe pas. */
       const pic = eclair ? picDuPlan(choix, bornes.entree, bornes.sortie) : null;
+      /* Les pulsations de ce plan-ci : les frappes du roulement qui tombent
+         pendant qu'il est à l'écran, comptées depuis son début. Un plan qui ne
+         recouvre aucun roulement n'en porte aucune. */
+      const finDuPlan = curseur + pose;
+      const vues = new Set();
+      const pulsations = [];
+      for (const roulement of roulements) {
+        if (roulement.fin < curseur || roulement.debut >= finDuPlan) continue;
+        for (const quand of roulement.frappes) {
+          if (quand < curseur || quand >= finDuPlan) continue;
+          const depuis = Math.round((quand - curseur) * 1000) / 1000;
+          // Deux frappes de bandes différentes tombent parfois sur le même
+          // millième : une seule pulsation, sinon l'image bat deux fois d'un coup.
+          if (vues.has(depuis)) continue;
+          vues.add(depuis);
+          pulsations.push(depuis);
+        }
+      }
+      pulsations.sort((a, z) => a - z);
       montage.push({
         ...choix,
         ...bornes,
         ...(eclair ? { eclair: true } : {}),
         ...(pic !== null ? { pic } : {}),
+        ...(pulsations.length >= ROULEMENT_MINI ? { pulsations } : {}),
         id: `${idRush(choix)}#${Date.now().toString(36)}${(compteurCoupes += 1).toString(36)}`,
         rush: idRush(choix),
         __pris: undefined,
