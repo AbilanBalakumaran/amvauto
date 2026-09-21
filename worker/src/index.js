@@ -61,6 +61,10 @@ function serialize({ post, score }) {
     technique: techniqueOf(post.tags),
     flags: qualityFlags(post),
     artists: post.artists.map((a) => a.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())),
+    /* Les mêmes mains, en tags bruts. Le montage compare là-dessus : c'est le fil
+       qu'il tient d'un plan au suivant, et un nom rendu lisible ne se recompare
+       plus à un tag. */
+    auteurs: post.artists,
     width: post.width,
     height: post.height,
     mb: Math.round((post.file_size / 1e6) * 100) / 100,
@@ -285,6 +289,62 @@ async function propositions(question, limite = 10) {
 // Un tag de copyright, écrit pour être lu : « naruto_(2002) » → « Naruto (2002) ».
 const joliTag = (nom) => nom.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
+/* Quelles mains ont animé cette série, et combien de plans chacune.
+
+   Le fil du montage a besoin d'un menu : on ne tape pas « hiroyuki_yamashita » de
+   mémoire. Le recensement se fait sur la pioche entière — pas sur les vingt-quatre
+   plans retenus —, sinon un animateur présent dans tout l'animé disparaîtrait du
+   menu parce qu'aucun de ses plans n'est dans le haut du classement.
+
+   Trente noms au plus, et trois plans au moins : en dessous, il n'y a pas de quoi
+   tenir un fil sur quarante coupes, et la queue de la liste ne ferait que
+   l'allonger. */
+const FIL_MENU = 30;
+const FIL_MINI = 3;
+
+function recenserAuteurs(posts) {
+  const compte = new Map();
+  for (const post of posts) {
+    for (const nom of post.artists || []) compte.set(nom, (compte.get(nom) || 0) + 1);
+  }
+  return [...compte.entries()]
+    .filter(([, n]) => n >= FIL_MINI)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, FIL_MENU)
+    .map(([tag, n]) => ({ tag, nom: joliTag(tag), n }));
+}
+
+/* Les mains d'une série, demandées avant de générer.
+
+   Le recensement voyage déjà avec « /api/rushes », mais il arrive pendant la
+   génération — trop tard pour choisir qui suivre. Cette route sert le même
+   recensement tout seul, quand l'animé est choisi : la page l'appelle une fois,
+   hors du chemin critique, et le tunnel garde ses deux secondes.
+
+   Elle n'est pas gratuite pour autant, et c'est voulu : elle demande la même
+   pioche de deux mille posts que la génération réclamera ensuite, donc ses pages
+   sont gardées au bord et la génération les retrouve chaudes. Payer ici fait
+   gagner là.
+
+   L'animé mixte n'en a pas : un AMV qui traverse cinq séries n'a pas de fil à
+   tenir, et un menu de trente noms venus de partout ne voudrait rien dire.
+
+   Elle sert les animateurs, et non les personnages : Sakugabooru n'étiquette
+   aucun personnage. C'est expliqué en tête de « sakuga.js », preuve à l'appui. */
+async function handleCasting(url) {
+  const tagExact = (url.searchParams.get("tag") || "").trim();
+  const query = (url.searchParams.get("anime") || "").trim();
+  if (!tagExact && !query) {
+    return json({ error: "Le fil demande un animé : un AMV mixte n'a pas de fil à suivre." }, 400);
+  }
+  if (tagExact && (/\s/.test(tagExact) || tagExact.startsWith("-"))) {
+    return json({ error: `Tag invalide : « ${tagExact} ».` }, 400);
+  }
+  const posts = tagExact ? await rushes(tagExact, 2000) : (await resolve(query, 2000))?.posts;
+  if (!posts?.length) return json({ auteurs: [], total: 0 });
+  return json({ total: posts.length, auteurs: recenserAuteurs(posts) });
+}
+
 async function handleRushes(url) {
   const query = (url.searchParams.get("anime") || "").trim();
 
@@ -332,6 +392,7 @@ async function handleRushes(url) {
       tag: tagExact,
       mood,
       total: posts.length,
+      auteurs: recenserAuteurs(posts),
       rushes: [...rank(posts, mood, top).map(serialize),
         ...(generiquesVoulus ? await generiquesDe(nomLisible, posts.length) : [])],
     });
@@ -358,6 +419,7 @@ async function handleRushes(url) {
       tag: tagAmbiance || "order:score",
       mood,
       total: trouves.length,
+      auteurs: recenserAuteurs(trouves),
       rushes: [
         ...rank(trouves, mood, top).map((entree) => ({
           ...serialize(entree),
@@ -388,6 +450,7 @@ async function handleRushes(url) {
     tag: resolved.tag,
     mood,
     total: resolved.posts.length,
+    auteurs: recenserAuteurs(resolved.posts),
     rushes: [...rank(resolved.posts, mood, top).map(serialize),
       ...(generiquesVoulus ? await generiquesDe(query, resolved.posts.length) : [])],
   });
@@ -443,7 +506,8 @@ async function garder(coffreBord, request, ctx, reponse) {
   return reponse;
 }
 
-const ROUTES_GARDEES = new Set(["/api/tree", "/api/rushes", "/api/suggest", "/api/moods"]);
+const ROUTES_GARDEES = new Set(["/api/tree", "/api/rushes", "/api/suggest", "/api/moods",
+  "/api/casting"]);
 
 export default {
   async fetch(request, env, ctx) {
@@ -468,6 +532,7 @@ export default {
           return await garder(coffreBord, request, ctx,
             json({ series: await propositions(url.searchParams.get("q") || "", 10) }));
         }
+        if (url.pathname === "/api/casting") return await garder(coffreBord, request, ctx, await handleCasting(url));
         if (url.pathname === "/api/media") return await relayerMedia(request, url);
         if (url.pathname === "/api/extrait") return await extrait(request, url, env, ctx);
         if (url.pathname === "/api/cles") return await cles(request, url, env, ctx);

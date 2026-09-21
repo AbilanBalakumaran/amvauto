@@ -16,6 +16,27 @@ const PAPER_TAGS = new Set(["genga", "production_materials", "layout", "douga"])
 // dans l'isolate et on laisse le cache Cloudflare absorber le reste.
 let artistCache = null;
 
+/* ---- Ce que Sakugabooru NE dit pas : les personnages ----------------------
+
+   Un AMV a besoin d'un fil : sur mille huit cents rushs, enchaîner des plans qui
+   n'ont personne en commun donne une bande-démo d'animateurs, pas un récit. Le
+   fil évident serait le personnage — suivre Naruto, ou monter un duel Naruto
+   contre Sasuke.
+
+   Sakugabooru ne le permet pas. Le site n'étiquette AUCUN personnage :
+   « naruto_uzumaki », « sasuke_uchiha », « gojo_satoru » ne sont pas des tags,
+   et le type 4 de son catalogue — celui que Danbooru réserve aux personnages —
+   ne compte que dix tags, qui sont des signatures d'animation : kanada_light_flare,
+   itano_circus, obari_punch, ebata_walk. Relevé sur le site le 21/09/2026 :
+   tag.json?name=naruto_uzumaki rend une liste vide.
+
+   La seule identité que porte un cut, c'est son ANIMATEUR — et celle-là est
+   riche : « hiroyuki_yamashita », « shingo_yamashita », plusieurs par plan,
+   quinze cents pour Hironori Tanaka. C'est elle qui sert de fil. Ce n'est pas la
+   continuité de personnage demandée, c'est la continuité de main : le geste, le
+   trait, la façon de déformer. En AMV de compétition, c'est un fil reconnu — le
+   sakuga showcase se monte comme ça. */
+
 async function api(path, params, ttl) {
   const url = new URL(BASE + path);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
@@ -88,6 +109,10 @@ export async function posts(tags, limit) {
       height: item.height || 0,
       rating: item.rating || "s",
       source: item.source || "",
+      /* Les tags bruts, pas les noms rendus lisibles : c'est sur eux que le
+         montage compare, et « Hiroyuki Yamashita » ne se recompare plus à
+         « hiroyuki_yamashita ». « artist_unknown » est déjà écarté par la table :
+         ce n'est pas une main, c'est une absence de crédit. */
       artists: tagList.filter((tag) => artists.has(tag)),
     };
   });

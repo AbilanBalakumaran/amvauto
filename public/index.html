@@ -596,6 +596,14 @@ main {
 /* Les pastilles : tout le vocabulaire visible d'un coup, ce qui est pris se
    distingue du reste sans avoir à lire. */
 .pastilles { display: flex; flex-wrap: wrap; gap: var(--e2); }
+/* Le fil des mains, sous l'animé : un liseré à gauche dit qu'il dépend de
+   lui, et un menu de trente noms doit pouvoir défiler sans pousser la page. */
+.tunnel-fil {
+  display: flex; flex-direction: column; gap: var(--e2);
+  margin-top: var(--e3); padding-left: var(--e3);
+  border-left: 2px solid var(--trait);
+}
+.tunnel-fil .pastilles { max-height: 132px; overflow-y: auto; }
 .pastille {
   padding: 7px 12px; border-radius: 999px;
   border: 1px solid var(--trait); background: #111; color: var(--doux);
@@ -2340,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 11:19";
+const VERSION_PAGE = "2026-09-21 14:14";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4373,6 +4381,11 @@ const tunnel = {
      l'onglet Explorer est parti AnimeThemes est parti avec — sans que rien ne le
      dise. Deux cases, donc, et l'on voit ce qui alimente son AMV. */
   sources: { sakuga: true, generiques: true },
+  /* Quelle main l'AMV suit. Vide : personne en particulier, comme avant. Un nom :
+     on tient un animateur. Deux : c'est un duel, et le montage alterne.
+     « casting » est ce que la série propose, « castingPour » le tag pour lequel on
+     l'a demandé — sans quoi changer d'animé garderait l'ancien menu. */
+  auteurs: [], casting: [], castingPour: "", castingEnVol: false,
 };
 
 /* Ce que le tunnel a à dire vit dans son état, pas dans un nœud.
@@ -4924,6 +4937,96 @@ function majVersDeLaTrame() {
 }
 
 /* --- 3. L'animé ------------------------------------------------------- */
+/* Le casting, demandé une fois par série.
+
+   Il arrive après l'arborescence, comme les bandes-annonces : la génération n'a
+   pas à l'attendre, et le tunnel garde ses deux secondes. Un échec ne coûte
+   rien — pas de menu, donc pas de fil, donc le montage d'avant. */
+const FORME_CASTING = 1;
+
+async function demanderLeCasting(serie) {
+  const tag = serie?.tag || "";
+  const nom = serie?.display || serie?.nom || "";
+  const cle = tag || nom;
+  if (!cle || tunnel.castingPour === cle || tunnel.castingEnVol) return;
+  tunnel.castingEnVol = true;
+  try {
+    /* « f » est la version de la forme de la réponse, et elle fait partie de la
+       clé du cache de bord — six heures, avec un jour de sursis. Sans elle,
+       changer la forme du JSON laisse la page lire l'ancienne pendant six heures :
+       mesuré en vrai, un menu vide sur Naruto Shippuden alors que le serveur
+       rendait bien ses trente mains. On la monte quand la forme change. */
+    const cible = `/api/casting?${tag ? `tag=${encodeURIComponent(tag)}` : `anime=${encodeURIComponent(nom)}`}`
+      + `&f=${FORME_CASTING}`;
+    const reponse = await fetch(cible);
+    const contenu = await reponse.json();
+    if (!reponse.ok) throw new Error(contenu?.error || String(reponse.status));
+    // Toujours marquer : sans quoi un animé sans crédit d'animateur referait
+    // l'appel à chaque redessin.
+    tunnel.castingPour = cle;
+    tunnel.casting = Array.isArray(contenu.auteurs) ? contenu.auteurs : [];
+  } catch (erreur) {
+    console.warn("casting indisponible :", erreur.message);
+    tunnel.castingPour = cle;
+    tunnel.casting = [];
+  } finally {
+    tunnel.castingEnVol = false;
+    rendreCreer();
+  }
+}
+
+/* Le fil à suivre, à l'écran.
+
+   Deux noms au plus, et c'est une limite de grammaire, pas de code : à trois, il
+   n'y a plus d'alternance à tenir, seulement une liste de figurants. Un nom,
+   c'est un protagoniste ; deux, c'est un duel. */
+function blocDuFil() {
+  if (tunnel.portee !== "unique" || !tunnel.casting.length) return null;
+  const boite = document.createElement("div");
+  boite.className = "tunnel-fil";
+
+  const titre = document.createElement("p");
+  titre.className = "tunnel-dit";
+  const pris = tunnel.auteurs
+    .map((tag) => tunnel.casting.find((x) => x.tag === tag)?.nom || tag);
+  titre.textContent = pris.length === 2
+    ? `Duel de mains : ${pris[0]} contre ${pris[1]} — elles alternent sur les`
+      + " couplets, et se retrouvent sur le même plan au drop."
+    : pris.length === 1
+      ? `On suit la main de ${pris[0]} — les plans sans crédit restent permis.`
+      : "Quelle main l'AMV suit ? Un nom pour un animateur, deux pour un duel."
+        + " Rien, et le montage prend les meilleurs plans d'où qu'ils viennent.";
+  boite.append(titre);
+
+  const rangee = document.createElement("div");
+  rangee.className = "pastilles";
+  for (const main of tunnel.casting) {
+    const choisi = tunnel.auteurs.includes(main.tag);
+    const pastille = document.createElement("button");
+    pastille.type = "button";
+    pastille.className = `pastille${choisi ? " on" : ""}`;
+    pastille.textContent = `${main.nom} · ${main.n}`;
+    pastille.title = `${main.n} plan${main.n > 1 ? "s" : ""} de cette main dans le catalogue`;
+    pastille.disabled = Boolean(tunnel.occupe);
+    pastille.addEventListener("click", () => {
+      if (choisi) {
+        tunnel.auteurs = tunnel.auteurs.filter((x) => x !== main.tag);
+      } else {
+        /* La troisième pousse la première dehors. Refuser le clic laisserait
+           l'utilisateur deviner qu'il faut d'abord décocher : on prend le geste
+           pour ce qu'il dit — « celle-là aussi » — et c'est la plus ancienne qui
+           part. */
+        tunnel.auteurs = [...tunnel.auteurs, main.tag].slice(-2);
+      }
+      tunnel.montage = null;
+      rendreCreer();
+    });
+    rangee.append(pastille);
+  }
+  boite.append(rangee);
+  return boite;
+}
+
 function blocAnime() {
   const boite = blocTunnel(3, "L'animé", "Un seul titre, ou un mélange de tout ce qui va.");
 
@@ -5009,10 +5112,16 @@ function blocAnime() {
     const choisirLAnime = (serie) => {
       tunnel.animes = [{ nom: serie.display, tag: serie.tag || "", scenes: serie.scenes || 0 }];
       tunnel.montage = null;
+      // Changer d'animé jette le fil : une main qui n'a pas travaillé sur la
+      // nouvelle série ferait reculer tous les plans sans jamais gagner.
+      tunnel.auteurs = [];
+      tunnel.casting = [];
+      tunnel.castingPour = "";
       propositions.hidden = true;
       champ.value = serie.display;
       champ.blur();
       rendreCreer();
+      demanderLeCasting(serie);
     };
 
     let attente = null;
@@ -5085,6 +5194,15 @@ function blocAnime() {
     } else if (champ.value.trim().length >= 2) {
       // Le champ garde son texte d'un redessin à l'autre : on redit ce qu'il vaut.
       proposer();
+    }
+    /* Le casting survit au redessin : si l'animé est déjà pris et qu'on ne l'a
+       pas encore demandé, on le demande — au retour d'Historique, par exemple. */
+    if (pris && typeof pris !== "string") {
+      const fil = blocDuFil();
+      if (fil) boite.append(fil);
+      else if (!tunnel.castingEnVol && tunnel.castingPour !== (pris.tag || pris.nom)) {
+        demanderLeCasting({ tag: pris.tag, display: pris.nom });
+      }
     }
   }
   return boite;
@@ -5780,6 +5898,9 @@ async function genererLAmv() {
     passages: tunnel.rythme.sections?.length || 0,
     trame: tunnel.etiquettes.join(">"),
     paroles: (tunnel.paroles || []).length,
+    fil: tunnel.auteurs.length
+      ? `${tunnel.auteurs.join(" contre ")} (${tunnel.auteurs.length === 2 ? "duel de mains" : "une main"})`
+      : "aucun",
   });
   rendreCreer();
   const dire = direTunnel;
@@ -5883,6 +6004,9 @@ async function genererLAmv() {
     projet.plans = [];
     projet.rushs = [...new Map(trouves.map((rush) => [String(idRush(rush)),
       { ...rush, id: idRush(rush), rush: undefined, duree: null, entree: 0, sortie: null }])).values()];
+    /* Le fil voyage avec le montage, pas avec l'écran : refaire le montage depuis
+       la page d'un rendu doit retrouver le même duel. */
+    projet.auteurs = [...tunnel.auteurs].slice(0, 2);
 
     /* Une seule lecture par scène, côté serveur, et elle rapporte tout.
 
@@ -6055,6 +6179,32 @@ async function genererLAmv() {
         eclairs,
         surQuoi: eclairs ? "frappes ≥ 85 % servies par un choc" : "",
       });
+      /* Le fil, mesuré. Sans cette ligne, un duel demandé mais introuvable dans
+         le catalogue passerait pour un duel réussi : on dit donc combien de
+         coupes le portent vraiment, et l'alternance qui en est sortie. */
+      if (projet.auteurs?.length) {
+        const cibles = projet.auteurs;
+        const qui = montage.map((bloc) => cibles.filter((nom) => (bloc.auteurs || []).includes(nom)));
+        const portees = qui.filter((x) => x.length).length;
+        const ensemble = qui.filter((x) => x.length === 2).length;
+        let alternances = 0;
+        for (let i = 1; i < qui.length; i += 1) {
+          if (qui[i].length === 1 && qui[i - 1].length === 1 && qui[i][0] !== qui[i - 1][0]) alternances += 1;
+        }
+        const part = montage.length ? Math.round((portees / montage.length) * 100) : 0;
+        noter(`Fil ${cibles.length === 2 ? "du duel de mains" : "de la main"} :`
+          + ` ${portees}/${montage.length} coupes le portent (${part} %)`
+          + (cibles.length === 2 ? ` · ${alternances} alternances · ${ensemble} plans à deux` : ""),
+        portees ? "fait" : "alerte", {
+          cibles: cibles.join(" contre "),
+          portees: `${portees}/${montage.length}`,
+          ensemble: cibles.length === 2 ? ensemble : "",
+          alternances: cibles.length === 2 ? alternances : "",
+          // Le vivier disponible : c'est lui qui dit si un fil maigre est un
+          // défaut du barème ou un catalogue qui n'avait pas mieux.
+          vivier: `${surs.filter((r) => cibles.some((n) => (r.auteurs || []).includes(n))).length}/${surs.length}`,
+        });
+      }
       noter(`Plans : du plus court ${longueurs[0].toFixed(2)} s au plus long`
         + ` ${longueurs[longueurs.length - 1].toFixed(2)} s`
         + ` · médian ${longueurs[Math.floor(longueurs.length / 2)].toFixed(2)} s`, "fait");
@@ -18821,6 +18971,89 @@ function accordDuMouvement(precedent, plan, fort = false) {
   return 1 * poids;
 }
 
+/* ---- Le fil : suivre une main d'un plan au suivant -----------------------
+
+   Le défaut qu'on vise : sur un catalogue étendu — mille huit cents rushs sur
+   Naruto — le montage enchaîne des plans qui n'ont rien en commun. Chaque coupe
+   est juste au rythme et sans suite : ça défile, ça ne raconte pas.
+
+   Le fil devrait être le personnage. **Il ne peut pas l'être : Sakugabooru
+   n'étiquette aucun personnage** — ni « naruto_uzumaki », ni « sasuke_uchiha »,
+   ni « gojo_satoru » ; la preuve est en tête de « worker/src/sakuga.js ». La
+   seule identité qu'un cut porte est son ANIMATEUR, et celle-là est riche :
+   plusieurs par plan, des centaines par série.
+
+   C'est donc une continuité de main : le geste, le trait, la façon de déformer un
+   corps. Elle n'est pas narrative, elle est plastique — et en AMV de compétition
+   elle en vaut une, parce que c'est ainsi que se monte un sakuga showcase. Deux
+   modes.
+
+   **Une main.** Les plans qu'elle a animés passent devant. Un plan sans crédit
+   — « artist_unknown », donc aucun auteur connu — n'est PAS pénalisé : un AMV a
+   besoin de ces plans pour respirer, et les interdire ferait tenir tout le
+   montage sur les quinze cuts d'un seul animateur. Seuls les plans d'une autre
+   main reculent.
+
+   **Un duel.** Deux noms, et la grammaire change selon le moment :
+   — sur les couplets et les montées, on veut l'ALTERNANCE — A, puis B, puis A.
+     Deux mains qui se répondent, et c'est ce qui installe la confrontation avant
+     qu'elle ait lieu. Reprendre la même qu'au plan d'avant coûte.
+   — sur le drop, on veut la RENCONTRE : les deux créditées sur le même cut. Ça
+     existe et ce n'est même pas rare — un plan de Naruto Shippuden en porte six.
+     Un seul des deux y devient coûteux, et le plan sans crédit aussi.
+
+   Un plan à deux mains ne se dépense pas ailleurs, et c'est la même leçon que
+   les images d'impact : la ressource est rare — six plans à deux mains dans un
+   catalogue de quarante-six —, et la récompenser partout la consomme avant
+   d'arriver au drop. Mesuré au banc : à vingt points partout, la rencontre
+   tombait à vingt pour cent des coupes du drop contre vingt-six pour cent du
+   montage entier — l'inverse exact du but. Hors du drop, elle vaut donc à peine
+   plus qu'un plan ordinaire ; c'est le drop qui la paie.
+
+   Tout reste franchissable, et c'est la règle de résilience : les valeurs sont
+   sous le budget d'épisode (60) et très sous la redite d'une scène (100). Quand
+   le vivier de la main est épuisé — ou qu'elle n'a jamais compté que huit plans
+   pour quarante coupes —, le montage prend ce qu'il trouve et couvre la musique.
+   Il ne se bloque jamais, il se contente d'y perdre son fil. */
+const PORTE_LE_FIL = 14;      // la main suivie, présente
+const HORS_DU_FIL = 10;       // une autre main, à sa place
+const DUEL_ENSEMBLE = 4;      // les deux sur le même plan, hors du drop
+const DUEL_AU_CHOC = 28;      // les deux, sur un drop : c'est ce qu'on attend
+const DUEL_ALTERNE = 16;      // l'autre que celle d'avant
+const DUEL_REPETE = 6;        // la même que celle d'avant
+const DUEL_SEUL_AU_DROP = 12; // une seule des deux, quand il faudrait les deux
+const DUEL_VIDE_AU_DROP = 6;  // aucun crédit, quand il faudrait les deux
+
+const dedans = (plan) => plan?.auteurs || [];
+
+function focusDuFil(plan, precedent, phase, cibles) {
+  if (!cibles?.length) return 0;
+  const ici = dedans(plan);
+  const presents = cibles.filter((nom) => ici.includes(nom));
+  // Aucun crédit : le plan ne se juge pas au fil. C'est une respiration, pas une
+  // trahison — et sur Sakugabooru, « artist_unknown » couvre cent quinze mille
+  // posts, donc en faire une faute viderait le vivier.
+  const neutre = ici.length === 0;
+
+  if (cibles.length === 1) {
+    if (presents.length) return -PORTE_LE_FIL;
+    return neutre ? 0 : HORS_DU_FIL;
+  }
+
+  const auDrop = phase === "drop" || phase === "retombee";
+  if (presents.length === 2) return auDrop ? -DUEL_AU_CHOC : -DUEL_ENSEMBLE;
+  if (presents.length === 1) {
+    if (auDrop) return DUEL_SEUL_AU_DROP;
+    const avant = precedent ? cibles.filter((nom) => dedans(precedent).includes(nom)) : [];
+    // Un plan d'avant qui les créditait toutes les deux ne désigne pas de
+    // « même » : n'importe laquelle des deux enchaîne bien.
+    if (avant.length !== 1) return -DUEL_ALTERNE / 2;
+    return avant[0] === presents[0] ? DUEL_REPETE : -DUEL_ALTERNE;
+  }
+  if (neutre) return auDrop ? DUEL_VIDE_AU_DROP : 0;
+  return HORS_DU_FIL;
+}
+
 /* De quoi départager deux candidats rigoureusement à égalité. Sans cela, cinq
    sources de même énergie et de même note se relayaient dans un ordre
    parfaitement cyclique — p0 p1 p2 p3 p4, quinze fois de suite —, et le montage
@@ -18895,7 +19128,7 @@ function estFixe(plan) {
 }
 
 function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0,
-  graine = 0, partFrappe = 0, phase = "") {
+  graine = 0, partFrappe = 0, phase = "", cibles = []) {
   // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
   const fort = partFrappe >= 0.62;
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
@@ -19092,6 +19325,7 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
 
   return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole + intention
     + illustration + contraste + impact + retombee + macro + jumpcut
+    + focusDuFil(plan, precedent, phase, cibles)
     + accordDuMouvement(precedent, plan, fort)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -19940,6 +20174,10 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
     .filter((plan) => dureeSource(plan) >= PLAN_MINI)
     .map((plan) => [String(idRush(plan)), plan])).values()];
   if (!rythme?.bpm || !sources.length) return null;
+  /* Quelle main l'AMV suit. Un tag absent du vivier ne se retire pas : c'est au
+     barème de constater qu'aucun plan ne le porte, et de laisser les autres
+     critères décider — le montage sort quand même. */
+  const cibles = (projet.auteurs || []).filter(Boolean).slice(0, 2);
   const chrono = ordre === "chrono";
   const suite = chrono ? [...sources].sort(parChronologie) : null;
   let rangSuite = 0;
@@ -20127,7 +20365,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
             const court = dureeSource(plan) < vise ? 3 : 0;
             const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets,
-              serie, graine, partFrappe, bord ? "" : phase) + court;
+              serie, graine, partFrappe, bord ? "" : phase, cibles) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) break;
