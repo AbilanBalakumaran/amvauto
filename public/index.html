@@ -2340,7 +2340,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 07:17";
+const VERSION_PAGE = "2026-09-21 07:23";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6950,6 +6950,7 @@ window.__banc = {
   basculerAudio: () => basculerAudio(),
   chercherRushs: (...a) => chercherRushs(...a), phraseResolution: (j) => phraseResolution(j),
   profilDe: (...a) => profilDe(...a), ecartDIntention: (...a) => ecartDIntention(...a),
+  ambiancesVoulues: (e) => ambiancesVoulues(e), familleDe: (p) => familleDe(p),
   tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
   majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
   journal: () => journalTunnel, noter: (t, n) => noter(t, n),
@@ -19959,21 +19960,50 @@ function tagsDesParoles(section) {
    Les bornes viennent de la mesure et non d'une intuition : sur des rushs de
    Sakugabooru, le milli-octet par pixel vaut 2 à 10 sur un plan presque
    immobile, 20 à 50 en régime ordinaire, 60 à 255 dans un combat. */
+/* Les cinq régimes d'un plan, et ce qui les distingue.
+
+   « Mouvement » les mélangeait tous : une course, un impact et une pluie de
+   débris tombaient dans le même sac. Ce sont pourtant trois moments différents
+   d'une même phrase, et c'est cette phrase qui fait un générique — l'élan
+   annonce, le choc frappe, la dispersion retombe. Les confondre donnait un
+   montage qui défile au lieu d'un montage qui raconte : trois plans de combat
+   d'affilée se valaient, alors qu'un seul des trois tombe juste.
+
+   Chaque régime porte ses étiquettes, sa bande de mouvement — en milli-octets
+   par pixel, ce que la courbe mesure — et ce qu'il attend de la tenue : un élan
+   est une translation qui dure, un choc est une pointe. « pointu » dit qu'on
+   préfère la pointe à la tenue, ce qui est exactement l'inverse du reste. */
 const INTENTIONS = {
   expression: {
     nom: "expressions", bande: [5, 34], tenue: 0.45,
-    tags: { character_acting: 6, dialogue: 5, crying: 5, hair: 2, fabric: 2, eating: 2, smoking: 2, walk_cycle: 1 },
+    tags: { character_acting: 6, dialogue: 5, crying: 5, hair: 2, fabric: 2, eating: 2,
+      smoking: 2, performance: 2, dancing: 2, walk_cycle: 1 },
   },
   decor: {
     nom: "décors", bande: [18, 62], tenue: 0.6,
-    tags: { background_animation: 8, rotation: 3, wind: 2, liquid: 2, effects: 1 },
+    tags: { background_animation: 8, rotation: 3, wind: 2, liquid: 2, ice: 1, effects: 1 },
   },
-  mouvement: {
-    nom: "mouvement de caméra", bande: [55, 255], tenue: 0.5,
-    tags: { running: 5, chase: 5, fighting: 4, smears: 4, flying: 4, martial_arts: 3, sliding: 3,
-      vehicle: 3, sports: 3, falling: 3, impact_frames: 2 },
+  elan: {
+    nom: "élan", bande: [55, 200], tenue: 0.62,
+    tags: { running: 6, chase: 6, smears: 5, flying: 4, sliding: 4, falling: 3, vehicle: 3,
+      motorcycles: 3, sports: 3, henshin: 2, morphing: 2 },
+  },
+  choc: {
+    nom: "choc", bande: [90, 300], tenue: 0.34, pointu: true,
+    tags: { impact_frames: 7, fighting: 5, explosions: 5, beams: 4, martial_arts: 4,
+      swords: 3, shooting: 3, weapons: 2 },
+  },
+  dispersion: {
+    nom: "dispersion", bande: [45, 170], tenue: 0.45,
+    tags: { debris: 6, smoke: 5, sparks: 5, lightning: 4, fire: 4, liquid: 2, wind: 2, effects: 2 },
   },
 };
+
+/* La phrase — élan, choc, retombée — est déjà tenue ailleurs, par « FAMILLES »
+   et « SUIVANTE » : c'est elle qui décide de l'enchaînement d'un plan au
+   suivant, et qui fait payer le sur-place. Ce qui est décrit ici est autre
+   chose : ce qu'un passage DEMANDE, et à quel point un plan y répond. Les deux
+   se rejoignent sur les mêmes étiquettes sans se recouvrir. */
 
 /* Ce que chaque émotion de la trame demande, en parts. Un passage calme veut
    d'abord des décors, un passage d'émotion des visages, un passage d'action une
@@ -19981,16 +20011,18 @@ const INTENTIONS = {
 const DEMANDE = {
   calme: { decor: 3, expression: 2 },
   emotion: { expression: 4, decor: 1 },
-  tension: { expression: 3, decor: 2, mouvement: 1 },
-  elan: { mouvement: 3, decor: 1 },
-  action: { mouvement: 4 },
-  choc: { mouvement: 4, expression: 1 },
+  tension: { expression: 3, decor: 2, elan: 1 },
+  elan: { elan: 3, decor: 1, dispersion: 1 },
+  action: { choc: 3, elan: 2, dispersion: 1 },
+  choc: { choc: 4, dispersion: 2, expression: 1 },
 };
 
 // Sans étiquette d'émotion — les anciens projets, l'ancien automate —, l'énergie
 // dit à peu près la même chose.
 const demandeDe = (section) => DEMANDE[section?.emotion]
-  || ((section?.energie ?? 2) >= 2 ? { mouvement: 3, decor: 1 } : { expression: 3, decor: 2 });
+  || ((section?.energie ?? 2) >= 2
+    ? { choc: 2, elan: 2, dispersion: 1 }
+    : { expression: 3, decor: 2 });
 
 /* Le mouvement d'une fenêtre : sa force moyenne, et sa tenue.
 
@@ -20038,7 +20070,13 @@ function ecartDIntention(plan, section, entree, sortie) {
       // Quarante points de mouvement d'écart : au-delà, la fenêtre n'a plus rien
       // à voir avec ce qu'on cherche.
       const dedans = Math.max(0, 1 - dehors / 40);
-      parMouvement = dedans * (0.5 + 0.5 * Math.min(1, profil.tenue / vise.tenue));
+      /* Un choc est une pointe, pas une tenue : pour lui, c'est l'irrégularité
+         qui vaut. Partout ailleurs, un plan qui garde son régime vaut mieux
+         qu'un plan qui part dans tous les sens. */
+      const accordTenue = vise.pointu
+        ? Math.min(1, (1 - profil.tenue) / Math.max(0.05, 1 - vise.tenue))
+        : Math.min(1, profil.tenue / vise.tenue);
+      parMouvement = dedans * (0.5 + 0.5 * accordTenue);
     }
     note += (part / total) * (parEtiquettes * 0.5 + parMouvement * 0.5);
   }
@@ -20771,7 +20809,10 @@ function phraseResolution(journal) {
    trame la demande : « acting » pour les expressions, « decor » pour les décors,
    « combat » et « vitesse » pour le mouvement. Chaque ambiance a son propre
    classement côté serveur — c'est exactement ce à quoi elles servent. */
-const AMBIANCE_DE = { expression: ["acting"], decor: ["decor"], mouvement: ["combat", "vitesse"] };
+const AMBIANCE_DE = {
+  expression: ["acting"], decor: ["decor"],
+  elan: ["vitesse"], choc: ["combat"], dispersion: ["effets"],
+};
 
 function ambiancesVoulues(etiquettes) {
   const parts = {};
