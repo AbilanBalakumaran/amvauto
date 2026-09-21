@@ -2340,7 +2340,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 10:58";
+const VERSION_PAGE = "2026-09-21 11:19";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6002,24 +6002,59 @@ async function genererLAmv() {
         curseur += (x.sortie || 0) - (x.entree || 0);
         return { debut, duree: curseur - debut };
       });
+      /* Le nom de chaque moment, et ce qu'il est allé chercher. Un journal qui
+         dit « passage 3 » n'apprend rien ; un journal qui dit « [00:42–00:58]
+         Montée — accélération » montre que l'outil sait où il en est. */
+      const DIT_PHASE = {
+        intro: ["Intro", "ambiance et décors"],
+        couplet: ["Couplet", "acting et narration"],
+        montee: ["Montée", "accélération"],
+        drop: ["Drop", "impact sakuga"],
+        retombee: ["Retombée", "dispersion"],
+        outro: ["Outro", "plan tenu"],
+      };
       for (const [rang, section] of projet.rythme.sections.entries()) {
         const dedans = places.filter((x) => x.debut >= section.debut - 0.01
           && x.debut < section.fin);
         const tenu = dedans.reduce((t, x) => t + x.duree, 0);
-        noter(`Passage ${rang + 1} (${section.emotion || "?"}) :`
-          + ` ${dedans.length} coupes sur ${Math.round(section.fin - section.debut)} s`,
+        const phase = phaseDuMontage(section, rang, projet.rythme.sections,
+          projet.rythme.duree || 0);
+        const [nom, quoi] = DIT_PHASE[phase] || ["Passage", section.emotion || ""];
+        const eclairsIci = montage.filter((x, i) => x.eclair
+          && places[i].debut >= section.debut - 0.01 && places[i].debut < section.fin).length;
+        noter(`[${minutage(section.debut)}–${minutage(section.fin)}] ${nom}`
+          + ` — ${quoi} · ${dedans.length} coupes`
+          + (eclairsIci ? ` · ${eclairsIci} éclair${eclairsIci > 1 ? "s" : ""}` : ""),
         dedans.length ? "" : "alerte", {
-          de: `${Math.round(section.debut)}s`, a: `${Math.round(section.fin)}s`,
+          phase,
+          emotion: section.emotion || "",
           energie: section.energie,
           couvert: `${Math.round(tenu)}s`,
+          coupeMoyenne: dedans.length ? `${(tenu / dedans.length).toFixed(2)}s` : "—",
         });
       }
+      /* Le bilan d'impact, en une ligne : ce qu'un monteur regarderait d'abord.
+
+         Une coupe « à cheval » traverse un changement de plan dans le fichier
+         source — l'image saute au milieu du bloc, à contretemps. Zéro est la
+         seule valeur acceptable, et c'est ce que la découpe sur images-clés va
+         chercher ; la dire, c'est prouver qu'elle l'a obtenue. */
       const eclairs = montage.filter((x) => x.eclair).length;
-      if (eclairs) {
-        noter(`${eclairs} éclair${eclairs > 1 ? "s" : ""} d'impact sur les crêtes.`, "", {
-          coupes: eclairs, surQuoi: "frappes ≥ 85 % servies par un choc",
-        });
+      let aCheval = 0;
+      let mesurables = 0;
+      for (const bloc of montage) {
+        const fiche = clesConnues.get(mediaDe(bloc));
+        if (!fiche?.cles?.length) continue;
+        mesurables += 1;
+        if (fiche.cles.some((c) => c > bloc.entree + 0.05 && c < bloc.sortie - 0.05)) aCheval += 1;
       }
+      noter(`${montage.length} coupes · ${aCheval} à cheval sur ${mesurables} mesurées`
+        + ` · ${eclairs} éclair${eclairs > 1 ? "s" : ""} d'impact`,
+      aCheval ? "alerte" : "fait", {
+        aCheval: `${aCheval}/${mesurables}`,
+        eclairs,
+        surQuoi: eclairs ? "frappes ≥ 85 % servies par un choc" : "",
+      });
       noter(`Plans : du plus court ${longueurs[0].toFixed(2)} s au plus long`
         + ` ${longueurs[longueurs.length - 1].toFixed(2)} s`
         + ` · médian ${longueurs[Math.floor(longueurs.length / 2)].toFixed(2)} s`, "fait");
@@ -19709,21 +19744,33 @@ function phaseDuMontage(section, rang, sections, duree) {
   const part = duree > 0 ? debut / duree : 0;
   const avant = sections[rang - 1];
 
-  /* La respiration d'après le choc passe avant tout le reste : c'est le seul
-     moment qui se définit par ce qui le précède, et non par lui-même. */
+  const fin = section?.fin ?? debut;
+  const dernier = rang === sections.length - 1;
+
+  /* Une fin qui frappe n'est pas une conclusion.
+
+     « La dernière section est l'outro » paraissait évident, et c'est faux dès
+     qu'un morceau finit sur son refrain — ce qui est la règle en musique
+     populaire. Le montage appliquait alors les règles de la conclusion au drop
+     lui-même : le choc pénalisé de vingt-cinq points, le plan large préféré,
+     l'immobilité récompensée. Exactement l'inverse de ce que le moment demande.
+     Une conclusion se reconnaît à ce qu'elle retombe. */
+  if ((part >= PART_OUTRO || dernier) && energie <= 1) return "outro";
+
+  /* La respiration d'après le choc : le seul moment qui se définit par ce qui
+     le précède, et non par lui-même. */
   if (avant && (avant.energie ?? 0) >= 3 && energie < 3) return "retombee";
-  if (part >= PART_OUTRO || rang === sections.length - 1) return "outro";
+  if (energie >= 3) return "drop";
+
   /* L'intro est ce qui se passe AVANT que le morceau démarre, pas tout ce qui
      commence tôt : un couplet qui s'ouvre à la quatorzième seconde et court
      jusqu'à la quarantième n'est pas une pose, et le traiter comme telle
      interdisait le moindre mouvement pendant un quart du montage. On regarde
-     donc où la section FINIT — ou, pour la toute première, qu'elle reste
-     courte. */
-  const fin = section?.fin ?? debut;
-  const dansLIntro = duree > 0
-    && (fin <= duree * PART_INTRO || (rang === 0 && fin - debut <= duree * 0.3));
-  if (dansLIntro && energie <= 2) return "intro";
-  if (energie >= 3) return "drop";
+     donc où la section FINIT — ou, pour la toute première, qu'elle soit calme
+     et ne dépasse pas le premier tiers. */
+  const dansLIntro = duree > 0 && (fin <= duree * PART_INTRO
+    || (rang === 0 && energie <= 1 && fin <= duree * 0.35));
+  if (dansLIntro) return "intro";
   if (energie === 2) return "montee";
   return "couplet";
 }

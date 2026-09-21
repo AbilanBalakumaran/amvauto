@@ -24,15 +24,19 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
-> **Où en est l'outil.** Ce fichier est un journal de bord : il s'écrit par le bas,
-> section après section, et garde la trace de ce qui a été essayé, mesuré et
-> abandonné. La forme de l'application, elle, a changé depuis les premières
-> sections : on ne parcourt plus un explorateur de rushs pour monter à la main,
-> **on donne une musique et l'AMV en sort**. Quatre onglets — Créer, Veille,
-> Historique, Infos — et l'atelier de montage n'en a plus. La section
-> [« Le tunnel »](#depuis-lexplorateur-est-devenu-un-tunnel) raconte ce virage
-> et tout ce qui a suivi ; ce qui est décrit plus bas reste vrai du moteur,
-> pas toujours de l'écran.
+> **Ce que l'outil est aujourd'hui — v2.0, « moteur d'impact ».**
+> **Une musique entre, un AMV en sort.** Quatre onglets — Créer, Veille,
+> Historique, Infos. Il n'y a plus d'explorateur de rushs ni d'atelier de
+> montage : ni timeline multipiste, ni pellicule d'imagettes, ni poignées de
+> rognage, ni ciseaux, ni zoom au pincement. Ces mille deux cent quatre-vingt-
+> treize lignes ont été retirées, et ce qui les remplace est décrit dans
+> [« L'architecture du tunnel »](#larchitecture-du-tunnel--une-musique-entre-un-amv-sort).
+>
+> Ce fichier reste un journal de bord : il s'écrit par le bas, et garde la trace
+> de ce qui a été essayé, mesuré et abandonné. **Les sections antérieures à
+> « L'architecture du tunnel » décrivent un outil qui n'existe plus à l'écran** —
+> leur moteur, lui, sert toujours : la lecture des en-têtes, le découpage sur
+> images-clés, l'écriture du MP4, le coffre et le grenier n'ont pas bougé.
 
 ## Ce que l'outil fait
 
@@ -40,7 +44,7 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 2. **Ratisse large.** Jusqu'à 2000 cuts par série, paginés par vagues de cinq requêtes —
    ce qui donne 1817 rushs sur One Piece, 1494 sur Naruto Shippuden, 1869 sur Gundam.
 3. **Ne garde que le montable.** Vidéos uniquement : les genga, layouts et scans de
-   production sont écartés, ce n'est pas de l'image exploitable en timeline.
+   production sont écartés, ce n'est pas de l'image exploitable au montage.
 4. **Nomme chaque plan.** Sakugabooru ne nomme pas ses cuts. Le nom est reconstruit
    depuis les tags : `E41 · Combat, impact frames et flammes (Itano circus)`. Épisode,
    action principale, deux détails visuels, et la figure de style quand il y en a une.
@@ -55,37 +59,24 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
    les impact frames, et pénalise ce qui se marie mal avec du 2D (CGI, captures web).
 7. **Tient la charge côté interface** : un dossier peut contenir un millier de plans, ils
    sont posés par centaines à la demande plutôt qu'en une fois.
-8. **Monte le projet** : les plans retenus vont dans un ou plusieurs **projets**, conservés
-   dans le navigateur. *(L'atelier décrit ci-dessous n'a plus d'onglet depuis que le tunnel
-   fabrique le montage : le code vit toujours, et c'est lui qui pose les coupes, mais on
-   ne l'ouvre plus à la main.)* Le banc de montage — prévisualisation en haut,
-   piste en bas à échelle continue réglée au pincement, avec une règle graduée et le timecode
-   à gauche, chaque bloc large comme sa durée et rempli de vraies images du plan — la
-   pellicule ne peint que la partie visible et sa densité suit le zoom, jusqu'à une image
-   par graduation (24 i/s) —, tête de lecture glissable au doigt, une voie pour une musique
-   ou un SFX pris sur l'appareil, **la tête qui se pose partout où le doigt touche la piste**
-   et la suit — avec défilement automatique quand le doigt atteint un bord —, et
-   **enchaînement automatique des plans** (le suivant est mis en cache pendant que le
-   courant se joue). Clic sur un bloc pour s'y placer. **Déplacer un plan est un mode qui
-   s'active**, verrouillé par défaut : changer l'ordre des scènes est le geste le plus facile
-   à faire par accident, et le plus coûteux à défaire quand on ne s'en aperçoit pas. Le même
-   interrupteur gouverne le rognage par les bords : un seul mode pour les deux gestes qui
-   touchent aux plans, et hors de ce mode la piste ne sert qu'à naviguer.
+8. **Monte le projet, tout seul.** Les plans retenus forment le catalogue d'un
+   **projet**, conservé dans le navigateur, et c'est le tunnel qui en tire le montage :
+   la musique est analysée sur l'appareil (tempo, sections, énergie, crêtes), chaque
+   coupe est posée sur un temps mesuré, et chaque plan est choisi par notation. Rien
+   ne se place à la main — il n'y a ni piste à faire défiler, ni bloc à déplacer, ni
+   poignée à tirer. Le détail du moteur est dans
+   [« L'architecture du tunnel »](#larchitecture-du-tunnel--une-musique-entre-un-amv-sort).
 
-9. **Coupe les plans.** Dans le mode modification, les bords du bloc sélectionné se tirent
-   au doigt pour rogner l'entrée et la sortie — hors de ce mode ils n'existent pas, sans quoi
-   les 14 px de chaque bord rognaient le plan alors qu'on croyait déplacer le curseur ; deux boutons ramènent le début ou la fin sur la tête de lecture,
-   ce qui reste praticable à fort zoom là où un glissé demanderait des milliers de pixels ;
-   un coup de ciseaux coupe le plan sous la tête en deux morceaux indépendants — le même
-   rush peut donc servir plusieurs fois, coupé différemment. Rien n'est réécrit : la coupe
-   déplace deux bornes dans le fichier source, elle est donc instantanée et s'annule sans coût.
-   Ces bornes partent dans l'EDL comme points d'entrée et de sortie source, si bien que
-   Premiere ou DaVinci retrouve exactement le même découpage.
+9. **Découpe sans réécrire.** Un plan n'est jamais recopié : le tunnel pose deux
+   bornes dans le fichier source, ce qui rend la décision instantanée et réversible.
+   Ces bornes partent dans l'export comme points d'entrée et de sortie source, si bien
+   que DaVinci, Premiere ou Final Cut retrouvent exactement le même découpage.
 
    La durée de chaque plan est lue dans le fichier lui-même — aucune source ne l'expose —
-   ce qui permet le chronométrage et l'export d'une **conduite de montage EDL** (CMX 3600,
-   24 i/s) ouvrable dans Premiere, DaVinci ou Final Cut. Export secondaire en `.txt`, ou
-   copie des liens pour un téléchargeur.
+   ce qui permet le chronométrage, le rendu MP4 sur l'appareil et l'export d'une
+   **conduite de montage** : archive DaVinci (XMEML, avec marqueurs de phase et couleurs
+   de clip) ou **EDL** CMX 3600, 24 i/s. Export secondaire en `.txt`, ou copie des liens
+   pour un téléchargeur.
 
 ## Deux façons de s'en servir
 
@@ -235,13 +226,13 @@ l'appareil.
 
 Tout en découle : le déplacement dans un plan est instantané, l'image apparaît sans
 négociation, aucune règle de chargement mobile ne s'applique, et une vidéo locale ne
-« teinte » pas une toile — on peut donc en relire les images, ce qui rend la bande
-d'imagettes fiable. Les octets passent par `/api/media`, un relais à liste blanche stricte
+« teinte » pas une toile — on peut donc en relire les images, ce dont le rendu
+sur l'appareil a besoin. Les octets passent par `/api/media`, un relais à liste blanche stricte
 (Sakugabooru, AnimeThemes) : les sources n'autorisent pas la lecture directe de leurs
 octets par une page, et un relais ouvert servirait à n'importe qui.
 
 L'importation se fait un fichier à la fois, le plan courant d'abord, avec l'avancement
-affiché sur le bloc. Un plan non encore importé reste jouable en distant, avec ses limites.
+affiché au journal. Un plan non encore importé reste jouable en distant, avec ses limites.
 
 ### Monter léger, rendre en pleine définition
 
@@ -5435,7 +5426,199 @@ ailleurs.
   identifiant, ce qui dérègle la sélection et l'historique.
 - L'export échouait sur un rush sans adresse de fichier.
 
-## Depuis, l'explorateur est devenu un tunnel
+## L'architecture du tunnel : une musique entre, un AMV sort
+
+Ce qui suit est la spécification du moteur tel qu'il tourne aujourd'hui. Les
+sections plus bas racontent comment on y est arrivé.
+
+```
+  musique (fichier ou veille)
+        │
+        ├─ tempo, sections, frappes {quand, force}      sur l'appareil
+        ├─ paroles (Whisper, /api/ecoute)               hors chemin critique
+        │
+  trame : une émotion par passage                        posée par l'utilisateur
+        │
+  recherche  ──►  /api/rushes  (Sakugabooru + AnimeThemes)
+        │         par ambiance : combat, vitesse, effets, acting, decor
+        │
+  lecture   ──►  /api/cles  (durée, images-clés, courbe de mouvement)
+        │
+  ordonnanceur ─► grille de coupes ─► choix de scène ─► fenêtre dans la scène
+        │
+        ├─► rendu MP4        GitHub Actions + ffmpeg ─► grenier (R2)
+        └─► projet DaVinci   XMEML + EDL + sources    ─► grenier (R2)
+```
+
+### Les six moments d'un AMV
+
+Un montage ne se contente pas d'alterner fort et faible : il pose, installe,
+monte, frappe, laisse retomber, conclut. Chaque passage reçoit un moment, déduit
+de sa position dans le morceau et de son énergie — la position vient du minutage,
+l'énergie de l'émotion posée sur la trame.
+
+| Moment | Quand | Ce qu'il cherche | Ce qu'il refuse |
+|---|---|---|---|
+| **Intro** | finit avant 18 % du morceau, ou première section calme sous 35 % | décors, vent, marche, regards | tout choc (+55), explosions et images d'impact (+25) |
+| **Couplet** | le reste, énergie ≤ 1 | acting, narration | la pyrotechnie (+12) |
+| **Montée** | énergie 2 | courses, poursuites, envols, déformations | le plan fixe et calme (+8) |
+| **Drop** | énergie 3 | chocs, impacts, rayons | le plan calme (+14) |
+| **Retombée** | suit un drop, énergie < 3 | débris, fumée, étincelles | le calme neutre et fixe (+20) |
+| **Outro** | dernière section **et** énergie ≤ 1 | plan large, pose tenue | le choc (+25) |
+
+Les pénalités sont du même ordre que celle d'une scène déjà vue : franchissables
+quand il ne reste que ça — un catalogue sans une seule scène de combat monte
+quand même son drop, et couvre la musique —, jamais choisies autrement.
+
+**« La dernière section est l'outro » est faux** dès qu'un morceau finit sur son
+refrain, ce qui est la règle en musique populaire. Le montage appliquait alors
+les règles de la conclusion au drop : choc pénalisé, plan large préféré,
+immobilité récompensée — l'inverse exact de ce que le moment demande. Une
+conclusion se reconnaît à ce qu'elle retombe, pas à sa place dans la liste.
+
+### Les cinq régimes d'un plan
+
+« Mouvement » mettait une course, un impact et une pluie de débris dans le même
+sac. Ce sont trois moments d'une même phrase.
+
+| Régime | Étiquettes | Bande de mouvement | Tenue |
+|---|---|---|---|
+| **expression** | `character_acting`, `dialogue`, `crying`, `hair`… | 5 – 34 | 0,45 |
+| **décor** | `background_animation`, `rotation`, `wind`, `liquid`… | 18 – 62 | 0,60 |
+| **élan** | `running`, `chase`, `smears`, `flying`, `sliding`… | 55 – 200 | 0,62 |
+| **choc** | `impact_frames`, `fighting`, `explosions`, `beams`… | 90 – 300 | 0,34 *(pointu)* |
+| **dispersion** | `debris`, `smoke`, `sparks`, `lightning`, `fire`… | 45 – 170 | 0,45 |
+
+La bande est en milli-octets par pixel — ce que la courbe de mouvement mesure.
+« Pointu » inverse la règle de tenue : pour un choc, c'est l'irrégularité qui
+vaut, pas la régularité.
+
+La phrase — élan → choc → dispersion → calme — est tenue à part, par `FAMILLES`
+et `SUIVANTE` : elle décide de l'enchaînement d'un plan au suivant et fait payer
+le sur-place de plus en plus cher.
+
+### Le micro-rythme : `{quand, force}`
+
+La grille de coupes rendait des instants ; la force de chaque frappe était
+calculée puis jetée. Toutes les cases se valaient donc, et le kick du refrain
+recevait le plan qui tombait là.
+
+Elle rend maintenant `{quand, force}`, et le montage sait sur quelle frappe
+chaque plan **commence** — c'est celle-là qui décide de ce qu'il doit montrer.
+
+- **≥ 62 % de la frappe la plus forte** : un temps qui porte. La famille du choc
+  et une crête franche passent devant un plan plat (19,5 → 10,5 contre
+  22,6 → 25,6, mesuré). La fenêtre vise le pic de la scène même hors des sections
+  d'énergie, pour que la frappe visuelle tombe sur la frappe sonore. Et
+  l'inversion du sens de déplacement, ailleurs la pire des suites, y devient
+  permise : deux forces qui se font face, c'est le choc (56,8 → 46,8).
+- **≥ 85 %** : une crête. Les images d'impact s'y réservent — rares dans un
+  catalogue, et une fois vues elles ne frappent plus (−1,3 sur une crête contre
+  16,7 sur un temps fort ordinaire).
+
+Après un choc, un plan plat coupe l'énergie net : la dispersion passe devant lui,
+et seulement là (52,6 → 60,4 pour le plat après un impact, inchangé après un plan
+calme).
+
+### L'éclair d'impact
+
+Sur les crêtes servies par un choc, le rendu pose **une image blanche sur la
+première image du plan** — deux sur cinquante coupes, par construction.
+
+Elle **remplace** l'image, elle ne s'insère pas. Une image ajoutée décalerait
+tout ce qui suit d'un vingt-quatrième de seconde, et vingt éclairs dans un
+morceau de trois minutes feraient presque une seconde de déphasage — exactement
+ce que tout le reste du montage s'échine à éviter. Un filtre en fin de chaîne
+ffmpeg suffit, sans coût d'encodage :
+
+```
+drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='lt(t,0.0417)'
+```
+
+L'archive DaVinci, elle, ne flashe pas : elle livre les rushs tels quels, pour
+qu'on puisse reprendre le montage. Un éclair est un choix de rendu, pas une
+donnée de source.
+
+### Ce que l'export Resolve emporte
+
+Le montage part en **XMEML** (Final Cut 7) et en **EDL CMX 3600**, avec les rushs
+découpés — une seconde de poignée de chaque côté — et la musique.
+
+**Une couleur par plan**, d'après sa famille, dans `labels/label2` du `clipitem` :
+
+| Famille | `label2` | Vu dans Resolve |
+|---|---|---|
+| choc | `Rose` | rouge / rose |
+| élan | `Lemon` | jaune |
+| dispersion | `Lavender` | violet |
+| calme, décor, acting | `Forest` | vert |
+
+Les noms sortent de la liste de Final Cut 7 : une valeur inventée serait ignorée
+à l'import. Un plan dont la famille n'est pas reconnue n'en porte aucune, plutôt
+qu'une couleur qui mentirait.
+
+**Un marqueur de séquence par moment**, avec le BPM et la force moyenne du
+passage en commentaire :
+
+```xml
+<marker>
+  <name>Drop — on frappe</name>
+  <comment>142 BPM · force moyenne 0.88 · action</comment>
+  <in>48</in><out>-1</out>
+</marker>
+```
+
+Ils sont posés sur la **séquence**, pas sur les clips : un repère de structure
+appartient à la ligne de temps et doit survivre au déplacement du plan qui se
+trouve dessous. L'EDL porte la même chose à sa syntaxe — `* TEMPO: 142 BPM`,
+`* CLIP COLOR: ResolveColorRed`, et des localisateurs `|C:… |M:… |D:1`.
+
+### Ce que le journal montre pendant la génération
+
+```
++0.0s  Génération demandée · Chainsaw Man · 45 s · instrument tempo
++0.3s  Pioche : 52 scènes · 44 sakugabooru, 8 animethemes · 28 coupes attendues
++1.1s  Scènes lues : 52/52 durées · 52 courbes · 0 illisibles
++1.1s  [0:00–0:15] Intro — ambiance et décors · 9 coupes
++1.1s  [0:15–0:30] Couplet — acting et narration · 9 coupes
++1.1s  [0:30–0:45] Drop — impact sakuga · 20 coupes · 2 éclairs
++1.1s  36 coupes · 0 à cheval sur 36 mesurées · 2 éclairs d'impact
+```
+
+« Copier le rapport » y ajoute l'appareil, la version, l'état du réseau, la
+demande, les appels au serveur résumés par route — et listés un par un quand ils
+ont raté — et ce qui a alerté, en tête. Le code du coffre y est masqué.
+
+### Ce qui n'a pas été touché, et pourquoi
+
+Le **moteur d'aperçu** — vivier de lecteurs, moniteur, transport, environ mille
+cinq cents lignes — reste en place. Il n'est plus atteignable depuis l'écran,
+mais le rendu MP4 dans le navigateur s'en sert : c'est lui qui pose les rushs sur
+un lecteur et recopie la toile. Le découpler demanderait de réécrire le rendu,
+ce qui est une refonte et non un nettoyage — et le budget de lecteurs
+(trois sur WebKit, quatre ailleurs, deux plans d'avance) a été mesuré contre les
+micro-coupures sur iOS.
+
+### Les bancs
+
+Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
+Au dernier passage :
+
+| Banc | Ce qu'il tient | |
+|---|---|---|
+| `macro.mjs` | les six moments, ce que chacun refuse | 13/13 |
+| `impact.mjs` | la frappe forte, la retombée, la collision, les éclairs | 13/13 |
+| `entrees.mjs` | l'animé unique ou mixte, la trame, le catalogue pauvre | 16/16 |
+| `regimes.mjs` | les cinq régimes, au catalogue et au choix | 10/10 |
+| `fuite.mjs` | trois générations sans rien qui s'empile | 14/14 |
+| `rendu.mjs` | le rendu sans l'atelier : 53 images, un MP4 écrit | 12/12 |
+| `mp4.mjs` | Annex B, AVCC, avcC non vide, boîtes du fichier | 22/22 |
+| `resolve.py` | couleurs FCP7, marqueurs de séquence, EDL, éclair | 23/23 + 6/6 |
+| `journal.mjs` · `panne.mjs` | le rapport, et ce qu'il dit quand ça rate | 32/32 · 15/15 |
+| `davinci.mjs` · `page-rendu.mjs` | l'archive qui part, la page du rendu | 13/13 · 19/19 |
+| `couverture.mjs` · `generique.mjs` | toute la musique, la grammaire du générique | 9/9 · 6/6 |
+
+## Comment l'explorateur est devenu un tunnel
 
 Tout ce qui précède décrit un outil qu'on manœuvre : on cherche une série, on
 parcourt des dossiers, on pose des plans sur une piste, on coupe. C'est un banc de
