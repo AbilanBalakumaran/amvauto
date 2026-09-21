@@ -1736,42 +1736,6 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
    instantanément. */
 .clip.local { box-shadow: inset -1px 0 0 rgba(0,0,0,.75), inset 0 -3px 0 rgba(80, 200, 130, .55); }
 .clip.local.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 -3px 0 rgba(80, 200, 130, .55); }
-.clip.saisi { opacity: .75; cursor: grabbing; box-shadow: inset 0 0 0 2px var(--vert), 0 6px 18px rgba(0,0,0,.6); }
-/* Poignées de rognage : visibles seulement sur le plan sélectionné, larges au
-   doigt (14 px) mais dessinées fines pour ne pas manger le bloc. */
-.poignee {
-  position: absolute;
-  z-index: 3;
-  top: 0;
-  bottom: 0;
-  width: 14px;
-  display: none;
-  cursor: ew-resize;
-  touch-action: none;
-}
-.poignee::before {
-  content: "";
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  width: 4px;
-  border-radius: 3px;
-  background: #fff;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.55);
-}
-.poignee.gauche { left: 0; }
-.poignee.droite { right: 0; }
-.poignee { width: 18px; }
-.poignee.gauche::before { left: 2px; }
-.poignee.droite::before { right: 2px; }
-/* Les poignées n'existent que dans le mode d'édition. Hors de ce mode, toucher
-   la piste ne fait qu'une chose : déplacer la tête de lecture. Sinon les 14 px
-   de chaque bord du bloc sélectionné rognaient le plan alors qu'on croyait
-   déplacer le curseur — le bloc raccourcissait, la tête restait à son début, et
-   l'aperçu montrait la nouvelle bordure. */
-body.reordre .clip.actif .poignee { display: block; }
-body.reordre .clip { cursor: grab; }
-body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22px rgba(53, 194, 77, .35); }
 /* Un plan coupé se signale : sinon on cherche pourquoi le rush entier ne passe
    pas. */
 .clip.rogne .clip-duree { color: #ffd7a1; }
@@ -2376,7 +2340,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 05:43";
+const VERSION_PAGE = "2026-09-21 07:17";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2722,7 +2686,7 @@ function signalerVersion(texte) {
 }
 verifierVersion();
 const PAR_PAGE = 100;
-const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], supprimes: {}, actif: null, reordre: false };
+const state = { arbre: null, chemin: [], tri: "episode", occupe: false, montres: PAR_PAGE, projets: [], supprimes: {}, actif: null };
 
 /* Deux adresses par plan quand la source en offre deux : celle du rendu, en
    pleine définition, et une plus légère pour monter. Tout ce qui télécharge,
@@ -3360,14 +3324,11 @@ function charger() {
     state.actif = brut.actif || state.projets.find((p) => !p.archive)?.id || null;
     // Déplacer les plans est un mode qu'on active : par défaut, un doigt qui
     // traîne sur la piste ne doit pas pouvoir changer l'ordre des scènes.
-    state.reordre = Boolean(brut.reordre);
   } catch {
     state.projets = [];
     state.supprimes = {};
     state.actif = null;
-    state.reordre = false;
   }
-  document.body.classList.toggle("reordre", state.reordre);
   majBadge();
 }
 
@@ -3417,7 +3378,7 @@ function sauver() {
   changerMontage();
   try {
     localStorage.setItem(CLE, JSON.stringify({
-      projets: state.projets, supprimes: state.supprimes, actif: state.actif, reordre: state.reordre,
+      projets: state.projets, supprimes: state.supprimes, actif: state.actif,
     }));
     stockagePlein = false;
   } catch {
@@ -11191,7 +11152,6 @@ function pisteComplete(projet) {
   const rail = document.createElement("div");
   rail.className = "rail";
   rail.id = "rail";
-  brancherRail(rail);
   remplirLeRail(rail, projet);
 
   const bande = document.createElement("div");
@@ -11216,9 +11176,6 @@ function pisteComplete(projet) {
   ligne.append(barre, regle, rail, bande, tete);
   cadre.append(ligne);
 
-  brancherScrub(regle);
-  brancherScrub(tete.querySelector(".tete-poignee"));
-  brancherPincement(cadre);
 
   const ajouter = document.createElement("button");
   ajouter.type = "button";
@@ -11381,100 +11338,29 @@ function blocPlan(projet, plan, index) {
   chiffre.textContent = plan.youtube ? "YT" : plan.duree ? `${duree(plan).toFixed(1)}s` : "…";
   clip.append(etiquette, chiffre);
 
-  /* Le bloc naît sans poignées.
-
-     Elles ne s'affichent que sur le plan sélectionné, et seulement en mode
-     déplacement — « body.reordre .clip.actif .poignee ». Les poser sur les trois
-     cent dix-sept blocs, c'était six cent trente-quatre éléments construits pour
-     qu'au plus deux se voient : quarante pour cent de tout le rail. Elles
-     suivent maintenant la sélection. */
+  // Un plan coupé se signale : sinon on cherche pourquoi le rush entier n'y est pas.
   if (rogne(plan)) clip.classList.add("rogne");
   return clip;
 }
 
 /* Poser les deux poignées sur le bloc choisi, et les retirer de l'ancien. */
-function poserPoignees(bloc, plan) {
-  document.querySelectorAll(".clip .poignee").forEach((vieille) => {
-    if (vieille.closest(".clip") !== bloc) vieille.remove();
-  });
-  if (!bloc || !plan || plan.youtube || bloc.querySelector(".poignee")) return;
-  for (const cote of ["gauche", "droite"]) {
-    const poignee = document.createElement("span");
-    poignee.className = `poignee ${cote}`;
-    bloc.append(poignee);
-  }
-}
+/* --- les gestes de montage à la main : retirés ---------------------------
 
-/* --- rogner un plan par ses bords -------------------------------------
-   Le geste de base d'un banc de montage : on tire le bord du bloc, la tête se
-   pose sur la nouvelle borne, et le moniteur montre l'image exacte où le plan
-   commencera ou finira. */
-/* Plus un gestionnaire, mais un geste : l'écouteur unique du rail l'appelle
-   quand le doigt tombe sur une poignée. L'arrêt de propagation n'a plus lieu
-   d'être — il servait à couper l'herbe sous le pied du gestionnaire du bloc, et
-   il n'y a plus qu'un chemin, qui se branche. */
-function rognerDepuis(evt, projet, index, cote) {
-  {
-    evt.preventDefault();
-    deverrouiller();
-    arreter();
+   Pincement pour l'échelle, glissé pour réordonner, poignées de quatorze points
+   pour rogner, ciseaux sous la tête, tête déplaçable au doigt : trois cent
+   cinquante-huit lignes qui servaient un atelier qu'on n'ouvre plus. Le tunnel
+   pose les coupes ; personne ne les déplace ensuite, et si l'on veut les
+   reprendre, c'est dans DaVinci que ça se fait — l'archive est faite pour ça.
 
-    const plan = projet.plans[index];
-    const depart = evt.clientX;
-    debutGeste();
-    const entree0 = entreeDe(plan);
-    const sortie0 = sortieDe(plan);
-    let demande = null;
+   Ce qui reste ici est ce dont d'autres se servent encore : « surLeTemps », qui
+   cale un instant sur la grille des temps de la musique — le rognage à la tête
+   de lecture s'en sert —, et le compteur qui donne son identifiant à chaque
+   coupe, dont le constructeur de montage a besoin. */
 
-    const appliquer = () => {
-      demande = null;
-      // La pellicule n'est pas vidée : ses images sont rangées par instant dans
-      // le fichier source, donc rogner n'en périme aucune. Les jeter ferait
-      // clignoter le bloc en noir à chaque mouvement de la poignée.
-      redessinerPiste();
-      const debut = offsets(projet.plans)[index] || 0;
-      // La tête colle à la borne qu'on déplace : c'est elle qu'on veut voir.
-      allerA(cote === "gauche" ? debut : debut + duree(plan) - IMAGE);
-      selectionner(index);
-    };
+// Deux coupes dans la même milliseconde donneraient le même identifiant, et deux
+// plans indiscernables dérèglent la sélection comme l'historique.
+let compteurCoupes = 0;
 
-    const bouger = (autre) => {
-      const delta = (autre.clientX - depart) / lecture.echelle;
-      if (cote === "gauche") {
-        plan.entree = Math.max(0, Math.min(entree0 + delta, sortie0 - PLAN_MINI));
-      } else {
-        plan.sortie = Math.min(dureeSource(plan), Math.max(sortie0 + delta, entree0 + PLAN_MINI));
-      }
-      // Une seule refonte de la piste par image : le geste doit rester fluide
-      // même sur un projet chargé.
-      if (!demande) demande = requestAnimationFrame(appliquer);
-    };
-
-    const finir = () => {
-      finGeste();
-      window.removeEventListener("pointermove", bouger);
-      window.removeEventListener("pointerup", finir);
-      window.removeEventListener("pointercancel", finir);
-      if (demande) cancelAnimationFrame(demande);
-      appliquer();
-      sauver();
-      enregistrer(projet);
-    };
-
-    window.addEventListener("pointermove", bouger);
-    window.addEventListener("pointerup", finir);
-    window.addEventListener("pointercancel", finir);
-  }
-}
-
-// Coupe le plan sous la tête de lecture en deux, comme un coup de ciseaux : la
-// partie gauche s'arrête là, la partie droite reprend exactement au même point.
-/* Aimanter une coupe sur le temps le plus proche.
-
-   C'est tout l'intérêt de connaître le tempo : une coupe posée à trois centièmes
-   du temps s'entend, une coupe posée dessus disparaît dans la frappe. On n'aimante
-   que si la tête est déjà proche — moins d'un huitième de temps — pour ne jamais
-   déplacer une coupe volontairement décalée. */
 function surLeTemps(instant) {
   const rythme = projetActif()?.rythme;
   if (!rythme?.bpm) return instant;
@@ -11484,272 +11370,6 @@ function surLeTemps(instant) {
   return Math.abs(cale - instant) <= periode / 8 && cale > 0 ? cale : instant;
 }
 
-// Deux coupes dans la même milliseconde donneraient le même identifiant, et deux
-// plans indiscernables dérèglent la sélection comme l'historique.
-let compteurCoupes = 0;
-
-function couperAuCurseur() {
-  const projet = projetActif();
-  if (!projet?.plans.length) return;
-  // La coupe se cale sur le temps le plus proche quand la musique en donne un.
-  const ou = surLeTemps(lecture.position);
-  const debuts = offsets(projet.plans);
-  let index = debuts.findIndex((debut, i) => ou < debut + duree(projet.plans[i]));
-  if (index < 0) index = projet.plans.length - 1;
-
-  const plan = projet.plans[index];
-  const dans = ou - debuts[index];
-  // Couper au ras d'un bord ne produirait qu'une miette : on le dit plutôt que
-  // de laisser croire que le bouton ne répond pas.
-  if (plan.youtube || dans < PLAN_MINI || dans > duree(plan) - PLAN_MINI) {
-    const etiquette = $("plan-courant");
-    if (etiquette) {
-      etiquette.textContent = "Pose la tête dans le plan pour le couper";
-      setTimeout(() => selectionner(lecture.index), 1800);
-    }
-    return;
-  }
-
-  const point = entreeDe(plan) + dans;
-  const suite = {
-    ...plan,
-    id: `${idRush(plan)}#${Date.now().toString(36)}${(compteurCoupes += 1).toString(36)}`,
-    rush: idRush(plan),
-    entree: point,
-    sortie: sortieDe(plan),
-  };
-  plan.sortie = point;
-  projet.plans.splice(index + 1, 0, suite);
-
-  sauver();
-  enregistrer(projet);
-  redessinerPiste();
-  selectionner(index);
-  majTransport();
-}
-
-/* --- déplacer la tête de lecture au doigt ----------------------------- */
-/* Poser le doigt n'importe où dans la piste amène la tête de lecture à cet
-   endroit, et elle suit le doigt ensuite : c'est le geste attendu, et il évite
-   de devoir viser la règle. Quand le doigt atteint un bord de la fenêtre, la
-   piste défile toute seule — sans ça, à fort zoom, on ne pourrait pas dépasser
-   ce qui est visible. */
-function brancherScrub(element) {
-  element.addEventListener("pointerdown", demarrerScrub);
-}
-
-function demarrerScrub(evt) {
-    evt.preventDefault();
-    deverrouiller();
-    const ligne = $("ligne");
-    const cadre = $("piste");
-    if (!ligne) return;
-    /* Les débuts se calculent une fois pour tout le geste : ils ne changent pas
-       tant qu'on fait glisser le doigt. */
-    const plans = projetActif()?.plans || [];
-    const debuts = offsets(plans);
-    const viser = (x) => allerA(tempsDeX(x, plans, debuts));
-    lecture.scrub = true;
-    debutGeste();
-    viser(evt.clientX);
-
-    // Défilement au bord, entretenu tant que le doigt y reste.
-    let dernierX = evt.clientX;
-    let glissade = null;
-    const entretenir = () => {
-      glissade = null;
-      if (!cadre) return;
-      const boite = cadre.getBoundingClientRect();
-      const marge = 44;
-      const sortie = dernierX > boite.right - marge
-        ? dernierX - (boite.right - marge)
-        : dernierX < boite.left + marge ? dernierX - (boite.left + marge) : 0;
-      if (!sortie) return;
-      const avant = cadre.scrollLeft;
-      cadre.scrollLeft = Math.max(0, avant + Math.max(-24, Math.min(24, sortie / 3)));
-      if (cadre.scrollLeft !== avant) viser(dernierX);
-      glissade = requestAnimationFrame(entretenir);
-    };
-
-    const bouger = (autre) => {
-      dernierX = autre.clientX;
-      viser(dernierX);
-      if (!glissade) glissade = requestAnimationFrame(entretenir);
-    };
-    const finir = () => {
-      lecture.scrub = false;
-      reveillerMoniteur(1200);
-      if (glissade) cancelAnimationFrame(glissade);
-      finGeste();
-      window.removeEventListener("pointermove", bouger);
-      window.removeEventListener("pointerup", finir);
-      window.removeEventListener("pointercancel", finir);
-    };
-    window.addEventListener("pointermove", bouger);
-    window.addEventListener("pointerup", finir);
-    window.addEventListener("pointercancel", finir);
-}
-
-/* --- déplacer un plan, réordonné en direct ---------------------------- */
-/* Un seul écouteur pour toute la piste.
-
-   Chaque bloc portait les siens : « dragstart » et « pointerdown » sur le bloc,
-   « pointerdown » sur chacune de ses deux poignées. Sur un montage de trois cent
-   dix-sept plans, cela faisait neuf cent cinquante-et-une fermetures, chacune
-   retenant le projet, l'index et l'élément.
-
-   Mesuré, pour être juste : ce n'est PAS ce qui coûtait les quatre cent soixante
-   millisecondes du démarrage. Les débrancher tous ne faisait passer le blocage
-   que de 734 à 621 ms, et la tâche la plus longue ne bougeait pas. Le gain est
-   la mémoire, pas le temps — neuf cent cinquante fermetures de moins sur un
-   appareil qui en manque.
-
-   Tout ce que ces fermetures retenaient se retrouve depuis l'événement : le
-   bloc par « closest », son rang par « data-index », le projet par
-   « projetActif ». C'est d'ailleurs plus sûr — une fermeture garde l'index
-   qu'elle avait à la construction, et un montage réordonné le périme. */
-function brancherRail(rail) {
-  rail.addEventListener("dragstart", (evt) => evt.preventDefault());
-  rail.addEventListener("pointerdown", (evt) => {
-    if (evt.button) return;
-    const projet = projetActif();
-    if (!projet) return;
-    // La poignée d'abord : elle vit dans le bloc, et c'est elle qui décide.
-    const poignee = state.reordre && evt.target?.closest?.(".poignee");
-    if (poignee) {
-      const bloc = poignee.closest(".clip");
-      if (bloc) {
-        rognerDepuis(evt, projet, Number(bloc.dataset.index),
-          poignee.classList.contains("gauche") ? "gauche" : "droite");
-      }
-      return;
-    }
-    const clip = evt.target?.closest?.(".clip");
-    if (clip) glisserDepuis(evt, projet, Number(clip.dataset.index), clip);
-  });
-}
-
-function glisserDepuis(evt, projet, index, clip) {
-  {
-    // Hors mode déplacement, un bloc est une portion de la piste comme une
-    // autre : le doigt y amène la tête de lecture et elle le suit.
-    if (!state.reordre) {
-      selectionner(index);
-      demarrerScrub(evt);
-      return;
-    }
-    // En mode déplacement, le geste est à nous : on empêche le navigateur de
-    // lancer le sien, faute de quoi il annule le nôtre en cours de route.
-    evt.preventDefault();
-    const depart = evt.clientX;
-    let position = index;
-    let actif = false;
-    debutGeste();
-
-    const bouger = (autre) => {
-      if (!actif && Math.abs(autre.clientX - depart) < 6) return;
-      if (!actif) {
-        actif = true;
-        clip.classList.add("saisi");
-      }
-      // Le plan se pose là où est le doigt, pas selon le milieu d'un voisin :
-      // viser un milieu au pixel près ne marchait qu'un sens sur deux, parce
-      // qu'un geste qui s'arrête pile sur la limite ne la franchit pas.
-      const rail = $("rail");
-      if (!rail) return;
-      const blocs = blocsDuRail(rail);
-      const dedans = blocs.findIndex((bloc) => {
-        const rect = bloc.getBoundingClientRect();
-        return autre.clientX >= rect.left && autre.clientX <= rect.right;
-      });
-      const premier = blocs[0].getBoundingClientRect();
-      const vise = dedans !== -1
-        ? dedans
-        : autre.clientX < premier.left ? 0 : blocs.length - 1;
-      if (vise !== position && vise >= 0) {
-        const [plan] = projet.plans.splice(position, 1);
-        projet.plans.splice(vise, 0, plan);
-        position = vise;
-        lecture.index = vise;
-        redessinerPiste();
-        blocAu(vise)?.classList.add("saisi");
-      }
-    };
-
-    const finir = () => {
-      finGeste();
-      window.removeEventListener("pointermove", bouger);
-      window.removeEventListener("pointerup", finir);
-      window.removeEventListener("pointercancel", finir);
-      $("rail")?.querySelector(".saisi")?.classList.remove("saisi");
-      if (actif) {
-        sauver();
-        enregistrer(projet);
-      } else {
-        selectionner(position);
-        allerA(offsets(projet.plans)[position]);
-      }
-    };
-
-    window.addEventListener("pointermove", bouger);
-    window.addEventListener("pointerup", finir);
-    window.addEventListener("pointercancel", finir);
-  }
-}
-
-/* --- pincement à deux doigts ------------------------------------------ */
-function brancherPincement(cadre) {
-  let base = null;
-  const ecart = (touches) =>
-    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
-
-  cadre.addEventListener("touchstart", (evt) => {
-    if (evt.touches.length === 2) base = { ecart: ecart(evt.touches), echelle: lecture.echelle };
-  }, { passive: true });
-
-  cadre.addEventListener("touchmove", (evt) => {
-    if (evt.touches.length !== 2 || !base) return;
-    evt.preventDefault();
-    const milieu = (evt.touches[0].clientX + evt.touches[1].clientX) / 2;
-    appliquerEchelle(base.echelle * (ecart(evt.touches) / base.ecart), milieu);
-  }, { passive: false });
-
-  cadre.addEventListener("touchend", () => { base = null; });
-
-  // À la souris, l'équivalent habituel : Ctrl + molette.
-  cadre.addEventListener("wheel", (evt) => {
-    if (!evt.ctrlKey) return;
-    evt.preventDefault();
-    appliquerEchelle(lecture.echelle * (evt.deltaY < 0 ? 1.12 : 0.89), evt.clientX);
-  }, { passive: false });
-
-  /* Un doigt sur la piste rend la main aux vrais blocs : on peut vouloir
-     attraper une poignée ou déplacer un plan sans avoir arrêté la lecture. */
-  cadre.addEventListener("pointerdown", degelerPiste, { passive: true });
-
-  // La pellicule ne peint que le visible : elle se refait au défilement.
-  let prevu = false;
-  cadre.addEventListener("scroll", () => {
-    if (prevu) return;
-    prevu = true;
-    requestAnimationFrame(() => {
-      prevu = false;
-      redessinerBandes();
-      // Les jauges d'import ne sont peintes que sur la partie visible : ce qui
-      // vient d'entrer dans le cadre n'a pas encore la sienne.
-      peindreImports();
-      // Ce qui vient d'entrer dans le cadre prépare sa réserve à son tour.
-      prechaufferVisible();
-    });
-  }, { passive: true });
-}
-
-/* Une musique qu'on n'a pas pu ranger vaut pour la séance, pas au-delà.
-
-   C'est réparable — il suffit de rouvrir le fichier — mais encore faut-il le
-   savoir. Le silence d'avant laissait croire que tout allait bien jusqu'à la
-   prochaine ouverture de l'application. */
-const musiqueVolatile = new Set();
 
 function noterMusiqueVolatile(projet) {
   if (!projet?.id) return;
@@ -13167,7 +12787,6 @@ function selectionner(index) {
     vise?.classList.add("actif");
     clipActif = vise;
   }
-  poserPoignees(vise, projet?.plans[index]);
   // Piste gelée : les blocs ne sont plus rendus, c'est le fantôme qui porte le
   // liseré. Un seul élément déplacé par transformation.
   marquerFantome(index);
@@ -16770,27 +16389,9 @@ function remplirBarreOutils(projet) {
   sortie.setAttribute("aria-label", "Fin du plan à la tête");
   sortie.addEventListener("click", () => rognerAuCurseur("sortie"));
 
-  const couper = document.createElement("button");
-  couper.type = "button";
-  couper.innerHTML = icone("couper");
-  couper.title = "Couper le plan à la tête de lecture";
-  couper.setAttribute("aria-label", "Couper à la tête de lecture");
-  couper.addEventListener("click", couperAuCurseur);
-
-  // Mode déplacement : tant qu'il est éteint, l'ordre des plans ne peut pas
-  // changer par mégarde.
-  // Un seul interrupteur pour les deux gestes qui touchent aux plans : les
-  // déplacer et les rogner. Hors de ce mode, la piste ne sert qu'à naviguer.
-  const deplacer = document.createElement("button");
-  deplacer.type = "button";
-  deplacer.id = "btn-reordre";
-  deplacer.innerHTML = icone("deplacer");
-  deplacer.addEventListener("click", () => {
-    state.reordre = !state.reordre;
-    document.body.classList.toggle("reordre", state.reordre);
-    sauver();
-    majReordre();
-  });
+  /* Les ciseaux et le mode déplacement sont partis avec les gestes qu'ils
+     commandaient : couper un plan en deux et changer l'ordre des scènes étaient
+     des gestes d'atelier, et l'atelier ne s'ouvre plus. */
 
   const retirer = document.createElement("button");
   retirer.type = "button";
@@ -16808,20 +16409,8 @@ function remplirBarreOutils(projet) {
     poserPlan(lecture.index, 0);
   });
 
-  actions.replaceChildren(nom, entree, sortie, couper, deplacer, retirer);
-  majReordre();
+  actions.replaceChildren(nom, entree, sortie, retirer);
   majBoutonsHistoire();
-}
-
-function majReordre() {
-  const bouton = $("btn-reordre");
-  if (!bouton) return;
-  bouton.classList.toggle("on", state.reordre);
-  bouton.title = state.reordre
-    ? "Modification des plans active : déplacer et rogner — appuyer pour verrouiller"
-    : "Plans verrouillés : la piste ne fait que déplacer la tête — appuyer pour modifier";
-  bouton.setAttribute("aria-pressed", String(state.reordre));
-  bouton.setAttribute("aria-label", bouton.title);
 }
 
 // Ramène le début ou la fin du plan sélectionné sur la tête de lecture.
