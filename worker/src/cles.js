@@ -19,6 +19,7 @@ import { lireMp4 } from "../../public/demux.js";
 import { trouverMoov } from "../../public/plage.js";
 import { estWebm, lireWebm } from "../../public/webm.js";
 import { HOTES } from "./media.js";
+import { codeValide } from "./coffre.js";
 
 export const VERSION_CLES = 3;
 
@@ -154,12 +155,93 @@ async function lireCles(adresse) {
 
 const entetes = {
   "content-type": "application/json; charset=utf-8",
-  // Les images-clés d'un fichier ne changent jamais : son adresse est une
-  // empreinte de son contenu.
-  "cache-control": "public, max-age=31536000, immutable",
+  /* Les images-clés d'un fichier ne changent jamais — son adresse est une
+     empreinte de son contenu —, et la fiche était donc servie « immutable » pour
+     un an. Elle ne l'est plus : le runner y écrit le sens du plan après coup, et
+     une fiche gardée un an chez le visiteur ne verrait jamais cet ajout. Un jour
+     de cache, avec une semaine de sursis pendant laquelle la version périmée est
+     servie tout de suite pendant qu'une fraîche se prépare : le contenu stable
+     ne coûte rien de plus, et l'enrichissement finit par arriver. */
+  "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
 };
 
+/* ---- Le sens d'un plan, écrit par le runner -----------------------------
+
+   Le raccord de mouvement est la règle la plus utile du montage — enchaîner un
+   geste qui part à droite sur un geste qui part à droite se voit à peine, et
+   l'inverse est ce qu'on garde pour les impacts. Elle dormait faute de savoir
+   dans quel sens un plan bouge.
+
+   Le mesurer demande de DÉCODER des images. Ce Worker ne le peut pas : il n'a ni
+   ffmpeg, ni décodeur vidéo, et les vecteurs de mouvement d'un H.264 sont
+   derrière un décodage entropique qu'on ne fait pas en trente secondes de
+   processeur. Il lit des en-têtes, c'est tout ce qu'il sait faire.
+
+   Le runner GitHub, lui, a ffmpeg — et il a déjà les fichiers sous la main quand
+   il rend un AMV. Il mesure donc le sens de chaque plan qu'il vient d'employer,
+   presque gratuitement, et l'écrit ici. La fiche du plan s'enrichit dans R2, et
+   toutes les générations suivantes le trouvent posé.
+
+   Conséquence assumée : la toute première génération sur une série n'a aucun
+   sens à lire, et le montage y est celui d'avant. Le premier rendu réchauffe le
+   catalogue, et c'est de plus en plus vrai à chaque AMV. On le dit dans le
+   journal plutôt que de le cacher.
+
+   Le code du coffre sert de laissez-passer — et il ne suffit pas d'en avoir la
+   FORME. « codeValide » ne vérifie qu'une somme de contrôle : n'importe qui peut
+   en calculer un, la fonction est dans la page. Pour le grenier ce n'est pas
+   grave, le code y désigne l'espace de rangement du déposant et l'on n'écrit que
+   chez soi. Ici, la fiche d'un rush est partagée par tout le monde : un code
+   fabriqué permettrait d'écrire dans le cache de tous. On exige donc que le
+   coffre EXISTE dans KV, c'est-à-dire que quelqu'un ait vraiment sauvegardé un
+   montage sous ce code.
+
+   Et l'on n'écrit QUE le sens : jamais les images-clés, jamais la durée —
+   celles-là se lisent dans le fichier, elles ne se déclarent pas. Le pire qu'un
+   déposant malveillant puisse faire est de se tromper de direction, ce qui coûte
+   un raccord moins joli. */
+const SENS_PERMIS = new Set(["left", "right", "up", "down", "still"]);
+
+async function ecrireLeSens(request, url, env) {
+  const code = url.searchParams.get("code") || "";
+  if (!codeValide(code)) return new Response("code invalide", { status: 401 });
+  // La forme est bonne ; reste à savoir si ce coffre a jamais existé.
+  if (!env.COFFRE) return new Response("pas de coffre", { status: 503 });
+  const connu = await env.COFFRE.get(`coffre:${code}`).catch(() => null);
+  if (!connu) return new Response("coffre inconnu", { status: 401 });
+  const cible = url.searchParams.get("u");
+  if (!cible) return new Response("adresse manquante", { status: 400 });
+  let source;
+  try { source = new URL(cible); } catch { return new Response("adresse invalide", { status: 400 }); }
+  if (!HOTES.has(source.hostname)) return new Response("source non autorisée", { status: 403 });
+  if (!env.GRENIER) return new Response("pas de grenier", { status: 503 });
+
+  let dit;
+  try { dit = await request.json(); } catch { return new Response("corps illisible", { status: 400 }); }
+  const sens = String(dit?.sens || "");
+  if (!SENS_PERMIS.has(sens)) return new Response("sens inconnu", { status: 400 });
+  const force = Math.max(0, Math.min(3, Number(dit?.force) || 0));
+
+  const cle = `cles/v${VERSION_CLES}/${await empreinte(source.toString())}.json`;
+  const range = await env.GRENIER.get(cle).catch(() => null);
+  // On n'invente pas de fiche : sans lecture préalable, il n'y a rien à enrichir.
+  if (!range) return new Response("fiche inconnue", { status: 404 });
+  let fiche;
+  try { fiche = await range.json(); } catch { return new Response("fiche illisible", { status: 500 }); }
+  if (!fiche || fiche.echec) return new Response("fiche illisible", { status: 500 });
+
+  fiche.sens = sens;
+  fiche.sensForce = force;
+  await env.GRENIER.put(cle, JSON.stringify(fiche), {
+    httpMetadata: { contentType: "application/json", cacheControl: "public, max-age=86400" },
+  });
+  return new Response(JSON.stringify({ ecrit: true, sens, force }), {
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+}
+
 export async function cles(request, url, env, ctx) {
+  if (request.method === "PUT") return ecrireLeSens(request, url, env);
   const cible = url.searchParams.get("u");
   if (!cible) return new Response("adresse manquante", { status: 400 });
   let source;
@@ -187,7 +269,7 @@ export async function cles(request, url, env, ctx) {
   const corps = JSON.stringify(fait);
   if (env.GRENIER) {
     const ranger = env.GRENIER.put(cle, corps, {
-      httpMetadata: { contentType: "application/json", cacheControl: "public, max-age=31536000, immutable" },
+      httpMetadata: { contentType: "application/json", cacheControl: "public, max-age=86400" },
     }).catch(() => {});
     if (ctx?.waitUntil) ctx.waitUntil(ranger); else await ranger;
   }

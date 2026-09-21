@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 14:21";
+const VERSION_PAGE = "2026-09-21 14:31";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7231,6 +7231,11 @@ window.__banc = {
   phaseDuMontage: (...a) => phaseDuMontage(...a), echelleDe: (p) => echelleDe(p),
   laVoixLaisseLaPlace: (...a) => laVoixLaisseLaPlace(...a),
   occupationVocale: (...a) => occupationVocale(...a),
+  accordDuMouvement: (...a) => accordDuMouvement(...a),
+  sensDuPlan: (p) => sensDuPlan(p),
+  // Le banc a besoin de repartir d'un cache vide pour éprouver le cas « aucune
+  // fiche ne dit rien » — celui de la première génération sur une série.
+  oublierLesCles: () => { clesConnues.clear(); clesRefusees.clear(); },
   projetActif: () => projetActif(), cleSegment: (p) => cleSegment(p),
   segmentDe: (p) => segmentDe(p), entreeLue: (p) => entreeLue(p),
   estLocal: (p) => estLocal(p), locales: () => locales, segments: () => segments,
@@ -19061,12 +19066,40 @@ function enchainement(precedent, plan, serie = 0) {
    par un panoramique compte comme « immobile ». */
 const OPPOSES = { right: "left", left: "right", up: "down", down: "up", toward: "away", away: "toward" };
 
+/* D'où vient le sens d'un plan.
+
+   Deux sources, et la première est celle qui existe vraiment.
+
+   — **La fiche de « /api/cles »**, quand le runner y a écrit le sens : il l'a
+     mesuré avec ffmpeg sur le fichier lui-même, en corrélant des images de
+     32 × 18. C'est du mouvement APPARENT, celui qui se voit à l'écran. Quand la
+     caméra suit un personnage qui court à droite, le personnage ne bouge pas
+     dans le cadre et c'est le décor qui file à gauche : la mesure dit « gauche ».
+     Ce n'est pas une erreur pour ce qu'on en fait — la règle parle de ce que
+     l'œil poursuit, et l'œil poursuit ce qui bouge sur l'écran.
+   — **La lecture par modèle**, quand elle a été faite : elle, parle de
+     l'intention. Elle l'emporte quand on l'a, parce qu'on la lui a demandée
+     explicitement — mais le tunnel ne l'appelle pas.
+
+   Sans ni l'une ni l'autre, la règle reste muette et le montage est celui
+   d'avant : c'est le cas de la toute première génération sur une série, avant
+   qu'un rendu ait réchauffé le catalogue. */
+function sensDuPlan(plan) {
+  const parLeModele = plan?.lecture?.mouvement;
+  if (parLeModele) return { sens: parLeModele, force: plan.lecture.force ?? 2 };
+  const fiche = clesConnues.get(mediaDe(plan));
+  if (fiche?.sens) return { sens: fiche.sens, force: fiche.sensForce ?? 2 };
+  return null;
+}
+
 function accordDuMouvement(precedent, plan, fort = false) {
-  const avant = precedent?.lecture?.mouvement;
-  const apres = plan.lecture?.mouvement;
+  const a = precedent ? sensDuPlan(precedent) : null;
+  const b = sensDuPlan(plan);
+  const avant = a?.sens;
+  const apres = b?.sens;
   if (!avant || !apres || avant === "still" || apres === "still") return 0;
   // Une intensité faible ne doit pas commander : on pèse par la plus timide des deux.
-  const poids = Math.min(3, Math.min(precedent.lecture.force ?? 2, plan.lecture.force ?? 2)) / 3;
+  const poids = Math.min(3, Math.min(a.force ?? 2, b.force ?? 2)) / 3;
   if (avant === apres) return -3 * poids;
   /* L'œil poursuit la trajectoire qu'on vient de lui montrer : l'inverser le
      désoriente, et l'impact tombe à plat. Une seule exception, et c'est
