@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 14:14";
+const VERSION_PAGE = "2026-09-21 14:21";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5914,6 +5914,11 @@ async function genererLAmv() {
        de l'étiquette atteint le choix des scènes. */
     projet.rythme = {
       ...tunnel.rythme,
+      /* Les vers entendus, minutés, au niveau du rythme : c'est par eux que la
+         grille sait où la voix chante, et où elle respire. Les sections en ont
+         déjà leur part pour le choix des scènes ; la grille, elle, a besoin de
+         tout le morceau d'un coup. */
+      paroles: (tunnel.paroles || []).map((l) => ({ debut: l.debut, fin: l.fin })),
       sections: tunnel.rythme.sections.map((section, rang) => ({
         ...section,
         energie: emotionDe(tunnel.etiquettes[rang]).energie,
@@ -6203,6 +6208,22 @@ async function genererLAmv() {
           // Le vivier disponible : c'est lui qui dit si un fil maigre est un
           // défaut du barème ou un catalogue qui n'avait pas mieux.
           vivier: `${surs.filter((r) => cibles.some((n) => (r.auteurs || []).includes(n))).length}/${surs.length}`,
+        });
+      }
+      /* Ce que les bandes ont fait de la grille. Sans cette ligne, on ne saurait
+         pas si la règle a servi : un morceau instrumental n'a aucune voix à
+         fuir, et un morceau sans grosse caisse n'a rien à ancrer — dans les deux
+         cas le montage est le même qu'avant, et il faut pouvoir le constater. */
+      const bandes = projet.__bandes;
+      if (bandes && (bandes.grave || bandes.horsVoix || bandes.dansLaVoix)) {
+        noter(`Bandes : ${bandes.grave} coupes ancrées sur le grave`
+          + ` · ${bandes.horsVoix} glissées hors d'un vers`
+          + (bandes.dansLaVoix ? ` · ${bandes.dansLaVoix} restées dedans` : ""),
+        bandes.dansLaVoix > bandes.horsVoix ? "alerte" : "fait", {
+          surLeGrave: `${bandes.grave}/${bandes.total}`,
+          horsVoix: bandes.horsVoix,
+          dansLaVoix: bandes.dansLaVoix,
+          source: tunnel.paroles?.length ? "paroles minutées (Whisper)" : "enveloppe 1,2–5 kHz",
         });
       }
       noter(`Plans : du plus court ${longueurs[0].toFixed(2)} s au plus long`
@@ -7208,6 +7229,8 @@ window.__banc = {
   casesAttendues: (p) => casesAttendues(p), amvDe: (p) => amvDe(p), sauver: () => sauver(),
   noterCandidat: (...a) => noterCandidat(...a), automate: () => automate,
   phaseDuMontage: (...a) => phaseDuMontage(...a), echelleDe: (p) => echelleDe(p),
+  laVoixLaisseLaPlace: (...a) => laVoixLaisseLaPlace(...a),
+  occupationVocale: (...a) => occupationVocale(...a),
   projetActif: () => projetActif(), cleSegment: (p) => cleSegment(p),
   segmentDe: (p) => segmentDe(p), entreeLue: (p) => entreeLue(p),
   estLocal: (p) => estLocal(p), locales: () => locales, segments: () => segments,
@@ -18444,6 +18467,84 @@ function attaquesDeBande(enveloppe) {
 
    Régularité : l'écart-type des intervalles rapporté à leur moyenne. Zéro pour
    un métronome, grand pour un bruit de fond. */
+/* ---- Où la voix chante, et où elle laisse la place ----------------------
+
+   Couper au milieu d'un mot est la faute qu'on entend le plus vite : la phrase
+   se coupe en deux et l'image change en même temps, si bien que les deux se
+   gênent. Un monteur coupe dans les respirations — entre deux vers, sur une fin
+   de phrase.
+
+   Il faut donc savoir QUAND la voix occupe le morceau. Deux sources, dans cet
+   ordre :
+
+   — **Whisper**, quand les paroles ont été entendues (« /api/ecoute ») : il rend
+     des lignes minutées, et c'est la vérité. Les creux sont ce qu'il y a entre.
+   — **la bande mélodie** (1,2 à 5 kHz) sinon : c'est là que vit une voix, et son
+     enveloppe dit si quelque chose y tient. Ça ne distingue pas une voix d'un
+     lead de synthé — mais l'un comme l'autre sont une phrase musicale qu'on ne
+     coupe pas en deux, donc l'erreur va dans le bon sens.
+
+   L'enveloppe n'est gardée qu'à dix mesures par seconde, sur un octet : un
+   morceau de trois minutes tient en mille huit cents octets, contre soixante-
+   douze kilo-octets à la résolution du calcul. On ne cherche pas la précision de
+   la milliseconde, on cherche un trou. */
+const PAS_VOIX = 0.1;
+
+function occupationVocale(enveloppe) {
+  const parCase = Math.max(1, Math.round(TRAMES_PAR_SECONDE * PAS_VOIX));
+  const cases = Math.floor(enveloppe.length / parCase);
+  if (cases < 4) return null;
+  const brut = new Float64Array(cases);
+  let fort = 0;
+  for (let c = 0; c < cases; c += 1) {
+    let somme = 0;
+    for (let i = 0; i < parCase; i += 1) somme += enveloppe[c * parCase + i];
+    brut[c] = somme / parCase;
+    if (brut[c] > fort) fort = brut[c];
+  }
+  if (!(fort > 0)) return null;
+  const valeurs = [];
+  for (let c = 0; c < cases; c += 1) valeurs.push(Math.round((brut[c] / fort) * 255));
+  return { pas: PAS_VOIX, valeurs };
+}
+
+/* Le seuil au-dessus duquel on considère que la voix tient la place.
+
+   Pas une valeur fixe : un morceau mixé bas et un morceau écrasé au limiteur
+   n'ont pas la même échelle. On prend la médiane des cases non silencieuses —
+   la moitié du morceau est alors « occupée », ce qui correspond à peu près à ce
+   qu'on entend sur une chanson. */
+function seuilDOccupation(voix) {
+  const vivantes = voix.valeurs.filter((v) => v > 8).sort((a, b) => a - b);
+  if (vivantes.length < 8) return Infinity;
+  return vivantes[Math.floor(vivantes.length / 2)];
+}
+
+/* Vrai quand la voix laisse la place à cet instant. Les paroles minutées
+   l'emportent quand on les a : Whisper sait qu'un vers est fini, l'enveloppe ne
+   sait que si ça sonne. La marge fait qu'on ne coupe pas non plus sur la syllabe
+   qui commence un dixième de seconde plus tard. */
+const MARGE_VOIX = 0.12;
+
+function laVoixLaisseLaPlace(rythme, quand, seuil = null) {
+  const lignes = rythme?.paroles;
+  if (Array.isArray(lignes) && lignes.length) {
+    return !lignes.some((l) => quand >= (l.debut || 0) - MARGE_VOIX
+      && quand <= (l.fin || 0) + MARGE_VOIX);
+  }
+  const voix = rythme?.voix;
+  if (!voix?.valeurs?.length || !(voix.pas > 0)) return true;
+  const limite = seuil ?? seuilDOccupation(voix);
+  if (!Number.isFinite(limite)) return true;
+  const c = Math.round(quand / voix.pas);
+  const marge = Math.round(MARGE_VOIX / voix.pas);
+  for (let k = c - marge; k <= c + marge; k += 1) {
+    const v = voix.valeurs[k];
+    if (v !== undefined && v > limite) return false;
+  }
+  return true;
+}
+
 function meilleureBande(parBande, duree) {
   let meilleur = null;
   for (const [cle, attaques] of Object.entries(parBande)) {
@@ -18815,6 +18916,10 @@ async function analyserRythme(donnees, avance = null) {
     instruments,
     instrument: choisie?.cle || "",
     regularite: choisie ? Math.round(choisie.regularite * 100) / 100 : 0,
+    /* L'occupation de la bande mélodie, gardée pour savoir où la voix respire.
+       C'est le seul tableau qu'on conserve du calcul : les autres enveloppes ont
+       donné leurs frappes et n'ont plus rien à dire. */
+    voix: occupationVocale(enveloppes[BANDES.findIndex((b) => b.cle === "melodie")]),
   };
 }
 
@@ -20015,11 +20120,67 @@ const CLOTURE = 3.2;
    au plus court. Le dernier tombe sur le premier temps du passage qui monte. */
 const ACCELERATION = [1.15, 0.85, 0.62, 0.45, 0.32];
 
+/* ---- Les bandes ne servent pas au même moment --------------------------
+
+   La séparation en quatre bandes existait, et le montage n'en employait qu'une :
+   celle dont les frappes sont les plus régulières, du début à la fin du morceau.
+   Tous les transitoires se valaient donc, et un kick de refrain pesait autant
+   qu'une harmonique de guitare.
+
+   Deux corrections, l'une et l'autre par moment du morceau.
+
+   **Le grave ancre le drop.** Sous 150 Hz vivent la grosse caisse et la basse :
+   ce sont les frappes lourdes, celles qu'un choc doit accompagner. Sur un drop
+   ou une montée, une coupe adossée à un coup de grave voit sa force montée ;
+   une coupe qui n'en a aucun la voit baisser. On ne change pas la grille — la
+   régularité reste ce qui la tient —, on change ce qui compte comme fort, et
+   c'est cette force-là qui décide ensuite du choc, de l'image d'impact et de
+   l'éclair.
+
+   **La voix protège les couplets.** Sur une intro, un couplet ou une outro, une
+   coupe qui tombe au milieu d'un vers coupe la phrase en deux. On la déplace
+   donc vers la respiration la plus proche — un dixième ou deux suffisent — et,
+   si aucune n'est à portée, on baisse sa force pour qu'elle parte la première
+   quand le budget rogne.
+
+   Sur le drop, on ne déplace rien : un refrain se chante sur les frappes, et
+   fuir la voix y reviendrait à fuir la musique. */
+const PORTEE_GRAVE = 0.09;     // à neuf centièmes, la coupe est sur le coup
+const PRIME_GRAVE = 1.35;      // ce que vaut une coupe adossée au grave
+const MALUS_SANS_GRAVE = 0.72; // ce que vaut un drop sans rien sous 150 Hz
+const FUITE_VOIX = 0.26;       // de combien on a le droit de glisser une coupe
+const MALUS_DANS_LA_VOIX = 0.6;
+
 function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
   const attaques = rythme?.instruments?.[rythme?.instrument] || [];
   if (attaques.length < 4) return null;
   const duree = rythme.duree || 0;
   const periode = rythme.bpm ? 60 / rythme.bpm : 0.5;
+  /* Le moment de chaque passage, calculé une fois : c'est lui qui dit quelle
+     bande commande où. Sans sections, rien ne change — c'est le montage d'avant. */
+  const moments = sections?.length
+    ? sections.map((s, rang) => phaseDuMontage(s, rang, sections, duree))
+    : null;
+  const momentA = (quand) => {
+    if (!moments) return "";
+    const rang = sections.findIndex((s) => quand >= s.debut && quand < s.fin);
+    return rang >= 0 ? moments[rang] : moments[moments.length - 1];
+  };
+  // Les coups de grave, triés une fois : on y cherche par dichotomie.
+  const graves = (rythme?.instruments?.grave || [])
+    .filter((a) => a.force > 0).map((a) => a.quand).sort((x, y) => x - y);
+  const graveSous = (quand) => {
+    if (!graves.length) return false;
+    let a = 0;
+    let b = graves.length - 1;
+    while (a <= b) {
+      const m = (a + b) >> 1;
+      if (Math.abs(graves[m] - quand) <= PORTEE_GRAVE) return true;
+      if (graves[m] < quand) a = m + 1; else b = m - 1;
+    }
+    return false;
+  };
+  const seuilVoix = rythme?.voix ? seuilDOccupation(rythme.voix) : Infinity;
 
   // 1. Les frappes, dans l'ordre, sans celles qui se collent à la précédente.
   const gardees = [];
@@ -20109,6 +20270,51 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
     if (points[k].quand < ouverture || points[k].quand > duree - cloture) points.splice(k, 1);
   }
 
+  /* 2 bis bis. La voix d'abord : on ne coupe pas au milieu d'un vers.
+
+     Sur une intro, un couplet ou une outro, chaque coupe cherche la respiration
+     la plus proche — dans un rayon d'un quart de seconde, et en préférant une
+     vraie frappe à un instant nu. Quand il n'y en a pas, on ne la déplace pas de
+     force : on baisse sa force, et le budget la retirera avant les autres. */
+  if (moments && (rythme?.paroles?.length || rythme?.voix)) {
+    for (const point of points) {
+      const moment = momentA(point.quand);
+      if (moment !== "intro" && moment !== "couplet" && moment !== "outro") continue;
+      if (laVoixLaisseLaPlace(rythme, point.quand, seuilVoix)) continue;
+      let mieux = null;
+      // Les frappes réelles d'abord, l'instant nu ensuite : déplacer une coupe
+      // sur un silence total s'entend moins bien que sur un coup qui existe.
+      for (const candidat of gardees) {
+        const ecart = Math.abs(candidat.quand - point.quand);
+        if (ecart > FUITE_VOIX || ecart === 0) continue;
+        if (!laVoixLaisseLaPlace(rythme, candidat.quand, seuilVoix)) continue;
+        if (!mieux || ecart < mieux.ecart) mieux = { quand: candidat.quand, force: candidat.force, ecart };
+      }
+      if (!mieux) {
+        for (let pas = 0.04; pas <= FUITE_VOIX; pas += 0.04) {
+          for (const sens of [-1, 1]) {
+            const ou = point.quand + sens * pas;
+            if (ou <= 0 || ou >= duree) continue;
+            if (!laVoixLaisseLaPlace(rythme, ou, seuilVoix)) continue;
+            mieux = { quand: ou, force: point.force, ecart: pas };
+            break;
+          }
+          if (mieux) break;
+        }
+      }
+      if (mieux) {
+        point.quand = mieux.quand;
+        point.force = Math.max(point.force, mieux.force || 0);
+        point.horsVoix = true;
+      } else {
+        // Rien à portée : la coupe reste, mais elle est la première sacrifiée.
+        point.force *= MALUS_DANS_LA_VOIX;
+        point.dansLaVoix = true;
+      }
+    }
+    points.sort((x, y) => x.quand - y.quand);
+  }
+
   /* 2 quater. Deux coupes ne se collent pas.
 
      L'accélération pose ses points sans regarder ceux qui existent déjà : une
@@ -20130,6 +20336,23 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
   points.length = 0;
   points.push(...propres);
 
+  /* 2 quinquies. Le grave ancre les frappes lourdes.
+
+     Sur un drop ou une montée, la force d'une coupe n'est plus seulement celle
+     de sa bande : elle monte si un coup sous 150 Hz tombe dessous, elle baisse
+     s'il n'y en a aucun. C'est cette force-là que lisent ensuite le choix du
+     choc, la réservation des images d'impact et l'éclair d'impact — donc le
+     kick du refrain reçoit le plan qui frappe, au lieu du plan qui tombait là. */
+  if (moments && graves.length) {
+    for (const point of points) {
+      const moment = momentA(point.quand);
+      if (moment !== "drop" && moment !== "montee") continue;
+      const porte = graveSous(point.quand);
+      point.force *= porte ? PRIME_GRAVE : MALUS_SANS_GRAVE;
+      if (porte) point.grave = true;
+    }
+  }
+
   /* 3. Trop de coupes pour le vivier : on retire les plus faibles. Les frappes
         de comblement partent les premières — elles ne portent aucun son. */
   if (budget > 0 && points.length + 1 > budget) {
@@ -20145,8 +20368,19 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
      instants. Le montage, lui, en a besoin — c'est elle qui distingue le kick
      du refrain d'un contretemps, donc le plan qui doit frapper du plan qui
      accompagne. */
+  /* Les marques voyagent avec la force : « grave » dit qu'un coup sous 150 Hz
+     porte cette coupe, « horsVoix » qu'on l'a glissée dans une respiration,
+     « dansLaVoix » qu'on n'a rien trouvé et qu'elle tombe dans un vers. Le
+     journal les compte, et les bancs les vérifient — sans elles, une règle qui
+     ne s'appliquerait plus passerait inaperçue. */
   return avecForce
-    ? points.map((x) => ({ quand: Math.round(x.quand * 1000) / 1000, force: x.force || 0 }))
+    ? points.map((x) => ({
+      quand: Math.round(x.quand * 1000) / 1000,
+      force: x.force || 0,
+      ...(x.grave ? { grave: true } : {}),
+      ...(x.horsVoix ? { horsVoix: true } : {}),
+      ...(x.dansLaVoix ? { dansLaVoix: true } : {}),
+    }))
     : points.map((x) => Math.round(x.quand * 1000) / 1000);
 }
 
@@ -20250,6 +20484,15 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
   /* Les coupes tombent sur l'instrument quand on en a un ; sinon sur la division
      régulière d'avant, qui reste juste et ne dépend de rien. */
   const grille = grilleDeCoupes(rythme, budgetCases, sections, true);
+  /* Ce que les bandes ont changé, gardé pour le journal. Il se lit sur la grille
+     et sur elle seule : une fois les plans posés, les marques ne sont plus
+     attachées à rien. */
+  projet.__bandes = grille ? {
+    total: grille.length,
+    grave: grille.filter((x) => x.grave).length,
+    horsVoix: grille.filter((x) => x.horsVoix).length,
+    dansLaVoix: grille.filter((x) => x.dansLaVoix).length,
+  } : null;
   const prochaineFrappe = (t) => {
     if (!grille) return null;
     for (const point of grille) if (point.quand > t + COUPE_MINI) return point.quand;
