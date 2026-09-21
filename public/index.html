@@ -1472,15 +1472,19 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 
    Même mot, même vert que ce qui compte ailleurs, et la taille d'une vraie
    cible : quarante-huit points, la flèche devant. */
-.bouton-retour {
-  display: inline-flex; align-items: center; gap: 8px;
-  align-self: flex-start;
+.bouton-vert {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 48px; padding: 12px 20px; border-radius: 12px;
   border: none; background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
   color: #fff; font: 700 0.92rem/1 system-ui, sans-serif; cursor: pointer;
 }
+.bouton-vert:active { filter: brightness(1.12); }
+.bouton-vert:disabled { opacity: .6; }
+.bouton-retour { align-self: flex-start; }
 .bouton-retour::before { content: "‹"; font-size: 1.25rem; line-height: 1; margin-top: -2px; }
-.bouton-retour:active { filter: brightness(1.12); }
+/* Recharger : le geste qu'on vient chercher quand on a raté la mise à jour
+   automatique. Il prend la largeur, sous les sections. */
+.reglages-recharger { width: 100%; margin: var(--e4) 0 0; }
 .rendu-retour { align-self: flex-start; }
 .rendu-entete { display: flex; flex-direction: column; gap: var(--e1); }
 .rendu-nom {
@@ -2168,10 +2172,18 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
         <button type="button" class="reglages-onglet" data-panneau="stockage" hidden>Stockage</button>
         <button type="button" class="reglages-onglet" data-panneau="compte" hidden>Compte</button>
       </nav>
+      <!-- Recharger à la main, sous les sections.
+
+           La mise à jour se fait toute seule — au lancement, et dès que
+           l'application n'a rien en cours. Mais « dès que » peut attendre : un
+           montage qui tourne, une musique choisie qu'un rechargement perdrait. Ce
+           bouton est la sortie de secours, celle qu'on vient chercher quand on
+           veut la nouvelle version maintenant. -->
+      <button type="button" class="bouton-vert reglages-recharger" id="btn-recharger">Recharger l'application</button>
       <!-- La version sous le menu : c'est ce qu'on vient vérifier le plus
            souvent, et cela ne vaut pas de descendre dans une section. -->
       <p class="note-reglage reglages-pied" id="version-page">version inconnue</p>
-      <button type="button" class="bouton-retour reglages-retour" id="reglages-retour" hidden>Retour</button>
+      <button type="button" class="bouton-vert bouton-retour reglages-retour" id="reglages-retour" hidden>Retour</button>
 
       <div class="reglages-panneau" data-panneau="general" hidden>
         <h2>Général</h2>
@@ -2355,7 +2367,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 05:20";
+const VERSION_PAGE = "2026-09-21 05:36";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2464,7 +2476,7 @@ function verifierVersion(reste = 2) {
       navigator.serviceWorker?.getRegistration?.()
         ?.then((enregistrement) => enregistrement?.update())
         .catch(() => {});
-      signalerVersion(`Nouvelle version disponible (${version}) — celle-ci date du ${VERSION_PAGE}.`);
+      appliquerMiseAJour(version);
     })
     /* Une réponse manquée n'est pas une version identique : sur un lien mobile,
        un appel qui échoue laissait croire que tout était à jour. On retente. */
@@ -2604,25 +2616,100 @@ function pileBandeaux() {
    alerte de place, elle, ne l'empêche plus : elles s'empilent désormais au lieu
    de se recouvrir, et taire la mise à jour parce qu'un disque est plein n'avait
    de sens que tant qu'elles se disputaient le même bord. */
+/* ---- Une mise à jour ne se propose plus : elle se fait ---------------------
+
+   Le bandeau demandait la permission, avec « Plus tard » à côté. « Plus tard »
+   est ce qu'on touche quand on est au milieu de quelque chose — c'est-à-dire
+   toujours —, et l'application restait alors sur son vieux code jusqu'à une
+   prochaine ouverture qui n'arrive jamais pour une application posée sur
+   l'écran d'accueil.
+
+   Elle se recharge donc d'elle-même, rideau tiré, sans rien demander. Deux
+   choses seulement la retiennent, et ce sont deux choses qu'un rechargement
+   détruirait : un travail en cours, et une musique choisie dont aucun montage
+   n'est encore sorti — le fichier vient de l'appareil, et rien ne peut le
+   rouvrir à notre place. Dès que cela se dénoue, la mise à jour prend. Et si
+   l'on veut qu'elle prenne tout de suite, le bouton vert d'Infos est là. */
+let majEnAttente = "";
+let veilleMaj = null;
+let majDite = false;
+
+/* Une tentative par version, et pas une par découverte.
+
+   Sans ce garde-fou, une version que le rechargement ne corrige pas — une copie
+   tenace au bord, une estampille oubliée au déploiement — ferait tourner
+   l'application en boucle sur son écran noir : elle se recharge, retrouve le
+   même écart, se recharge encore. Mesuré au banc : quatre-vingt-quatorze
+   rechargements en deux secondes.
+
+   La marque vit dans la session : elle disparaît quand l'application est
+   vraiment fermée, et une nouvelle tentative aura lieu au lancement suivant. */
+const CLE_MAJ = "amvauto-maj-tentee";
+const dejaTentee = (version) => {
+  try { return sessionStorage.getItem(CLE_MAJ) === version; } catch { return false; }
+};
+const marquerTentee = (version) => {
+  try { sessionStorage.setItem(CLE_MAJ, version); } catch { /* mode privé */ }
+};
+
+/* Ce qui serait perdu si l'on rechargeait maintenant — une phrase, ou rien.
+
+   Le « try » n'est pas une précaution : « verifierVersion » part au chargement,
+   avant que le tunnel et les courses existent. Qu'ils n'existent pas encore
+   signifie exactement qu'il n'y a rien en cours. */
+function ceQuUnRechargementPerdrait() {
+  try {
+    if (tunnel.occupe === "musique") return "l'analyse de la musique";
+    if (tunnel.occupe) return "la génération en cours";
+    if (courses.size) return "le suivi du rendu";
+    if (tunnel.fichier && !tunnel.montage?.length) return "la musique choisie";
+    if (audioPartage.audio && !audioPartage.audio.paused) return "l'écoute en cours";
+  } catch { return ""; }
+  return "";
+}
+
+function rechargerLApplication() {
+  montrerDemarrage();
+  /* Le paramètre force une page neuve même si un intermédiaire s'accroche à sa
+     copie, et « replace » n'ajoute pas une entrée à l'historique du navigateur. */
+  location.replace(`${location.pathname}?v=${Date.now()}`);
+}
+
+function appliquerMiseAJour(version = "") {
+  const cle = version || majEnAttente || "version sans nom";
+  majEnAttente = cle;
+  /* Déjà essayé pour celle-ci : le rechargement n'y a rien changé. On ne
+     recommence pas — on le dit, une fois, et le bouton d'Infos reste. */
+  if (dejaTentee(cle)) {
+    if (!majDite) {
+      majDite = true;
+      avertir("Une version plus récente existe, mais le rechargement ne la ramène pas."
+        + " Infos, « Recharger l'application », forcera la mise à jour.");
+    }
+    clearInterval(veilleMaj);
+    veilleMaj = null;
+    return false;
+  }
+  const retenue = ceQuUnRechargementPerdrait();
+  if (!retenue) {
+    marquerTentee(cle);
+    rechargerLApplication();
+    return true;
+  }
+  /* On repassera : ce qui retient finit toujours par se terminer. */
+  if (!veilleMaj) veilleMaj = setInterval(() => appliquerMiseAJour(), 15000);
+  return false;
+}
+
+// Le retour à l'écran est un bon moment pour réessayer : ce qui tournait a
+// souvent fini pendant l'absence.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && majEnAttente) appliquerMiseAJour();
+});
+
+// Compatibilité : tout ce qui annonçait une version applique maintenant.
 function signalerVersion(texte) {
-  if (document.querySelector(".bandeau-version:not(.alerte):not(.coffre)")) return;
-  const bandeau = document.createElement("div");
-  bandeau.className = "bandeau-version";
-  const mot = document.createElement("span");
-  mot.textContent = `${texte} Elle s'appliquera à la prochaine ouverture.`;
-  const recharger = document.createElement("button");
-  recharger.type = "button";
-  recharger.textContent = "Recharger maintenant";
-  recharger.addEventListener("click", () => {
-    montrerDemarrage();
-    location.replace(`${location.pathname}?v=${Date.now()}`);
-  });
-  const plusTard = document.createElement("button");
-  plusTard.type = "button";
-  plusTard.textContent = "Plus tard";
-  plusTard.addEventListener("click", () => bandeau.remove());
-  bandeau.append(mot, recharger, plusTard);
-  pileBandeaux().append(bandeau);
+  appliquerMiseAJour(String(texte || ""));
 }
 verifierVersion();
 const PAR_PAGE = 100;
@@ -6901,6 +6988,8 @@ window.__banc = {
   projetDuTunnel: () => projetDuTunnel(), genererLAmv: () => genererLAmv(), etat: () => state,
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
+  appliquerMiseAJour: (v) => appliquerMiseAJour(v),
+  ceQuUnRechargementPerdrait: () => ceQuUnRechargementPerdrait(),
   automatiserAmv: (b) => automatiserAmv(b), construireMontage: (...a) => construireMontage(...a),
   casesAttendues: (p) => casesAttendues(p), amvDe: (p) => amvDe(p), sauver: () => sauver(),
   noterCandidat: (...a) => noterCandidat(...a), automate: () => automate,
@@ -15679,6 +15768,22 @@ async function essayerLaPoussee() {
   }
 }
 
+/* Recharger sur demande : on redemande sa coquille au service worker, puis on
+   repart. Sans attendre longtemps — deux secondes suffisent à l'installer, et
+   au pire la page suivante la prendra. */
+$("btn-recharger")?.addEventListener("click", async (evt) => {
+  const bouton = evt.currentTarget;
+  bouton.disabled = true;
+  bouton.textContent = "Rechargement…";
+  await Promise.race([
+    navigator.serviceWorker?.getRegistration?.()
+      .then((enregistrement) => enregistrement?.update()).catch(() => null)
+      || Promise.resolve(null),
+    new Promise((ok) => { setTimeout(ok, 2000); }),
+  ]);
+  rechargerLApplication();
+});
+
 $("btn-notifs")?.addEventListener("click", () => { basculerNotifs().catch(() => {}); });
 $("btn-test-notif")?.addEventListener("click", () => { testerNotif().catch(() => {}); });
 $("btn-economie")?.addEventListener("click", () => {
@@ -15699,8 +15804,12 @@ function ouvrirReglage(vise) {
     panneau.hidden = panneau.dataset.panneau !== vise;
   }
   if (menu) menu.hidden = Boolean(vise);
-  const pied = $("version-page");
-  if (pied) pied.hidden = Boolean(vise);
+  // Ce qui appartient au menu s'efface avec lui : le rechargement et la version
+  // sont des choses qu'on vient chercher à l'accueil d'Infos, pas dans l'Aide.
+  for (const id of ["btn-recharger", "version-page"]) {
+    const noeud = $(id);
+    if (noeud) noeud.hidden = Boolean(vise);
+  }
   if (retour) retour.hidden = !vise;
   if (vise === "stockage") majStockage().catch(() => {});
   if (vise === "compte") majCompte();
@@ -18899,7 +19008,7 @@ function blocDuRendu(rendu, acces, { retour = null, supprimer = false } = {}) {
   if (retour) {
     const revenir = document.createElement("button");
     revenir.type = "button";
-    revenir.className = "bouton-retour rendu-retour";
+    revenir.className = "bouton-vert bouton-retour rendu-retour";
     revenir.textContent = "Retour";
     revenir.addEventListener("click", retour);
     bloc.append(revenir);
@@ -23973,7 +24082,6 @@ if (coffre.actif && coffre.code) {
    Une tentative par version, pas une par lancement : si le rechargement ne
    suffit pas — une copie tenace au bord, une estampille oubliée —, on ne
    recharge pas en boucle un écran noir. */
-const CLE_MAJ_DEPART = "amvauto-maj-tentee";
 const ATTENTE_MAJ = 2500;
 
 async function mettreAJourAuDemarrage() {
@@ -23990,10 +24098,8 @@ async function mettreAJourAuDemarrage() {
   ]);
   if (!dit?.version || dit.version === VERSION_PAGE) return false;
 
-  let dejaTentee = "";
-  try { dejaTentee = sessionStorage.getItem(CLE_MAJ_DEPART) || ""; } catch { /* mode privé */ }
-  if (dejaTentee === dit.version) return false;
-  try { sessionStorage.setItem(CLE_MAJ_DEPART, dit.version); } catch { /* tant pis */ }
+  if (dejaTentee(dit.version)) return false;
+  marquerTentee(dit.version);
 
   // Le nouveau worker a besoin d'un instant pour s'installer ; sans lui, le
   // rechargement resservirait la page qu'on vient de quitter.
