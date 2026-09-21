@@ -1485,6 +1485,7 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
 /* Recharger : le geste qu'on vient chercher quand on a raté la mise à jour
    automatique. Il prend la largeur, sous les sections. */
 .reglages-recharger { width: 100%; margin: var(--e4) 0 0; }
+.reglages-sauvegarde { width: 100%; margin: var(--e2) 0 0; }
 .rendu-retour { align-self: flex-start; }
 .rendu-entete { display: flex; flex-direction: column; gap: var(--e1); }
 .rendu-nom {
@@ -2119,11 +2120,13 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
       <span class="app-logo"><img src="icon.svg" alt=""></span>
       <span class="app-title">AMVAUTO</span>
       <span class="app-count" id="compteur"></span>
-      <!-- Jamais caché au départ : « Setting » est le seul chemin vers la
-           connexion, et un appareil neuf n'a ni projet ni onglet actif. -->
+      <!-- « Setting » n'est plus là. Il ouvrait une feuille de diagnostic que le
+           journal de génération dit mieux — horodaté, avec les appels au serveur
+           et la demande qui a mené là —, et des gestes de projet qui n'existent
+           plus depuis que le tunnel fabrique son montage par musique. La
+           sauvegarde, elle, est passée dans Infos, où l'on va la chercher. -->
       <span class="app-actions" id="app-actions">
         <button type="button" id="btn-export" class="tete-btn accent" hidden>Export</button>
-        <button type="button" id="btn-setting" class="tete-btn">Setting</button>
       </span>
     </div>
   </header>
@@ -2210,6 +2213,12 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
         </div>
         <p class="note-reglage" id="note-notifs"></p>
         <p class="note-reglage" id="etat-chargement"></p>
+
+        <h2>Sauvegarde</h2>
+        <p class="note-reglage">Un code de vingt caractères garde tes montages en
+        ligne et les retrouve sur un autre appareil. C'est aussi lui qui sert de
+        laissez-passer au rendu fait sur GitHub.</p>
+        <button type="button" class="bouton-vert reglages-sauvegarde" id="btn-sauvegarde">Sauvegarde et compte</button>
       </div>
 
       <div class="reglages-panneau" data-panneau="stockage" hidden>
@@ -2367,7 +2376,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 05:36";
+const VERSION_PAGE = "2026-09-21 05:43";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -5391,6 +5400,14 @@ function journalEnTexte() {
     "",
     "--- les appels au serveur ---",
     ...appelsEnTexte(),
+    /* Ce que le lecteur a vécu. Cela vivait dans la feuille « Setting », qui
+       n'existe plus : c'est ici que le diagnostic se ramasse désormais, et une
+       lecture qui saute se raconte en quelques lignes. */
+    ...(journal.length
+      ? ["", "--- le lecteur ---",
+        ...journal.map((l) => `  ${l.quand} ${l.quoi} — visé ${l.vise ?? "—"} s,`
+          + ` réel ${l.reel ?? "—"} s, état ${l.pret}/4, ${l.essais ?? 0} essai(s)`)]
+      : []),
     "",
     "=== fin du rapport ===",
   ].join("\n");
@@ -6975,6 +6992,7 @@ window.__banc = {
   tagsDesParoles: (x) => tagsDesParoles(x), ecouterLesParoles: () => ecouterLesParoles(),
   majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
   journal: () => journalTunnel, noter: (t, n) => noter(t, n),
+  journalEnTexte: () => journalEnTexte(),
   rendreHistoire: () => rendreHistoire(), renduOuvert: () => renduOuvert,
   peindreRendusEnLigne: () => peindreRendusEnLigne(),
   blocDuRendu: (r, a, o) => blocDuRendu(r, a, o),
@@ -15784,6 +15802,10 @@ $("btn-recharger")?.addEventListener("click", async (evt) => {
   rechargerLApplication();
 });
 
+/* La sauvegarde n'avait qu'une porte, et c'était « Setting ». Elle est ici,
+   dans la section où l'on range ce qui tient à l'appareil. */
+$("btn-sauvegarde")?.addEventListener("click", () => ouvrirCoffre());
+
 $("btn-notifs")?.addEventListener("click", () => { basculerNotifs().catch(() => {}); });
 $("btn-test-notif")?.addEventListener("click", () => { testerNotif().catch(() => {}); });
 $("btn-economie")?.addEventListener("click", () => {
@@ -19171,430 +19193,6 @@ function lienGrenier(rendu) {
   ligne.append(lien);
   return ligne;
 }
-
-$("btn-setting").addEventListener("click", () => {
-  /* Les réglages s'ouvrent même sans montage ouvert.
-
-     Ils sortaient tout de suite quand aucun projet n'était actif : sur un
-     appareil neuf — c'est-à-dire exactement celui où l'on veut se connecter
-     pour retrouver ses montages — le bouton ne faisait rien du tout, et le
-     formulaire de connexion était inatteignable. « La partie connexion ne
-     marche pas » : elle n'était pas accessible.
-
-     Un montage vide sert de doublure : tout ce qui le compte compte zéro, et
-     les deux gestes qui le modifient — renommer, supprimer — sont écartés plus
-     bas. */
-  const projetVrai = projetActif();
-  const projet = projetVrai || { id: "", nom: "Réglages", cree: 0, plans: [] };
-  const fond = $("feuille");
-  const boite = document.createElement("div");
-  boite.className = "lecteur-boite";
-  const corps = document.createElement("div");
-  corps.className = "lecteur-corps";
-
-  const titre = document.createElement("div");
-  titre.className = "lecteur-titre";
-  titre.textContent = projet.nom;
-  const meta = document.createElement("div");
-  meta.className = "lecteur-meta";
-  const video = elementActif();
-  meta.textContent = [
-    `${projet.plans.length} plans · ${secondes(total(projet))}`,
-    `export sur une base de ${IMAGES_PAR_SECONDE} images par seconde`,
-    `version ${VERSION_PAGE}`,
-    "",
-    "Lecteur :",
-    `  état ${video?.readyState ?? "?"}/4 · position ${video ? Math.round(video.currentTime * 100) / 100 : "?"} s` +
-      `${video?.error ? ` · erreur ${video.error.code}` : ""}`,
-    `  tête à ${Math.round(lecture.position * 100) / 100} s · plan ${lecture.index + 1}`,
-    ...(() => {
-      // Ce que la tête désigne, et ce que le moniteur montre : la seule ligne
-      // qui tranche quand l'aperçu semble ne pas suivre le curseur.
-      const cible = positionCible();
-      if (!cible) return [];
-      const affiche = projet.plans.findIndex((p) => p.id === video?.dataset.plan);
-      return [
-        `  la tête désigne le plan ${cible.index + 1} à ${Math.round(cible.dans * 100) / 100} s ` +
-          `(${Math.round((entreeDe(cible.plan) + cible.dans) * 100) / 100} s dans le fichier)`,
-        `  le moniteur montre le plan ${affiche >= 0 ? affiche + 1 : "?"} ` +
-          `à ${video ? Math.round(video.currentTime * 100) / 100 : "?"} s` +
-          `${video?.dataset.vise ? ` · vise ${Math.round(Number(video.dataset.vise) * 100) / 100} s` : ""}` +
-          `${video?.seeking ? " · déplacement en cours" : ""}`,
-        `  média ${estLocal(cible.plan) ? "importé sur l'appareil" : "distant"}`,
-        /* D'où vient l'image que le lecteur tente d'ouvrir.
-
-           « erreur 4 » veut dire « source non gérée », et la question qui suit
-           est toujours la même : QUELLE source ? Sans cette ligne, il faut la
-           deviner. */
-        ...(() => {
-          const nature = (plan) => (surColle(plan) ? "recollé"
-            : segmentDe(plan) ? "bloc"
-            : estLocal(plan) ? "rush local"
-            : "rush distant");
-          const compte = {};
-          for (const plan of projet.plans) {
-            const quoi = nature(plan);
-            compte[quoi] = (compte[quoi] || 0) + 1;
-          }
-          const bout = String(video?.currentSrc || "");
-          return [
-            `  le lecteur ouvre : ${nature(cible.plan)}`
-              + (bout ? ` (${bout.startsWith("blob:") ? "fichier local" : bout.slice(0, 28)})` : " (rien)"),
-            `  sources du montage : ${Object.entries(compte).map(([k, v]) => `${v} ${k}`).join(" · ")}`,
-          ];
-        })(),
-        `  pellicule : ${pellicule.demandees} demandée(s), ${pellicule.lancees} lancée(s), ` +
-          `${pellicule.prises} prise(s), ${pellicule.ratees} échec(s)` +
-          `${pellicule.dernier ? ` — dernier : ${pellicule.dernier}` : ""}`,
-      ];
-    })(),
-    "",
-    /* Le moteur de décodage d'avance, vu de l'appareil qui l'exécute.
-
-       Tout ce qui a été mesuré l'a été sur un navigateur de bureau. Safari peut
-       très bien refuser ce décodeur, et le moteur se tait alors sans rien dire —
-       c'est voulu, mais ça rend le silence indéchiffrable de loin. Ces trois
-       lignes tranchent : soit il tourne et sert des images, soit il ne tourne
-       pas et l'on sait pourquoi. */
-    /* Comment les blocs sont traités, vu de l'appareil qui les traite.
-
-       Un bloc de montage est un fichier et deux bornes. Le montrer demande un
-       lecteur qui tienne ce fichier, placé sur la borne d'entrée, déjà lancé au
-       moment de la coupe. Ces quatre lignes disent si c'est ce qui se passe —
-       et, quand ce n'est pas le cas, laquelle des trois conditions manque. */
-    /* Ce que l'écran a montré, par nature d'image. La définition n'est pas la
-       même pour chacune : le lecteur est à sa taille native, une image décodée
-       d'avance fait 640 points, la copie de secours la taille du moniteur, une
-       imagette 160. Un aperçu sain est presque entièrement « lecteur ». */
-    /* Le cache de segments : ce qui est prêt, ce que ça pèse, à quelle vitesse
-       il se fabrique. Un montage entièrement fabriqué se lit sans un seul
-       déplacement de fichier. */
-    /* Le contrôle des blocs : ce que la fabrique a vu en décodant, et ce qu'elle
-       a corrigé. Un bloc n'est jugé mauvais que si rien n'y bouge — la
-       luminance ne fait que nommer le défaut. */
-    "Contrôle des blocs :",
-    ...(() => {
-      const vus = defauts.noirs + defauts.blancs + defauts.figes;
-      if (!vus && !defauts.corriges && !defauts.blocsGeles && !defauts.dureesCorrigees) {
-        return ["  aucun bloc sans image trouvé"];
-      }
-      const l = [
-        `  sans image : ${defauts.figes} figé(s), ${defauts.noirs} noir(s), ${defauts.blancs} blanc(s)`,
-        `  déplacés dans leur rush : ${defauts.corriges}`,
-      ];
-      if (defauts.abandonnes) {
-        l.push(`  restés mauvais : ${defauts.abandonnes} — en rouge sur la barre`);
-      }
-      if (defauts.blocsGeles) {
-        l.push(`  figés en cours de route : ${defauts.blocsGeles} bloc(s), ${defauts.gelees} image(s)`);
-      }
-      if (defauts.dureesCorrigees) {
-        l.push(`  rushs plus courts qu'annoncé, retaillés : ${defauts.dureesCorrigees}`);
-      }
-      for (const ligne of defauts.derniers) l.push(`    ${ligne}`);
-      l.push("  la durée de chaque bloc est inchangée : la musique reste calée");
-      return l;
-    })(),
-    "",
-    "Montage recollé :",
-    ...(() => {
-      /* Ce panneau est le seul endroit d'où l'utilisateur peut me dire pourquoi
-         un montage se lit mal et un autre non. Il montre donc toujours la
-         couverture, la sorte des blocs, et le dernier refus d'assemblage —
-         même quand un fichier existe déjà. */
-      const l = [];
-      const total = projetActif()?.plans.length || 0;
-      const sorte = modeCopie(projetActif()) ? "recopiés du rush" : "réencodés";
-      if (colle.url) {
-        l.push(`  oui — un seul fichier de ${(colle.octets / 1e6).toFixed(1)} Mo, ${colle.images} images`);
-        l.push(`  couvre les plans ${(colle.debut || 0) + 1} à ${colle.jusqua} sur ${total}`);
-        if (montageEntier()) l.push("  la lecture n'a plus aucune coupe à encaisser");
-        else l.push("  hors de cette tranche, chaque coupe rouvre un fichier");
-      } else if (colle.encours) {
-        l.push("  en cours d'assemblage");
-      } else {
-        l.push("  pas encore : il faut au moins trois blocs prêts qui se suivent");
-      }
-      l.push(`  blocs ${sorte}`);
-      /* Et surtout : qui empêche la tranche de s'étendre.
-
-         Le recollage veut des blocs qui se suivent. Un seul plan sans bloc
-         arrête la tranche, et c'est lui qu'il faut nommer — pas le nombre de
-         blocs prêts, qui peut être élevé pendant que le montage n'en recolle
-         aucun. C'est la ligne à me lire quand un montage se lit mal et qu'un
-         autre va bien. */
-      if (!montageEntier()) {
-        const plans = projetActif()?.plans || [];
-        let bloquant = -1;
-        for (let i = colle.url ? colle.jusqua : 0; i < plans.length; i += 1) {
-          const cle = cleSegment(plans[i]);
-          if (!cle || !segments.has(cle)) { bloquant = i; break; }
-        }
-        if (bloquant >= 0) {
-          const plan = plans[bloquant];
-          const cle = cleSegment(plan);
-          const pourquoi = plan.youtube ? "bande-annonce YouTube, non lisible"
-            : !cle ? "pas de fichier vidéo"
-            : segmentsRates.has(cle) ? "bloc abandonné"
-            : parLecteur.has(cle) ? "à refaire par le lecteur — seulement à l'arrêt"
-            : laisserAuReseau(plan) ? "le rush est encore en route"
-            : raisonsSegment.get(cle) || "pas encore préparé";
-          l.push(`  bloqué au plan ${bloquant + 1} (${plan.name || plan.id}) : ${pourquoi}`);
-        }
-      }
-      if (colle.echec) l.push(`  dernier refus d'assemblage : ${colle.echec}`);
-      if (copieRefusee.has(state.actif)) {
-        l.push("  un bloc n'a pas pu être recopié : tout le montage a été réencodé");
-      }
-      return l;
-    })(),
-    "",
-    "Cache de segments :",
-    ...(() => {
-      const projet = projetActif();
-      const total = projet?.plans.length || 0;
-      const prets = (projet?.plans || []).filter(surSegment).length;
-      if (fabrique.possible === false) return ["  indisponible sur ce navigateur"];
-      const l = [`  ${prets} bloc(s) prêts sur ${total}`];
-      if (fabrique.faits) {
-        l.push(`  fabriqués : ${fabrique.faits} · ${(fabrique.octets / 1e6).toFixed(1)} Mo`
-          + ` · ${Math.round(fabrique.duree / fabrique.faits)} ms par bloc`);
-      }
-      if (fabrique.rates) l.push(`  refusés : ${fabrique.rates}`);
-      /* Les blocs relus du cache, et ceux dont on ne sait plus ce qu'ils sont.
-
-         Un bloc rangé avant que le carnet existe revient sans sa fiche, donc sans
-         son décalage : s'il s'agissait d'une copie du rush, le lecteur y entre à
-         zéro au lieu du point du plan et montre le groupe d'images qui le
-         précède. Reposer le montage sur la musique les refait tous, et plus
-         légers. */
-      {
-        const relus = [...segments.values()].filter((x) => x.restaure);
-        if (relus.length) {
-          const sansFiche = relus.filter((x) => !x.fiche).length;
-          l.push(`  relus du cache : ${relus.length}`
-            + ` · ${relus.filter((x) => x.copie).length} copie(s) du rush`);
-          if (sansFiche) {
-            l.push(`    ${sansFiche} sans fiche — leur point d'entrée est perdu,`);
-            l.push("    repose le montage sur la musique pour les refaire");
-          }
-        }
-      }
-      {
-        const pris = poidsReserve();
-        l.push(`  réserve : ${(pris / 1e6).toFixed(0)} Mo sur ${(PLAFOND_RESERVE / 1e6).toFixed(0)} Mo`
-          + (reserve.purges ? ` · ${reserve.purges} fichier(s) rendus à l'appareil` : ""));
-        if (reserve.serre) {
-          l.push("  ce montage à lui seul dépasse le plafond : rien d'autre n'est gardé");
-        }
-        l.push(`  lecteurs vidéo : ${NOMS_LECTEURS.length}${SUR_WEBKIT ? " (budget WebKit)" : ""}`);
-      }
-      if (servis.extraits) {
-        l.push(`  ${servis.extraits} bloc(s) reçus tout faits du serveur`
-          + ` · ${(servis.octets / 1e6).toFixed(0)} Mo, sans rien décoder ici`);
-      }
-      if (economies.tranches) {
-        l.push(`  rushs pris par tranches : ${economies.tranches}`
-          + ` · ${(economies.octets / 1e6).toFixed(0)} Mo qui n'ont pas traversé le réseau`);
-      }
-      if (fabrique.encours) l.push("  un bloc est en cours de fabrication");
-      if (prets && prets === total) l.push("  → tout le montage se lit sans déplacement de fichier");
-      return l;
-    })(),
-    "",
-    "Arrêts de lecture :",
-    ...(() => {
-      const l = [`  le lecteur s'est arrêté faute d'images : ${arrets.attentes} fois`];
-      if (arrets.bloques) l.push(`  arrêts réseau : ${arrets.bloques}`);
-      if (arrets.nonCouverts) l.push(`  bascules sur un tampon incomplet : ${arrets.nonCouverts}`);
-      const v = elementActif();
-      if (v?.getVideoPlaybackQuality) {
-        const q = v.getVideoPlaybackQuality();
-        l.push(`  images décodées : ${q.totalVideoFrames}, dont ${q.droppedVideoFrames} jetées`);
-      }
-      if (arrets.attentes > 5) l.push("  → c'est cela, les « petites pauses » : le lecteur attend ses images");
-      return l;
-    })(),
-    "",
-    "Ce qui est passé à l'écran :",
-    ...(() => {
-      const t = vues.lecteur + vues.reserve + vues.tenue + vues.imagette + vues.noir;
-      if (!t) return ["  (rien encore : lance une lecture)"];
-      const part = (n) => `${Math.round((100 * n) / t)} %`;
-      const l = [
-        `  lecteur (pleine définition) : ${part(vues.lecteur)}`,
-        `  images décodées d'avance    : ${part(vues.reserve)}`,
-        `  image tenue (copie)         : ${part(vues.tenue)}`,
-        `  imagette (160 points)       : ${part(vues.imagette)}`,
-      ];
-      if (vues.noir) l.push(`  rien du tout                : ${part(vues.noir)}`);
-      if (vues.imagette > t / 20) l.push("  → des imagettes à l'écran : c'est ce qui se voit comme du pixel");
-      if (vues.tenue > t / 5) l.push("  → l'image est souvent tenue : le lecteur décroche souvent");
-      return l;
-    })(),
-    "",
-    "Allure :",
-    ...(() => {
-      const l = [alAise()
-        ? "  confortable — relais et amorce actifs, la coupe est couverte"
-        : "  économie — un seul lecteur en vol : l'appareil ne tenait pas l'allure"];
-      if (window.__economie || window.__aise) l.push("  (forcée par le banc d'essai)");
-      l.push(`  changements d'allure depuis l'ouverture : ${allure.bascules}`);
-      return l;
-    })(),
-    "",
-    "Blocs et lecteurs :",
-    ...(() => {
-      const b = bascules;
-      const lignes = [
-        `  bascules : ${b.total} · ${b.chaud} à chaud (lecteur déjà prêt) · ${b.froid} à froid`,
-        `  fichiers chargés : ${b.chargements}` +
-          `${b.total ? ` pour ${b.total} bascules` : ""}`,
-        `  amorces avant la coupe : ${b.amorces} demandées, ${b.amorcesTenues} tenues, ${b.amorcesRefusees} refusées`,
-        `  lecteurs jouant en même temps, au plus : ${b.jouantMax}`,
-      ];
-      /* Une bascule « à chaud » ne dit que ceci : un lecteur portait déjà ce
-         plan. Elle ne dit pas qu'il avait une image — et c'est ce qui manquait
-         pour lire le relevé de l'appareil, où vingt-six bascules à chaud
-         coexistaient avec un écran noir aux trois quarts. On compte donc,
-         parmi elles, celles dont le lecteur entrant n'avait rien du tout. */
-      const chauds = b.etats.filter((e) => e.chaud);
-      const vides = chauds.filter((e) => (e.pret ?? -1) < 2).length;
-      if (chauds.length) {
-        lignes.push(`  dont le lecteur entrant n'avait aucune image : ${vides} sur ${chauds.length}`);
-      }
-      /* Les blocs que le lecteur de CET appareil a refusés. Un bloc parfait
-         ailleurs peut être illisible ici — et tant qu'on ne le comptait pas, il
-         revenait noir à chaque tour de boucle. */
-      if (blocsRefuses.combien || blocsRefuses.repris) {
-        /* Deux nombres, et c'est leur rapport qui compte : un bloc rouvert et
-           qui repart n'accuse pas le fichier, il dit que l'appareil n'avait
-           plus de décodeur libre à cet instant-là. Un bloc jeté, lui, est
-           vraiment en cause. */
-        lignes.push(`  blocs rouverts après une erreur : ${blocsRefuses.repris}`
-          + ` · jetés au second refus : ${blocsRefuses.combien}`
-          + (blocsRefuses.combien
-            ? ` (${blocsRefuses.copies} recopié(s), ${blocsRefuses.reencodes} réencodé(s))`
-            : ""));
-        if (blocsRefuses.dernier) lignes.push(`    dernier : ${blocsRefuses.dernier}`);
-      }
-      if (b.dernierRefus) lignes.push(`  dernier refus d'amorce : ${b.dernierRefus}`);
-      if (b.amorcesRefusees > 0 && b.amorcesRefusees >= b.amorces / 2) {
-        lignes.push("  → cet appareil refuse de décoder plusieurs vidéos à la fois :");
-        lignes.push("    chaque coupe démarre donc à froid");
-      }
-      if (b.froid > b.chaud && b.total > 4) {
-        lignes.push("  → les blocs ne sont pas prêts à temps : chaque coupe ouvre un fichier");
-      }
-      return lignes;
-    })(),
-    "",
-    "Lecture en boucle :",
-    ...(() => {
-      const lignes = [bouclePossible()
-        ? "  oui — la séquence repart au début sans s'arrêter"
-        : "  non (rendu en cours, ou montage d'un seul plan)"];
-      if (lecture.audio) {
-        const longue = lecture.audio.duration || 0;
-        lignes.push(`  musique : ${lecture.audio.paused ? "en pause" : "en cours"}`
-          + ` · ${Math.round(lecture.audio.currentTime * 10) / 10} s sur ${Math.round(longue * 10) / 10} s`
-          + `${lecture.audio.loop ? " · en boucle" : ""}`);
-      } else {
-        lignes.push("  musique : aucune");
-      }
-      return lignes;
-    })(),
-    "",
-    "Décodage d'avance :",
-    ...(() => {
-      if (!moteurPossible()) return [`  indisponible — ${moteur.raison || "désactivé"}`];
-      const lignes = [
-        `  disponible · ${moteur.pretes.size} plan(s) en mémoire, ` +
-          `${[...moteur.pretes.values()].reduce((n, t) => n + t.images.length, 0)} image(s)`,
-        `  ${moteur.enCours.size} en préparation · ${moteur.refuses.size} refusé(s)`,
-        `  images montrées par le moteur : ${moteur.rendus}`,
-      ];
-      if (moteur.echec) lignes.push(`  dernier refus : ${moteur.echec}`);
-      if (!moteur.rendus && moteur.refuses.size) {
-        lignes.push("  → le moteur ne sert rien : ce navigateur décode mal ces fichiers");
-      }
-      return lignes;
-    })(),
-    "",
-    "Dernières demandes de position :",
-    ...(journal.length
-      ? journal.map((l) => `  ${l.quand} ${l.quoi} — visé ${l.vise ?? "—"} s, réel ${l.reel ?? "—"} s, état ${l.pret}/4, ${l.essais ?? 0} essai(s)`)
-      : ["  (aucune pour l'instant)"]),
-    "",
-    /* Le journal du montage se lit en direct sous « Générer l'AMV ». On le
-       recopie ici pour que le diagnostic qu'on envoie porte aussi le récit de
-       la génération, et pas seulement l'état du lecteur. */
-    "Journal du montage :",
-    ...(journalTunnel.length
-      ? journalTunnel.map((l) => `  ${l.quand} ${l.texte}`)
-      : ["  (aucun montage lancé dans cette séance)"]),
-  ].join("\n");
-  meta.style.whiteSpace = "pre-line";
-
-  const actions = document.createElement("div");
-  actions.className = "lecteur-actions";
-
-  const renommer = document.createElement("button");
-  renommer.type = "button";
-  renommer.textContent = "Renommer le projet";
-  renommer.addEventListener("click", () => {
-    if (!projetVrai) return;
-    const nom = prompt("Nom du projet", projet.nom);
-    if (nom && nom.trim()) { projet.nom = nom.trim(); sauver(); enregistrer(projet); }
-    fermerFeuille();
-    rendreProjet();
-  });
-
-  const supprimer = document.createElement("button");
-  supprimer.type = "button";
-  supprimer.textContent = "Archiver le projet";
-  supprimer.addEventListener("click", () => {
-    archiver(projet, true);
-    fermerFeuille();
-  });
-
-  const jeter = document.createElement("button");
-  jeter.type = "button";
-  jeter.textContent = "Supprimer le projet";
-  jeter.addEventListener("click", () => {
-    if (!projetVrai) return;
-    if (!confirm(`Supprimer « ${projet.nom} » et ses ${projet.plans.length} plans ?`)) return;
-    supprimerProjet(projet);
-    fermerFeuille();
-  });
-
-  const copier = document.createElement("button");
-  copier.type = "button";
-  copier.textContent = "Copier le diagnostic";
-  copier.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(meta.textContent);
-    copier.textContent = "Copié";
-    setTimeout(() => { copier.textContent = "Copier le diagnostic"; }, 1600);
-  });
-
-  const fermer = document.createElement("button");
-  fermer.type = "button";
-  fermer.className = "fort";
-  fermer.textContent = "Fermer";
-  fermer.addEventListener("click", fermerFeuille);
-
-  const sauvegarde = document.createElement("button");
-  sauvegarde.type = "button";
-  sauvegarde.textContent = "Sauvegarde";
-  sauvegarde.addEventListener("click", ouvrirCoffre);
-
-  actions.append(sauvegarde, copier, renommer, supprimer, jeter, fermer);
-  corps.append(titre, meta, actions);
-  boite.append(corps);
-  fond.replaceChildren(boite);
-  fond.hidden = false;
-  fond.onclick = (evt) => { if (evt.target === fond) fermerFeuille(); };
-});
 
 /* --- rythme de la musique --------------------------------------------- */
 /* Le but à terme est d'inverser le travail : au lieu de déduire une musique du
