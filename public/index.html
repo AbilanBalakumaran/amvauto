@@ -1305,6 +1305,24 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   font: 600 0.84rem/1 system-ui, sans-serif; cursor: pointer;
 }
 .reglages-onglet.actif { border-color: var(--vert); color: var(--texte); background: rgba(53,194,77,.16); }
+
+/* Le menu d'Infos : une liste de pages, pas une barre d'onglets.
+
+   Les pastilles se serraient sur une ligne qui débordait, et rien ne disait
+   qu'appuyer menait ailleurs. Des lignes pleine largeur, un chevron à droite :
+   la même grammaire que la liste des rendus. */
+.reglages-menu { display: flex; flex-direction: column; gap: 8px; }
+.reglages-menu .reglages-onglet {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 15px 14px; border-radius: 12px;
+  color: var(--texte); font-size: 0.95rem; text-align: left;
+}
+.reglages-menu .reglages-onglet::after {
+  content: "›"; color: var(--doux); font-size: 1.3rem; line-height: 1;
+}
+.reglages-menu .reglages-onglet:active { background: #191919; }
+.reglages-retour { align-self: flex-start; margin: 0 0 var(--e3); }
+.reglages-pied { margin: var(--e3) 0 0; text-align: center; }
 .place-liste { display: flex; flex-direction: column; gap: 8px; margin: var(--e3) 0; }
 .place-ligne {
   display: flex; align-items: center; gap: var(--e2);
@@ -2111,17 +2129,30 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
     <section id="vue-histoire" hidden></section>
 
     <section id="vue-apropos" class="apropos" hidden>
-      <!-- Les réglages ne sont plus un seul rouleau où les règles du jeu et les
-           interrupteurs se mélangent. Quatre panneaux, un seul visible à la
-           fois, et une barre pour passer de l'un à l'autre. -->
-      <nav class="reglages-nav" id="reglages-nav" aria-label="Sections des réglages">
-        <button type="button" class="reglages-onglet actif" data-panneau="general">Général</button>
-        <button type="button" class="reglages-onglet" data-panneau="stockage">Stockage</button>
-        <button type="button" class="reglages-onglet" data-panneau="compte">Compte</button>
-        <button type="button" class="reglages-onglet" data-panneau="aide">Aide</button>
-      </nav>
+      <!-- Infos est une page, et ses sections sont des pages.
 
-      <div class="reglages-panneau" data-panneau="general">
+           C'étaient quatre pastilles en haut d'un panneau : elles changeaient le
+           contenu sous elles sans qu'on ait l'impression d'aller quelque part, et
+           sur un téléphone la barre débordait. Une liste qu'on touche, une page
+           qui s'ouvre, un retour qui ramène : le même geste que partout ailleurs
+           dans l'application.
+
+           Stockage et Compte ne sont plus offerts ici — le premier ne servait
+           qu'à regarder des chiffres, le second se fait par « Sauvegarde » dans
+           Setting. Leurs panneaux restent dans la page, pour ce qui les ouvre
+           encore. -->
+      <nav class="reglages-menu" id="reglages-nav" aria-label="Sections des réglages">
+        <button type="button" class="reglages-onglet" data-panneau="general">Général</button>
+        <button type="button" class="reglages-onglet" data-panneau="aide">Aide</button>
+        <button type="button" class="reglages-onglet" data-panneau="stockage" hidden>Stockage</button>
+        <button type="button" class="reglages-onglet" data-panneau="compte" hidden>Compte</button>
+      </nav>
+      <!-- La version sous le menu : c'est ce qu'on vient vérifier le plus
+           souvent, et cela ne vaut pas de descendre dans une section. -->
+      <p class="note-reglage reglages-pied" id="version-page">version inconnue</p>
+      <button type="button" class="archive-action reglages-retour" id="reglages-retour" hidden>‹ Infos</button>
+
+      <div class="reglages-panneau" data-panneau="general" hidden>
         <h2>Général</h2>
         <div class="reglage">
           <div class="reglage-texte">
@@ -2146,9 +2177,6 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
         </div>
         <p class="note-reglage" id="note-notifs"></p>
         <p class="note-reglage" id="etat-chargement"></p>
-
-        <h2>Version</h2>
-        <p id="version-page">version inconnue</p>
       </div>
 
       <div class="reglages-panneau" data-panneau="stockage" hidden>
@@ -2306,7 +2334,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-20 21:28";
+const VERSION_PAGE = "2026-09-21 05:12";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -2705,7 +2733,7 @@ document.querySelectorAll(".tab-btn").forEach((bouton) => {
     if (onglet === "histoire") rendreHistoire();
     // La permission a pu changer dans les réglages du système pendant que
     // l'application était derrière : on relit l'état plutôt que de l'affirmer.
-    if (onglet === "apropos") majReglages();
+    if (onglet === "apropos") { menuDesReglages(); majReglages(); }
   });
 });
 
@@ -15639,21 +15667,32 @@ $("btn-economie")?.addEventListener("click", () => {
 });
 $("btn-liberer")?.addEventListener("click", () => { libererEspace().catch(() => {}); });
 
-/* Les panneaux des réglages : un seul visible, et celui qu'on quitte n'est pas
-   détruit — on ne fait que le cacher, ce qui garde son état. */
-for (const onglet of document.querySelectorAll(".reglages-onglet")) {
-  onglet.addEventListener("click", () => {
-    const vise = onglet.dataset.panneau;
-    for (const autre of document.querySelectorAll(".reglages-onglet")) {
-      autre.classList.toggle("actif", autre === onglet);
-    }
-    for (const panneau of document.querySelectorAll(".reglages-panneau")) {
-      panneau.hidden = panneau.dataset.panneau !== vise;
-    }
-    if (vise === "stockage") majStockage().catch(() => {});
-    if (vise === "compte") majCompte();
-  });
+/* Infos : une page de sections, et chaque section est une page.
+
+   Rien n'est détruit en passant de l'une à l'autre — on ne fait que cacher, ce
+   qui garde l'état d'un interrupteur ou d'un champ en cours de saisie. */
+function ouvrirReglage(vise) {
+  const menu = $("reglages-nav");
+  const retour = $("reglages-retour");
+  for (const panneau of document.querySelectorAll(".reglages-panneau")) {
+    panneau.hidden = panneau.dataset.panneau !== vise;
+  }
+  if (menu) menu.hidden = Boolean(vise);
+  const pied = $("version-page");
+  if (pied) pied.hidden = Boolean(vise);
+  if (retour) retour.hidden = !vise;
+  if (vise === "stockage") majStockage().catch(() => {});
+  if (vise === "compte") majCompte();
+  // On arrive en haut d'une page, jamais au milieu.
+  document.querySelector("main")?.scrollTo(0, 0);
 }
+
+const menuDesReglages = () => ouvrirReglage("");
+
+for (const onglet of document.querySelectorAll(".reglages-onglet")) {
+  onglet.addEventListener("click", () => ouvrirReglage(onglet.dataset.panneau));
+}
+$("reglages-retour")?.addEventListener("click", menuDesReglages);
 
 majLangues();
 /* Après l'évaluation du module, pas pendant : « reprendreSession » touche le
@@ -23890,14 +23929,73 @@ if (coffre.actif && coffre.code) {
     .catch(() => { coffre.etat = "coffre injoignable au lancement"; });
 }
 
+/* ---- La mise à jour, pendant que le rideau est encore tiré ----------------
+
+   Une nouvelle version s'installait en silence et attendait « la prochaine
+   ouverture » — sauf qu'une application posée sur l'écran d'accueil ne se
+   rouvre jamais vraiment : on la quitte, on y revient, et iOS rend la page telle
+   qu'elle était. La prochaine ouverture n'arrivait pas, et le bandeau qui la
+   proposait, on le balayait. On travaillait donc sur du vieux code sans le
+   savoir.
+
+   Le lancement est le seul moment où recharger ne coûte rien : il n'y a encore
+   rien à perdre — ni montage en cours, ni tampon de lecture, ni fil de
+   préparation. Le rideau est déjà noir, il le reste, et l'application qui en
+   sort est la bonne.
+
+   Deux secondes et demie au plus, et le rideau se lève dès que la réponse
+   arrive — elle vient du bord, elle met cent millisecondes. Une version qui
+   n'arrive pas ne doit pas
+   retenir quelqu'un qui n'a peut-être pas de réseau du tout : passé ce délai, on
+   entre avec ce qu'on a, et la vérification ordinaire reprendra la main.
+
+   Une tentative par version, pas une par lancement : si le rechargement ne
+   suffit pas — une copie tenace au bord, une estampille oubliée —, on ne
+   recharge pas en boucle un écran noir. */
+const CLE_MAJ_DEPART = "amvauto-maj-tentee";
+const ATTENTE_MAJ = 2500;
+
+async function mettreAJourAuDemarrage() {
+  if (!navigator.onLine) return false;
+  /* Le service worker s'installe en parallèle : c'est lui qui portera la
+     nouvelle coquille au rechargement. On ne l'attend pas pour décider. */
+  const coquille = navigator.serviceWorker?.getRegistration?.()
+    .then((enregistrement) => enregistrement?.update())
+    .catch(() => null) || Promise.resolve(null);
+
+  const dit = await Promise.race([
+    fetch("/api/version", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+    new Promise((ok) => { setTimeout(() => ok(null), ATTENTE_MAJ); }),
+  ]);
+  if (!dit?.version || dit.version === VERSION_PAGE) return false;
+
+  let dejaTentee = "";
+  try { dejaTentee = sessionStorage.getItem(CLE_MAJ_DEPART) || ""; } catch { /* mode privé */ }
+  if (dejaTentee === dit.version) return false;
+  try { sessionStorage.setItem(CLE_MAJ_DEPART, dit.version); } catch { /* tant pis */ }
+
+  // Le nouveau worker a besoin d'un instant pour s'installer ; sans lui, le
+  // rechargement resservirait la page qu'on vient de quitter.
+  await Promise.race([coquille, new Promise((ok) => { setTimeout(ok, 2000); })]);
+  montrerDemarrage();
+  location.reload();
+  return true;
+}
+
 // L'écran de démarrage s'efface dès que l'interface est prête. Un court minimum
 // de présence évite le clignotement quand tout est déjà en cache. Il n'est pas
 // retiré du document : le rallumer avant un rechargement garde l'écran noir d'un
 // chargement à l'autre, au lieu de montrer deux démarrages de suite.
 const depart = performance.now();
 requestAnimationFrame(() => {
-  const attendre = Math.max(0, 420 - (performance.now() - depart));
-  setTimeout(masquerDemarrage, attendre);
+  mettreAJourAuDemarrage()
+    .catch(() => false)
+    .then((recharge) => {
+      // On recharge : le rideau reste tiré jusqu'à la page suivante.
+      if (recharge) return;
+      const attendre = Math.max(0, 420 - (performance.now() - depart));
+      setTimeout(masquerDemarrage, attendre);
+    });
 });
 </script>
 </body>
