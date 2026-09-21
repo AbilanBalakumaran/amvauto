@@ -24,7 +24,9 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
-> **Ce que l'outil est aujourd'hui — v2.1, « moteur d'impact ».**
+> **Ce que l'outil est aujourd'hui — v2.1, « sakuga flow »** (`v2.1-sakuga-flow`).
+> La v2.0 « moteur d'impact » reste le socle : macro-structure en six moments,
+> micro-rythme `{quand, force}`, éclair sur les crêtes.
 > **Une musique entre, un AMV en sort.** Quatre onglets — Créer, Veille,
 > Historique, Infos. Il n'y a plus d'explorateur de rushs ni d'atelier de
 > montage : ni timeline multipiste, ni pellicule d'imagettes, ni poignées de
@@ -37,6 +39,23 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 > [HISTORIQUE.md](HISTORIQUE.md). Ce qui y a été mis au point sert toujours : la
 > lecture des en-têtes, le découpage sur images-clés, l'écriture du MP4, le coffre
 > et le grenier n'ont pas bougé.
+
+### Les quatre piliers de la v2.1
+
+Ce que la v2.1 ajoute au moteur d'impact, en une page. Chacun est détaillé dans
+[« L'architecture du tunnel »](#larchitecture-du-tunnel--une-musique-entre-un-amv-sort),
+et chacun est tenu par son banc.
+
+| | Ce que c'est | Mesuré |
+|---|---|---|
+| **Continuité de style** | Le montage suit **une main d'animateur**, ou en fait s'affronter deux — alternance sur les couplets, rencontre au drop. Sakugabooru n'étiquette aucun personnage ; l'animateur est la seule identité qu'un cut porte, et le duel de styles est une figure reconnue du sakuga AMV. | 53/105 coupes portent le fil, 47 alternances |
+| **Calage audio par bandes** | Le **grave sous 150 Hz** ancre les frappes lourdes du drop ; la **voix de 1,2 à 5 kHz** protège les couplets, où une coupe cherche la respiration la plus proche plutôt que de trancher un vers. | 9 crêtes sur 9 sur un kick · coupes pendant le chant 19/21 → 11/21 |
+| **Flux vectoriel en cache** | Le **sens de déplacement** de chaque plan, mesuré au rendu par le runner et rangé dans R2. Le Worker ne peut pas décoder d'images ; le runner le fait presque gratuitement, et chaque AMV réchauffe le catalogue pour le suivant. | 18 prolongements de flux contre 2 inversions, contre 5/5 sans le sens |
+| **Polissage au rendu** | Une **micro-secousse de 125 ms** sur les crêtes servies par un choc, et une **harmonisation vers la médiane** du montage qui rapproche un cut de 2003 d'une séquence de 2024. | 3 images exactement, ligne de temps intacte · étendue de contraste 37,7 → 26,6 |
+
+Rien de tout cela n'est une règle dure : chaque préférence reste sous le budget
+d'épisode, donc un fil introuvable, un morceau sans grosse caisse ou un catalogue
+qu'aucun rendu n'a réchauffé donnent toujours un AMV qui couvre sa musique.
 
 ## Ce que l'outil fait
 
