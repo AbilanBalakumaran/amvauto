@@ -24,9 +24,10 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
-> **Ce que l'outil est aujourd'hui — v2.1, « sakuga flow »** (`v2.1-sakuga-flow`).
-> La v2.0 « moteur d'impact » reste le socle : macro-structure en six moments,
-> micro-rythme `{quand, force}`, éclair sur les crêtes.
+> **Ce que l'outil est aujourd'hui — v3.0, « Elite / Akross »** (`v3.0-elite`).
+> La v2.0 « moteur d'impact » et la v2.1 « sakuga flow » restent le socle :
+> macro-structure en six moments, micro-rythme `{quand, force}`, éclair sur les
+> crêtes, fil d'animateur, bandes de fréquences, sens du plan, harmonisation.
 > **Une musique entre, un AMV en sort.** Quatre onglets — Créer, Veille,
 > Historique, Infos. Il n'y a plus d'explorateur de rushs ni d'atelier de
 > montage : ni timeline multipiste, ni pellicule d'imagettes, ni poignées de
@@ -40,9 +41,21 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 > lecture des en-têtes, le découpage sur images-clés, l'écriture du MP4, le coffre
 > et le grenier n'ont pas bougé.
 
+### Les quatre piliers de la v3.0
+
+Ce que la v3.0 ajoute, et qui vise une seule chose : effacer les derniers
+marqueurs « automatiques » du montage.
+
+| | Ce que c'est | Mesuré |
+|---|---|---|
+| **Rampe de vitesse** | Sur les crêtes servies par un choc, l'anticipation s'étire à 0,65× et le coup s'écrase à 1,8× — la courbe qu'un monteur trace à la main. | durée exacte sur 4 longueurs (24/24, 12/12, 7/7, 48/48 images) · phase de choc 2,45× plus rapide |
+| **Escalade dramatique** | Une série monte en puissance : l'intro puise tôt, le climax réserve le tiers final. L'épisode 12 ne suit plus l'épisode 350. | sur l'axe 4–477 : intro ép.84 → montée ép.234 → drop ép.290 |
+| **Raccord chromatique** | La teinte se prolonge sur les passages calmes, et bascule chaud/froid sur la charnière montée → drop. | 28° d'écart moyen au calme contre 65° au vif (~120° au hasard) · charnières à 1,47 sur 2 |
+| **Pulsation des roulements** | Une rafale de doubles croches fait BATTRE l'image, elle n'ajoute aucune coupe. | 2 rafales, 23 pulsations, **0 coupe ajoutée** (50 contre 50) |
+
 ### Les quatre piliers de la v2.1
 
-Ce que la v2.1 ajoute au moteur d'impact, en une page. Chacun est détaillé dans
+Le socle, toujours en place. Chacun est détaillé dans
 [« L'architecture du tunnel »](#larchitecture-du-tunnel--une-musique-entre-un-amv-sort),
 et chacun est tenu par son banc.
 
@@ -53,9 +66,11 @@ et chacun est tenu par son banc.
 | **Flux vectoriel en cache** | Le **sens de déplacement** de chaque plan, mesuré au rendu par le runner et rangé dans R2. Le Worker ne peut pas décoder d'images ; le runner le fait presque gratuitement, et chaque AMV réchauffe le catalogue pour le suivant. | 18 prolongements de flux contre 2 inversions, contre 5/5 sans le sens |
 | **Polissage au rendu** | Une **micro-secousse de 125 ms** sur les crêtes servies par un choc, et une **harmonisation vers la médiane** du montage qui rapproche un cut de 2003 d'une séquence de 2024. | 3 images exactement, ligne de temps intacte · étendue de contraste 37,7 → 26,6 |
 
-Rien de tout cela n'est une règle dure : chaque préférence reste sous le budget
-d'épisode, donc un fil introuvable, un morceau sans grosse caisse ou un catalogue
-qu'aucun rendu n'a réchauffé donnent toujours un AMV qui couvre sa musique.
+Rien de tout cela n'est une règle dure, en v2.1 comme en v3.0 : chaque préférence
+reste sous le budget d'épisode, donc un fil introuvable, un morceau sans grosse
+caisse, un catalogue de six épisodes, une musique sans roulement ou un catalogue
+qu'aucun rendu n'a réchauffé donnent toujours un AMV qui couvre sa musique. C'est
+la propriété la plus vérifiée de tout le projet.
 
 ## Ce que l'outil fait
 
@@ -125,7 +140,7 @@ Routes :
 | `GET /api/moods` | ambiances disponibles |
 | `GET /api/media?u=…` | relais à liste blanche pour les octets d'un rush |
 | `GET /api/cles?u=…` | durée, images-clés et courbe de mouvement d'un plan |
-| `PUT /api/cles?u=…&code=…` | le runner y écrit le sens de déplacement du plan |
+| `PUT /api/cles?u=…&code=…` | le runner y écrit le sens de déplacement du plan et sa teinte dominante |
 | `GET /api/casting?anime=…` | les animateurs de la série, pour choisir le fil |
 | `GET /api/extrait?u=…` | vignette ou extrait calculé côté serveur |
 
@@ -274,7 +289,7 @@ tools/
   stamp.mjs          estampille page + worker + sw au déploiement
   rendu.py           rendu du MP4 sur un runner GitHub
   sens.py            direction dominante d'un plan, par corrélation d'images
-  teinte.py          luminance, contraste, saturation — et la correction vers la médiane
+  teinte.py          luminance, contraste, saturation, teinte dominante — et la correction
   projet.py          archive DaVinci Resolve (XMEML + EDL + sources)
 .github/workflows/   rendu.yml, projet.yml
 wrangler.toml        config de déploiement
@@ -532,8 +547,12 @@ paroles minutées. Chaque ligne porte ses chiffres en dessous :
 +2.4s  [2:11–2:30] Outro — plan tenu · 9 coupes
 +2.4s  106 coupes · 0 à cheval sur 106 mesurées · 3 éclairs d'impact
        aCheval=0/106 eclairs=3 surQuoi=frappes ≥ 85 % servies par un choc
-+2.4s  Fil du duel de mains : 54/106 coupes le portent (51 %) · 46 alternances · 0 plans à deux
-       portees=54/106 ensemble=0 alternances=46 vivier=55/123
++2.7s  Fil du duel de mains : 55/108 coupes le portent (51 %) · 36 alternances
+       portees=55/108 ensemble=0 alternances=36 vivier=56/123
++2.7s  Escalade sur 4–477 : Intro ép.84 · Couplet ép.85 · Montée ép.234 · Drop ép.290
+       axe=4–477 episodesConnus=86/123 parMoment=intro=84 couplet=85 montee=234 drop=290
++2.7s  Roulements : 2 rafales sur les montées · 2 plans qui bat · 23 pulsations
+       rafales=2 plansQuiBattent=2 pulsations=23 coupesAjoutees=0
 +2.4s  Bandes : 71 coupes ancrées sur le grave · 5 glissées hors d'un vers
        · 13 retirées pour la même raison
        surLeGrave=71/75 jugees=39 glissees=5 retireesParLeBudget=13
@@ -546,8 +565,10 @@ Une ligne marquée `[!]` est reprise en tête du rapport, sous « ce qui a alert
 on colle, et ce qui a mal tourné se lit en premier. Ce relevé-là n'en porte
 aucune — zéro coupe à cheval sur cent six, et pas un vers tranché.
 
-Les deux dernières lignes sont celles de la v2.1, et elles disent ce qu'un chiffre
-seul cacherait. Le fil : cinquante-quatre coupes sur cent six le portent, mais le
+Cinq de ces lignes sont celles de la v2.1 et de la v3.0, et elles disent ce qu'un
+chiffre seul cacherait. L'escalade : l'épisode médian monte de 84 à 290 sur un axe
+qui va de 4 à 477 — le montage suit la série. Les roulements : deux rafales, vingt-
+trois pulsations, et **zéro coupe ajoutée**, ce qui est tout l'enjeu. Le fil : cinquante-quatre coupes sur cent six le portent, mais le
 vivier n'en offrait que cinquante-cinq sur cent vingt-trois — le montage a donc
 employé presque tout ce qu'il avait. Les bandes : trente-neuf coupes ont été jugées
 sur les passages où la voix commande, cinq déplacées vers une respiration, treize
@@ -739,6 +760,110 @@ L'archive DaVinci ne reçoit ni l'une ni l'autre : elle livre les rushs tels que
 pour qu'on puisse reprendre le montage. Une secousse et un étalonnage sont des
 choix de rendu, pas des données de source.
 
+### La rampe de vitesse, et la géométrie qui la contraint
+
+Un monteur ne laisse presque jamais un plan de frappe à vitesse constante :
+l'anticipation s'étire pour faire monter la tension, puis le coup s'écrase en
+accélération pile sur le temps fort. Sur les crêtes servies par un choc dont on
+sait situer le pic, le runner pose donc une courbe en deux morceaux — 0,65× avant
+le pic, 1,8× après.
+
+**L'énoncé naïf est impossible, et c'est là que tout se joue.** On ne peut pas à
+la fois garder la durée de sortie, garder la fenêtre source et choisir les deux
+vitesses. Jouer `[0, p)` à 0,65× et `[p, D)` à 1,8× fait durer la sortie
+`p/0,65 + (D−p)/1,8`, et cela ne vaut `D` que si le pic tombe pile à 45,2 % du
+plan. Il n'y tombe jamais.
+
+C'est donc la **fenêtre source** qu'on recalcule autour du pic — exactement ce que
+fait un monteur quand il déplace son point d'entrée pour que l'impact tombe sur le
+temps :
+
+```
+sortie : N images, dont l'impact à l'image Ni = round(0,62 × N)
+avant  : Ni images de sortie à 0,65×   ->  0,65 × Ni/cadence de source
+après  : N−Ni images de sortie à 1,8×  ->  1,8 × (N−Ni)/cadence de source
+```
+
+Il faut environ 8,7 % de source de plus que la case, et l'on s'abstient quand le
+fichier ne peut pas les fournir. Pas de pic connu, plan sous cinq images, pic trop
+près d'un bord : pas de rampe non plus. Mesuré : **24/24, 12/12, 7/7 et 48/48
+images**, l'impact à l'image annoncée à une près, et la phase de choc 2,45 fois
+plus rapide que la phase d'élan.
+
+**Un défaut qui était là avant la rampe.** Le banc a montré qu'une case de 0,5 s
+sortait à **onze** images au lieu de douze : `-ss` tombe entre deux images de la
+source, ffmpeg part de la suivante, et la dernière n'entre plus dans le `-t`. Sur
+cent coupes dont beaucoup sont courtes, ce sont des dixièmes de seconde de dérive
+entre l'image et la musique — tout ce que le montage s'échine à éviter, perdu au
+dernier moment. On demande maintenant deux images de rab et `-frames:v` tranche au
+compte exact.
+
+### L'escalade dramatique
+
+Enchaîner un combat d'arène de l'épisode 12 juste après l'affrontement
+apocalyptique de l'épisode 350 désamorce la tension. Ce n'est pas une faute de
+rythme, c'est une faute de récit — et c'est celle qui trahit le plus vite un
+montage fait par une machine.
+
+La donnée existe : Sakugabooru porte l'épisode dans la référence du post
+(« #322 (BD) »). Relevé sur Naruto Shippuden, **127 rushs sur 200** en ont un, de
+l'épisode 20 au 495 ; les autres sont des génériques.
+
+| Moment | Vise | |
+|---|---|---|
+| intro, couplet | 15 % | l'exposition, ce qui installe |
+| montée, retombée | 50 % | le milieu de série |
+| drop | 80 % | le dernier tiers |
+| **dernier drop** | **92 %** | le climax, et il est seul à le viser |
+| outro | 85 % | on conclut là où la série conclut |
+
+Un plan sans épisode n'est jamais pénalisé : il n'a pas de place sur l'axe et sert
+partout, exactement comme un plan sans crédit d'animateur. Mesuré sur un catalogue
+de l'épisode 10 au 490 : intro épisode médian 116, couplet 99, montée 278, drop
+417.
+
+### Le raccord chromatique
+
+La teinte vient de `teinte.py`, accumulée en **vecteur** et non en angle moyen :
+moyenner des angles est faux — un plan moitié rouge (341°) moitié magenta (38°)
+rendrait 190°, c'est-à-dire cyan, la couleur qu'il n'a nulle part. Validé sur des
+aplats : rouge 341°, magenta 38°, bleu 99°, cyan 161°, vert 218°, jaune 279°, et
+les paires complémentaires tombent à **180,0° exactement**. Un aplat gris n'annonce
+aucune teinte.
+
+La règle a trois bandes, et c'est voulu :
+
+| Écart de teinte | Sur un passage calme |
+|---|---|
+| sous 30° | raccord, récompensé |
+| 30° à 120° | on ne se prononce pas — la plupart des coupes tombent là |
+| au-delà de 120° | décrochage, payé |
+
+Sur la charnière montée → drop, c'est l'inverse exact : on récompense l'écart
+thermique maximal, l'axe chaud-froid étant celui du rouge contre le cyan. Mesuré
+sur un montage entier : **28°** d'écart moyen sur les passages calmes contre 65°
+sur les passages vifs, là où le hasard donnerait ~120°, et les deux charnières
+basculent de 1,47 sur une échelle qui plafonne à 2.
+
+### La pulsation des roulements
+
+Dans une montée de trap, de phonk ou de drum & bass, les charleys roulent en
+doubles croches jusqu'au drop. **On ne coupe pas dessus** : huit plans différents
+en une seconde ne se lisent pas, et le résultat est un bruit visuel, pas une
+accélération. On tient le plan et on le fait battre.
+
+La page repère les rafales — au moins quatre frappes à moins de 150 ms, sur une
+montée, dans la bande la plus fine disponible — et le rendu y pose une pulsation
+de luminance. Vérifié : **50 coupes avec rafales, 50 sans**, à la coupe près.
+
+**La largeur de la pulsation est tout le problème.** À deux images, les créneaux se
+recouvrent : un roulement frappe toutes les 80 ms, une pulsation de 83 ms déborde
+sur la suivante, et les huit battements fondent en un seul éclaircissement de huit
+images — ce n'est plus un stroboscope, c'est une lampe qu'on allume. La pulsation
+tient donc dans une image, et les frappes plus serrées que deux images sont
+écartées : à 24 images par seconde, on ne peut pas alterner clair et sombre plus
+vite. Mesuré : images claires **5, 9, 13** — une allumée, trois éteintes.
+
 ### Les bancs
 
 Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
@@ -746,11 +871,16 @@ Au dernier passage :
 
 | Banc | Ce qu'il tient | |
 |---|---|---|
+| **les quatre piliers de la v3.0** | | |
+| `remap.py` | la rampe qui ne décale pas d'une image | 21/21 |
+| `escalade.mjs` | l'intro tôt, le climax tard, et un catalogue plat qui tient | 22/22 |
+| `teinte-match.mjs` | le raccord de couleur et le clash de la charnière | 21/21 |
+| `stutter.mjs` | les rafales trouvées, et aucune coupe ajoutée | 14/14 |
 | **les quatre piliers de la v2.1** | | |
 | `fil.mjs` | une main, un duel, et un fil introuvable qui ne bloque rien | 20/20 |
 | `voix.mjs` | le grave qui ancre, la voix qu'on ne coupe pas | 17/17 |
 | `raccord.mjs` | le raccord cinétique, avec et sans le sens | 15/15 |
-| `vfx.py` | la secousse qui ne décale rien, les teintes qui se resserrent | 18/18 |
+| `vfx.py` | la secousse, les teintes qui se resserrent, le stroboscope | 24/24 |
 | **le socle de la v2.0** | | |
 | `macro.mjs` | les six moments, ce que chacun refuse | 13/13 |
 | `impact.mjs` | la frappe forte, la retombée, la collision, les éclairs | 13/13 |
@@ -777,6 +907,10 @@ deux mains, paroles minutées et grosse caisse :
 | lecture des en-têtes, 122 fiches | 1,9 s (réseau, `/api/cles` gardé dans R2) |
 | **construction du montage** | **0,2 s** |
 | total de bout en bout | 2,7 s |
+
+Relevé de nouveau après les quatre chantiers de la v3.0, sur le même montage :
+**2,7 s** de bout en bout, 108 coupes, 100 % de couverture. Les quatre règles
+ajoutées n'ont pas coûté un dixième mesurable — elles lisent des données déjà là.
 
 Le calcul pur, mesuré sans réseau sur trois minutes de musique et soixante rushs :
 **348 ms** pour 106 coupes et cent pour cent de couverture. Les quatre évolutions
