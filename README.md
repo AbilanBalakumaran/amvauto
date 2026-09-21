@@ -386,13 +386,15 @@ Ce qui suit est la spécification du moteur tel qu'il tourne aujourd'hui.
   recherche  ──►  /api/rushes  (Sakugabooru + AnimeThemes)
         │         par ambiance : combat, vitesse, effets, acting, decor
         │
-  lecture   ──►  /api/cles  (durée, images-clés, courbe, sens du plan)
+  lecture   ──►  /api/cles  (durée, images-clés, courbe, sens, teinte dominante)
         │
   ordonnanceur ─► grille de coupes ─► choix de scène ─► fenêtre dans la scène
+        │         escalade par épisode · raccord de teinte · pic du mouvement
         │
         ├─► rendu MP4        GitHub Actions + ffmpeg ─► grenier (R2)
-        │                    éclair · secousse · teintes harmonisées
-        │                    et le sens de chaque rush réécrit dans /api/cles
+        │                    éclair · secousse · rampe 0,65×→1,8× · pulsations
+        │                    teintes harmonisées vers la médiane du montage
+        │                    et sens + teinte de chaque rush réécrits dans /api/cles
         └─► projet DaVinci   XMEML + EDL + sources    ─► grenier (R2)
 ```
 
@@ -818,9 +820,14 @@ l'épisode 20 au 495 ; les autres sont des génériques.
 | outro | 85 % | on conclut là où la série conclut |
 
 Un plan sans épisode n'est jamais pénalisé : il n'a pas de place sur l'axe et sert
-partout, exactement comme un plan sans crédit d'animateur. Mesuré sur un catalogue
-de l'épisode 10 au 490 : intro épisode médian 116, couplet 99, montée 278, drop
-417.
+partout, exactement comme un plan sans crédit d'animateur. Et la pénalité plafonne
+à **14 points** — sous les 30 de deux coupes du même épisode, très sous les 100
+d'une scène déjà vue : sur un catalogue de six épisodes la préférence s'écrase
+d'elle-même, sur un catalogue de génériques il n'y a pas d'axe du tout, et dans les
+deux cas le montage couvre sa musique.
+
+Mesuré sur un catalogue de l'épisode 10 au 490 : intro épisode médian 116,
+couplet 99, montée 278, drop 417.
 
 ### Le raccord chromatique
 
@@ -854,7 +861,13 @@ accélération. On tient le plan et on le fait battre.
 
 La page repère les rafales — au moins quatre frappes à moins de 150 ms, sur une
 montée, dans la bande la plus fine disponible — et le rendu y pose une pulsation
-de luminance. Vérifié : **50 coupes avec rafales, 50 sans**, à la coupe près.
+de luminance de 18 %. Vérifié : **50 coupes avec rafales, 50 sans**, à la coupe
+près.
+
+Deux garde-fous, et les deux comptent. Un roulement plus long que 2,4 s n'en est
+plus un : c'est le motif ordinaire du morceau, et le faire battre serait un tic.
+Et une rafale n'est reconnue que sur une **montée** — la même sur un drop est
+ignorée, ce que le banc vérifie explicitement.
 
 **La largeur de la pulsation est tout le problème.** À deux images, les créneaux se
 recouvrent : un roulement frappe toutes les 80 ms, une pulsation de 83 ms déborde
@@ -867,7 +880,9 @@ vite. Mesuré : images claires **5, 9, 13** — une allumée, trois éteintes.
 ### Les bancs
 
 Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
-Au dernier passage :
+La suite en fait tourner **trente-six** ; ceux du moteur de montage sont ici, ceux
+de l'interface dans [« Le banc d'essai »](#le-banc-dessai). Au dernier passage,
+tous au vert :
 
 | Banc | Ce qu'il tient | |
 |---|---|---|
@@ -1013,10 +1028,26 @@ GitHub (`tools/rendu.py`), qui télécharge les rushs, coupe, assemble, encode, 
 **dépose le fichier dans le grenier** (R2) d'où l'application le reprend. Le jeton
 GitHub est un secret du Worker : le navigateur ne présente que son code de coffre.
 
-Le runner fait deux choses de plus depuis la v2.1, parce qu'il est le seul endroit
-qui ait ffmpeg : il pose l'éclair, la secousse et l'harmonisation des teintes, et il
-**mesure le sens de déplacement de chaque rush** pour le réécrire dans la fiche de
-`/api/cles` — ce qui réchauffe le catalogue pour les générations suivantes.
+Le runner porte tout ce qui demande un décodeur, parce qu'il est le seul endroit
+qui ait ffmpeg. Il pose l'éclair, la secousse, la rampe de vitesse, les pulsations
+et l'harmonisation des teintes ; et il **mesure le sens de déplacement et la teinte
+dominante de chaque rush** pour les réécrire dans la fiche de `/api/cles`, ce qui
+réchauffe le catalogue pour les générations suivantes.
+
+La feuille de route est le seul contrat entre les deux. Le téléphone n'envoie que
+ça — quelques kilo-octets de JSON — et chaque plan y porte :
+
+| Champ | Ce qu'il déclenche |
+|---|---|
+| `video`, `entree`, `sortie` | le découpage, et rien d'autre |
+| `nom`, `famille` | le nom de piste et la couleur de clip dans DaVinci |
+| `eclair` | l'image blanche **et** la secousse de 125 ms |
+| `pic` | la rampe de vitesse, quand le fichier peut la fournir |
+| `pulsations` | le stroboscope, sur les instants d'un roulement |
+
+`pic` et `pulsations` ne vont qu'au rendu : l'archive DaVinci livre les rushs tels
+quels, pour qu'on puisse reprendre le montage. Une rampe, une secousse et un
+stroboscope sont des choix de rendu, pas des données de source.
 
 ### Une page par rendu, et l'accueil garde le sien
 
@@ -1122,6 +1153,8 @@ nombre de navigations. Quelques-uns, et ce qu'ils gardent :
 | `davinci.mjs` | la feuille de route, le flux demandé, la fiche qui voyage |
 | `macro.mjs`, `impact.mjs`, `regimes.mjs` | les six moments, la frappe et l'éclair, les cinq régimes |
 | `entrees.mjs`, `fuite.mjs` | ce qui entre dans le tunnel, et rien qui s'empile sur trois générations |
+| `remap.py`, `stutter.mjs` | la rampe qui ne décale pas d'une image, les rafales qui n'ajoutent pas une coupe |
+| `escalade.mjs`, `teinte-match.mjs` | le montage qui monte avec la série, la couleur qui se prolonge ou décharge |
 
 Trois pièges de ce banc-là, pour qui le reprendra : la dernière route Playwright
 enregistrée gagne, donc la générique se pose en premier ; les médias servis sur la
