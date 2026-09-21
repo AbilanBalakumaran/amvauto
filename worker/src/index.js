@@ -345,8 +345,37 @@ async function handleCasting(url) {
   return json({ total: posts.length, auteurs: recenserAuteurs(posts) });
 }
 
+/* Une pioche qui contient ce que le fil demande.
+
+   Le fil pesait sur la notation et pas sur la RECHERCHE, et c'est ce qu'un
+   montage réel a montré : sur Naruto Shippuden, un duel Hiroyuki Yamashita contre
+   Tsutomu Oshiro ne portait que vingt et une coupes sur cent six, et zéro
+   alternance. Le barème faisait son travail — il n'y avait simplement presque
+   aucun plan de ces deux mains dans la pioche, parce que la pioche est tirée par
+   ambiance et plafonnée.
+
+   « main » restreint la pioche à une main donnée. On ne demande pas une requête de
+   plus à Sakugabooru : les deux mille posts de la série sont déjà là, et gardés au
+   bord. On filtre ce qu'on a.
+
+   Un tag d'animateur n'est qu'un mot du catalogue : on n'accepte rien qui puisse
+   devenir un opérateur de recherche ou une seconde condition. */
+const MAIN_PERMISE = /^[a-z0-9_.()'-]{2,60}$/;
+
+function filtrerParMain(posts, main) {
+  if (!main) return posts;
+  const tenus = posts.filter((post) => (post.artists || []).includes(main));
+  /* Une main qui ne rend rien ne vide pas la pioche : mieux vaut un AMV sans le
+     fil demandé qu'une erreur. Le journal de la page dira que le fil est maigre. */
+  return tenus.length ? tenus : posts;
+}
+
 async function handleRushes(url) {
   const query = (url.searchParams.get("anime") || "").trim();
+  const main = (url.searchParams.get("main") || "").trim().toLowerCase();
+  if (main && !MAIN_PERMISE.test(main)) {
+    return json({ error: `Animateur invalide : « ${main} ».` }, 400);
+  }
 
   const mood = url.searchParams.get("mood") || null;
   if (mood && !MOODS[mood]) return json({ error: `Ambiance inconnue : ${mood}` }, 400);
@@ -382,7 +411,7 @@ async function handleRushes(url) {
       || (tagExact.includes(":") && OPERATEURS.has(premierMot)))) {
       return json({ error: `Tag invalide : « ${tagExact} ».` }, 400);
     }
-    const posts = await rushes(tagExact, pool);
+    const posts = filtrerParMain(await rushes(tagExact, pool), main);
     if (!posts.length) {
       return json({ error: `Aucun rush vidéo sous le tag « ${tagExact} ».` }, 404);
     }
@@ -403,7 +432,7 @@ async function handleRushes(url) {
      devient un résultat au lieu d'être une consigne. */
   if (!query) {
     const tagAmbiance = mood ? TAG_PHARE[mood] : null;
-    const trouves = await rushesPartout(tagAmbiance, pool);
+    const trouves = filtrerParMain(await rushesPartout(tagAmbiance, pool), main);
     if (!trouves.length) {
       return json({ error: "Sakugabooru n'a rien rendu pour cette recherche." }, 502);
     }
@@ -444,6 +473,7 @@ async function handleRushes(url) {
   if (!resolved) {
     return json({ error: `Aucun rush vidéo trouvé pour « ${query} ».`, suggestions: suggest("", 6) }, 404);
   }
+  resolved.posts = filtrerParMain(resolved.posts, main);
 
   return json({
     anime: resolved.display,

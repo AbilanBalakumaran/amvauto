@@ -24,7 +24,7 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
-> **Ce que l'outil est aujourd'hui — v2.0, « moteur d'impact ».**
+> **Ce que l'outil est aujourd'hui — v2.1, « moteur d'impact ».**
 > **Une musique entre, un AMV en sort.** Quatre onglets — Créer, Veille,
 > Historique, Infos. Il n'y a plus d'explorateur de rushs ni d'atelier de
 > montage : ni timeline multipiste, ni pellicule d'imagettes, ni poignées de
@@ -105,6 +105,8 @@ Routes :
 | `GET /api/moods` | ambiances disponibles |
 | `GET /api/media?u=…` | relais à liste blanche pour les octets d'un rush |
 | `GET /api/cles?u=…` | durée, images-clés et courbe de mouvement d'un plan |
+| `PUT /api/cles?u=…&code=…` | le runner y écrit le sens de déplacement du plan |
+| `GET /api/casting?anime=…` | les animateurs de la série, pour choisir le fil |
 | `GET /api/extrait?u=…` | vignette ou extrait calculé côté serveur |
 
 **Le montage et le rendu** :
@@ -331,18 +333,22 @@ Ce qui suit est la spécification du moteur tel qu'il tourne aujourd'hui.
   musique (fichier ou veille)
         │
         ├─ tempo, sections, frappes {quand, force}      sur l'appareil
+        ├─ bandes : grave < 150 Hz, voix 1,2–5 kHz      sur l'appareil
         ├─ paroles (Whisper, /api/ecoute)               hors chemin critique
         │
   trame : une émotion par passage                        posée par l'utilisateur
+  fil   : une main, ou deux qui s'affrontent             /api/casting
         │
   recherche  ──►  /api/rushes  (Sakugabooru + AnimeThemes)
         │         par ambiance : combat, vitesse, effets, acting, decor
         │
-  lecture   ──►  /api/cles  (durée, images-clés, courbe de mouvement)
+  lecture   ──►  /api/cles  (durée, images-clés, courbe, sens du plan)
         │
   ordonnanceur ─► grille de coupes ─► choix de scène ─► fenêtre dans la scène
         │
         ├─► rendu MP4        GitHub Actions + ffmpeg ─► grenier (R2)
+        │                    éclair · secousse · teintes harmonisées
+        │                    et le sens de chaque rush réécrit dans /api/cles
         └─► projet DaVinci   XMEML + EDL + sources    ─► grenier (R2)
 ```
 
@@ -519,6 +525,154 @@ ce qui est une refonte et non un nettoyage — et le budget de lecteurs
 (trois sur WebKit, quatre ailleurs, deux plans d'avance) a été mesuré contre les
 micro-coupures sur iOS.
 
+### Le fil : suivre une main, ou en faire s'affronter deux
+
+Sur mille huit cents rushs, le montage enchaînait des plans qui n'ont rien en
+commun : juste au rythme, sans suite.
+
+**Le fil devrait être le personnage, et il ne peut pas l'être.** Sakugabooru
+n'étiquette aucun personnage : `naruto_uzumaki`, `sasuke_uchiha`, `gojo_satoru`
+ne sont pas des tags du site — `tag.json` les rend vides — et le type 4 de son
+catalogue, celui que Danbooru réserve aux personnages, ne compte que dix tags qui
+sont des signatures d'animation : `kanada_light_flare`, `itano_circus`,
+`obari_punch`, `ebata_walk`.
+
+La seule identité qu'un cut porte est son **animateur**, et celle-là est riche :
+cent cinquante-neuf plans de Hiroyuki Yamashita sur Naruto Shippuden, vingt-neuf
+de Norio Matsumoto, trente mains au menu (`/api/casting`). Le fil est donc une
+continuité de main — le geste, le trait, la façon de déformer un corps. Ce n'est
+pas narratif, c'est plastique, et c'est ainsi qu'un sakuga showcase se monte.
+
+| Mode | Ce qu'il cherche | Ce qu'il ne fait pas |
+|---|---|---|
+| **une main** | ses plans passent devant (−14) | pénaliser un plan sans crédit — `artist_unknown` couvre cent quinze mille posts |
+| **un duel** | l'alternance A → B sur couplets et montées (−16) ; les deux créditées sur le même cut au drop (−28) | dépenser un plan à deux mains ailleurs : hors du drop il vaut à peine plus qu'un plan ordinaire (−4) |
+
+Cette réserve est la leçon des images d'impact. À vingt points partout, la
+ressource était consommée avant le drop et la rencontre y tombait à 20 % contre
+26 % sur le montage entier — l'inverse du but. Réservée : 24 % contre 19 %, et
+l'alternance double au passage, de 8 à 17.
+
+Tout reste franchissable — sous le budget d'épisode (60), très sous la redite
+d'une scène (100). Un fil introuvable, ou un vivier de trois plans pour
+cinquante-quatre coupes, couvre toujours les soixante secondes.
+
+**Le fil pèse aussi sur la pioche, et c'est un montage réel qui l'a exigé.** Au
+premier essai sur Naruto Shippuden, un duel Hiroyuki Yamashita contre Tsutomu
+Oshiro ne portait que 21 coupes sur 106, et **zéro** alternance. Le barème faisait
+son travail : il n'y avait presque aucun plan de ces deux mains dans la pioche,
+tirée par ambiance et plafonnée à cent soixante-douze scènes. Chaque main reçoit
+donc son propre seau (`/api/rushes?main=…`, qui filtre les deux mille posts déjà
+gardés au bord — aucune requête de plus à Sakugabooru), et ce seau entre dans
+l'entrelacement comme les autres.
+
+| Sur Naruto Shippuden, duel de deux mains | Fil porté | Alternances |
+|---|---|---|
+| le fil ne pèse que sur la notation | 21/106 (20 %) | 0 |
+| le fil pèse aussi sur la pioche | **53/105 (50 %)** | **47** |
+
+Les ambiances restent : un AMV qui ne contiendrait que les plans de deux mains
+n'aurait plus de quoi poser une intro calme ni une retombée.
+
+### Les bandes ne servent pas au même moment
+
+La séparation en quatre bandes existait, et le montage n'en employait qu'une :
+la plus régulière, du début à la fin. Tous les transitoires se valaient donc, et
+un kick de refrain pesait autant qu'une harmonique de guitare.
+
+**Le grave ancre les frappes lourdes.** Sur un drop ou une montée, une coupe
+adossée à un coup sous 150 Hz voit sa force montée d'un tiers ; une coupe qui n'en
+a aucun la voit baisser d'un quart. La grille ne bouge pas — c'est la régularité
+qui la tient — mais ce qui compte comme fort change, et c'est cette force que
+lisent le choix du choc, la réservation des images d'impact et l'éclair. Mesuré :
+les neuf crêtes du morceau tombent **toutes** sur un coup de grave, là où elles se
+dispersaient sur n'importe quel transitoire.
+
+**La voix protège les couplets.** Sur une intro, un couplet ou une outro, une
+coupe qui tombe au milieu d'un vers cherche la respiration la plus proche — un
+quart de seconde de rayon, en préférant une vraie frappe à un instant nu. Quand il
+n'y en a pas, elle n'est pas déplacée de force : sa force baisse et le budget la
+retire avant les autres. Mesuré : les coupes qui tombent pendant qu'on chante
+passent de **19 sur 21 à 11 sur 21**, sans perdre une coupe. Sur le drop on ne fuit
+rien : un refrain se chante sur les frappes.
+
+Deux sources pour savoir où la voix chante : les paroles minutées de Whisper
+(`/api/ecoute`) quand on les a, l'enveloppe de la bande mélodie sinon — gardée à
+dix mesures par seconde sur un octet, mille huit cents octets pour trois minutes.
+
+**Baisser la force, c'est laisser le budget finir le travail**, et le journal a
+d'abord menti là-dessus : il comptait les marques sur la grille finale, où les
+coupes affaiblies ont déjà été retirées, et annonçait donc « 0 glissée hors d'un
+vers » alors que trente-neuf coupes avaient été jugées, cinq déplacées et treize
+retirées. Le compte se fait maintenant là où la règle s'applique. Sur le montage
+test : **39 jugées, 5 glissées, 13 retirées par le budget, 0 restée dans un vers**.
+
+### Le sens d'un plan, et pourquoi il vient du runner
+
+Le raccord cinétique était dans le barème et ne servait à rien : aucune source ne
+dit dans quel sens un plan bouge.
+
+**Le Worker ne peut pas le mesurer.** Il lit des en-têtes ; il n'a ni ffmpeg ni
+décodeur, et les vecteurs de mouvement d'un H.264 sont derrière un décodage
+entropique qu'on ne fait pas en trente secondes de processeur. Le runner, lui, a
+ffmpeg et tient déjà les fichiers quand il rend : il mesure chaque rush — huit
+images par seconde réduites à 32 × 18 en gris, et pour chaque paire le décalage
+qui superpose le mieux — puis écrit le résultat dans la fiche de `/api/cles`
+(`PUT`, gardé par le code du coffre). Soixante à cent soixante millisecondes par
+plan.
+
+C'est le mouvement **apparent**, pas l'intention : quand la caméra suit un
+personnage qui court à droite, c'est le décor qui file à gauche et la mesure dit
+« gauche ». Ce n'est pas une erreur pour ce qu'on en fait — la règle parle de ce
+que l'œil poursuit, et l'œil poursuit ce qui bouge sur l'écran.
+
+**La première génération sur une série ne trouve aucun sens** et monte comme
+avant ; le premier rendu réchauffe le catalogue. Mesuré, fiche connue contre fiche
+muette : 18 prolongements de flux contre 2 inversions, contre 5 contre 5 sans le
+sens. L'inversion reste réservée aux crêtes — deux forces qui se font face, c'est
+le choc.
+
+La fiche n'est plus servie `immutable` pour un an : un enrichissement n'arriverait
+jamais chez le visiteur. Un jour de cache, une semaine de sursis.
+
+### La secousse d'impact, et l'harmonisation des teintes
+
+Deux effets ajoutés au rendu, et à lui seul.
+
+**La secousse.** Sur les crêtes servies par un choc — les mêmes coupes que
+l'éclair — la caméra accuse le coup : 5 % de zoom, trois pixels de déplacement
+latéral, **trois images**, soit 125 ms à 24 i/s.
+
+```
+zoompan=z='if(lt(it,0.125),1.05,1)':d=1:x='iw/2-(iw/zoom/2)+if(lt(it,0.125),3*sin(it*180),0)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=24
+```
+
+`d=1` avec une taille de sortie imposée rend exactement une image par image reçue :
+48 images avant, 48 après, et tout ce qui suit la secousse rigoureusement
+identique au plan sans elle. **La ligne de temps ne bouge pas d'un vingt-quatrième
+de seconde**, ce qui est la seule chose qui compte.
+
+**L'harmonisation.** Un AMV monte côte à côte un cut de 2003 — contraste mou,
+couleurs délavées — et une séquence de 2024 contrastée et saturée. À la coupe, ça
+saute. Un filtre global sur le master ne corrige pas ça : il déplace tout le monde
+sans rien rapprocher. On mesure donc chaque rush (luminance, contraste,
+saturation, sur quelques images à 48 × 27), on prend la **médiane** du montage
+comme cible — pas la moyenne, un seul plan de nuit noire éclaircirait tout le
+reste — et chacun reçoit une correction bornée qui parcourt deux tiers du chemin.
+
+| Étendue entre plans | Avant | Après |
+|---|---|---|
+| luminance | 20,2 | **11,2** |
+| contraste | 37,7 | **26,6** |
+| saturation | 72,7 | **54,6** |
+
+Bornée exprès : un plan volontairement sombre reste sombre, et l'étendue ne tombe
+pas à zéro. On rapproche, on n'uniformise pas.
+
+L'archive DaVinci ne reçoit ni l'une ni l'autre : elle livre les rushs tels quels
+pour qu'on puisse reprendre le montage. Une secousse et un étalonnage sont des
+choix de rendu, pas des données de source.
+
 ### Les bancs
 
 Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
@@ -534,9 +688,32 @@ Au dernier passage :
 | `rendu.mjs` | le rendu depuis le tunnel : 53 images, un MP4 écrit | 12/12 |
 | `mp4.mjs` | Annex B, AVCC, avcC non vide, boîtes du fichier | 22/22 |
 | `resolve.py` | couleurs FCP7, marqueurs de séquence, EDL, éclair | 23/23 + 6/6 |
+| `fil.mjs` | une main, un duel, et un fil introuvable qui ne bloque rien | 20/20 |
+| `vitesse.mjs` | trois minutes de musique, soixante rushs, le temps de calcul | 4/4 |
+| `voix.mjs` | le grave qui ancre, la voix qu'on ne coupe pas | 17/17 |
+| `raccord.mjs` | le raccord cinétique, avec et sans le sens | 15/15 |
+| `vfx.py` | la secousse qui ne décale rien, les teintes qui se resserrent | 18/18 |
 | `journal.mjs` · `panne.mjs` | le rapport, et ce qu'il dit quand ça rate | 32/32 · 15/15 |
 | `davinci.mjs` · `page-rendu.mjs` | l'archive qui part, la page du rendu | 13/13 · 19/19 |
 | `couverture.mjs` · `generique.mjs` | toute la musique, la grammaire du générique | 9/9 · 6/6 |
+
+### Ce que tout ça coûte en temps
+
+La consigne est de deux secondes de calcul. Relevé sur un montage test réel —
+Naruto Shippuden, 172 scènes en pioche, 2 min 30 de musique, 105 coupes, duel de
+deux mains, paroles minutées et grosse caisse :
+
+| | |
+|---|---|
+| recherche au catalogue | 0,6 s (réseau) |
+| lecture des en-têtes, 122 fiches | 1,9 s (réseau, `/api/cles` gardé dans R2) |
+| **construction du montage** | **0,2 s** |
+| total de bout en bout | 2,7 s |
+
+Le calcul pur, mesuré sans réseau sur trois minutes de musique et soixante rushs :
+**348 ms** pour 106 coupes et cent pour cent de couverture. Les quatre évolutions
+de la v2.1 n'y ajoutent rien de mesurable — la grille est parcourue une fois de
+plus, et la recherche du grave se fait par dichotomie.
 
 ## Comment l'explorateur est devenu un tunnel
 

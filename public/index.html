@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 14:41";
+const VERSION_PAGE = "2026-09-21 17:38";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6215,14 +6215,23 @@ async function genererLAmv() {
          fuir, et un morceau sans grosse caisse n'a rien à ancrer — dans les deux
          cas le montage est le même qu'avant, et il faut pouvoir le constater. */
       const bandes = projet.__bandes;
-      if (bandes && (bandes.grave || bandes.horsVoix || bandes.dansLaVoix)) {
-        noter(`Bandes : ${bandes.grave} coupes ancrées sur le grave`
-          + ` · ${bandes.horsVoix} glissées hors d'un vers`
-          + (bandes.dansLaVoix ? ` · ${bandes.dansLaVoix} restées dedans` : ""),
-        bandes.dansLaVoix > bandes.horsVoix ? "alerte" : "fait", {
-          surLeGrave: `${bandes.grave}/${bandes.total}`,
-          horsVoix: bandes.horsVoix,
-          dansLaVoix: bandes.dansLaVoix,
+      if (bandes && (bandes.grave || bandes.jugees)) {
+        const retirees = Math.max(0, bandes.dansLaVoix - bandes.dansLaVoixTenu);
+        noter(`Bandes : ${bandes.graveTenu} coupes ancrées sur le grave`
+          + (bandes.jugees
+            ? ` · ${bandes.horsVoix} glissées hors d'un vers`
+              + (retirees ? ` · ${retirees} retirées pour la même raison` : "")
+              + (bandes.dansLaVoixTenu ? ` · ${bandes.dansLaVoixTenu} restées dedans` : "")
+            : " · aucune voix à fuir"),
+        bandes.dansLaVoixTenu > bandes.horsVoix ? "alerte" : "fait", {
+          surLeGrave: `${bandes.graveTenu}/${bandes.surLaGrille}`,
+          // « jugées » : les coupes des passages où la voix commande — intro,
+          // couplet, outro. Le drop n'y est pas : un refrain se chante sur les
+          // frappes, et l'y fuir reviendrait à fuir la musique.
+          jugees: bandes.jugees,
+          glissees: bandes.horsVoix,
+          retireesParLeBudget: retirees,
+          resteesDansUnVers: bandes.dansLaVoixTenu,
           source: tunnel.paroles?.length ? "paroles minutées (Whisper)" : "enveloppe 1,2–5 kHz",
         });
       }
@@ -20214,6 +20223,14 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
     return false;
   };
   const seuilVoix = rythme?.voix ? seuilDOccupation(rythme.voix) : Infinity;
+  /* Ce que les bandes ont fait, compté à l'endroit où elles le font.
+
+     Compter sur la grille finale sous-estime le travail, et faussement : une
+     coupe qui tombait dans un vers a vu sa force baisser, donc le budget la
+     retire avant les autres — c'est le but. Constaté sur un montage réel, le
+     journal annonçait « 0 glissée hors d'un vers » alors que treize coupes
+     avaient été jugées et huit retirées pour cette raison. */
+  const fait = { grave: 0, horsVoix: 0, dansLaVoix: 0, jugees: 0 };
 
   // 1. Les frappes, dans l'ordre, sans celles qui se collent à la précédente.
   const gardees = [];
@@ -20313,6 +20330,7 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
     for (const point of points) {
       const moment = momentA(point.quand);
       if (moment !== "intro" && moment !== "couplet" && moment !== "outro") continue;
+      fait.jugees += 1;
       if (laVoixLaisseLaPlace(rythme, point.quand, seuilVoix)) continue;
       let mieux = null;
       // Les frappes réelles d'abord, l'instant nu ensuite : déplacer une coupe
@@ -20339,10 +20357,12 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
         point.quand = mieux.quand;
         point.force = Math.max(point.force, mieux.force || 0);
         point.horsVoix = true;
+        fait.horsVoix += 1;
       } else {
         // Rien à portée : la coupe reste, mais elle est la première sacrifiée.
         point.force *= MALUS_DANS_LA_VOIX;
         point.dansLaVoix = true;
+        fait.dansLaVoix += 1;
       }
     }
     points.sort((x, y) => x.quand - y.quand);
@@ -20382,7 +20402,7 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
       if (moment !== "drop" && moment !== "montee") continue;
       const porte = graveSous(point.quand);
       point.force *= porte ? PRIME_GRAVE : MALUS_SANS_GRAVE;
-      if (porte) point.grave = true;
+      if (porte) { point.grave = true; fait.grave += 1; }
     }
   }
 
@@ -20406,15 +20426,25 @@ function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
      « dansLaVoix » qu'on n'a rien trouvé et qu'elle tombe dans un vers. Le
      journal les compte, et les bancs les vérifient — sans elles, une règle qui
      ne s'appliquerait plus passerait inaperçue. */
-  return avecForce
-    ? points.map((x) => ({
-      quand: Math.round(x.quand * 1000) / 1000,
-      force: x.force || 0,
-      ...(x.grave ? { grave: true } : {}),
-      ...(x.horsVoix ? { horsVoix: true } : {}),
-      ...(x.dansLaVoix ? { dansLaVoix: true } : {}),
-    }))
-    : points.map((x) => Math.round(x.quand * 1000) / 1000);
+  if (!avecForce) return points.map((x) => Math.round(x.quand * 1000) / 1000);
+  const rendue = points.map((x) => ({
+    quand: Math.round(x.quand * 1000) / 1000,
+    force: x.force || 0,
+    ...(x.grave ? { grave: true } : {}),
+    ...(x.horsVoix ? { horsVoix: true } : {}),
+    ...(x.dansLaVoix ? { dansLaVoix: true } : {}),
+  }));
+  /* Le bilan des bandes voyage accroché à la grille : c'est le seul endroit qui
+     sache ce qui a été jugé avant que le budget ne rogne. « restées » compte
+     celles qui tombent encore dans un vers à l'arrivée — les autres ont été
+     retirées, ce qui est le résultat voulu et non un échec. */
+  rendue.bilanDesBandes = {
+    ...fait,
+    surLaGrille: rendue.length,
+    graveTenu: rendue.filter((x) => x.grave).length,
+    dansLaVoixTenu: rendue.filter((x) => x.dansLaVoix).length,
+  };
+  return rendue;
 }
 
 function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 } = {}) {
@@ -20520,12 +20550,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
   /* Ce que les bandes ont changé, gardé pour le journal. Il se lit sur la grille
      et sur elle seule : une fois les plans posés, les marques ne sont plus
      attachées à rien. */
-  projet.__bandes = grille ? {
-    total: grille.length,
-    grave: grille.filter((x) => x.grave).length,
-    horsVoix: grille.filter((x) => x.horsVoix).length,
-    dansLaVoix: grille.filter((x) => x.dansLaVoix).length,
-  } : null;
+  projet.__bandes = grille?.bilanDesBandes || null;
   const prochaineFrappe = (t) => {
     if (!grille) return null;
     for (const point of grille) if (point.quand > t + COUPE_MINI) return point.quand;
@@ -20962,6 +20987,44 @@ async function chercherRushs(animes, secondes, cases = 0, elargir = false, journ
         }
       } catch (erreur) {
         console.warn(`aucun rush pour « ${anime} » (${ambiance || "général"}) :`, erreur.message);
+      }
+    }
+    /* Un lot par main du fil, en plus des ambiances.
+
+       Le fil pesait sur la notation et pas sur la pioche, et un montage réel l'a
+       montré : sur Naruto Shippuden, un duel ne portait que vingt et une coupes
+       sur cent six, et zéro alternance — non parce que le barème échouait, mais
+       parce que la pioche, tirée par ambiance et plafonnée, ne contenait presque
+       aucun plan de ces deux mains.
+
+       Chaque main reçoit donc son propre seau, servi par le même « /api/rushes »
+       avec « main= ». Le serveur ne redemande rien à Sakugabooru : il filtre les
+       deux mille posts qu'il a déjà, gardés au bord. Et le seau entre dans
+       l'entrelacement comme les autres, donc le plafond ne le mange pas.
+
+       Les ambiances restent : un AMV qui ne contiendrait QUE les plans de deux
+       mains n'aurait plus de quoi poser une intro calme ni une retombée. Le fil
+       est une préférence, pas un filtre. */
+    for (const main of (tunnel.auteurs || []).slice(0, 2)) {
+      const combien = Math.min(120, Math.max(24, Math.ceil(demande * 0.5)));
+      const cible = `/api/rushes?${tag ? `tag=${encodeURIComponent(tag)}` : `anime=${encodeURIComponent(anime)}`}`
+        + `&main=${encodeURIComponent(main)}&top=${combien}&pool=2000`;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const reponse = await fetch(cible);
+        // eslint-disable-next-line no-await-in-loop
+        const contenu = await reponse.json();
+        if (!reponse.ok) throw new Error(contenu?.error || `le serveur a répondu ${reponse.status}`);
+        const lot = (contenu.rushes || [])
+          .filter((rush) => rush.provider !== "animethemes")
+          .map((rush) => ({ ...rush, anime: rush.anime || reconnuPour || anime }));
+        if (lot.length) {
+          const seau = `fil:${main}`;
+          if (!parAmbiance.has(seau)) parAmbiance.set(seau, []);
+          parAmbiance.get(seau).push(...lot);
+        }
+      } catch (erreur) {
+        console.warn(`aucun plan pour la main « ${main} » :`, erreur.message);
       }
     }
     journal?.resolus.push({ demande: anime, trouve: reconnuPour, tag, total: totalPour });
