@@ -2340,7 +2340,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 07:23";
+const VERSION_PAGE = "2026-09-21 08:48";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4065,11 +4065,9 @@ function appliquerEchelle(valeur, ancreX = null) {
   lecture.echelle = bornee;
   // Les images demandées l'étaient pour l'ancienne grille : elles ne seront
   // plus affichées, autant ne pas les capturer.
-  viderAttenteImagettes();
   redessinerPiste();
   if (avant !== null && cadre) {
     cadre.scrollLeft = Math.max(0, avant * lecture.echelle - (ancreX - cadre.getBoundingClientRect().left));
-    redessinerBandes();
   }
 }
 
@@ -4151,8 +4149,6 @@ function rendreProjet() {
   // l'ouverture d'un projet. Elle n'apparaissait que si un autre événement
   // provoquait un redessin — une durée mesurée, un import qui se termine — et
   // sur un projet déjà en cache, rien ne venait : les blocs restaient vides.
-  redessinerBandes();
-  requestAnimationFrame(ordonnancerBandes);
 }
 
 /* --- sélecteur de projets, chacun avec sa vignette -------------------- */
@@ -6966,6 +6962,7 @@ window.__banc = {
   mesurerEnTetes: (...a) => mesurerEnTetes(...a), dureeParEntete: (x) => dureeParEntete(x),
   dureeConnue: (x) => dureeConnue(x), dureeDuMvhd: (o) => dureeDuMvhd(o),
   projetDuTunnel: () => projetDuTunnel(), genererLAmv: () => genererLAmv(), etat: () => state,
+  rendreImages: (p, r) => rendreImages(p, r), feuilleDeRoute: (p, m) => feuilleDeRoute(p, m),
   tempsDeX: (x, pl) => tempsDeX(x, pl), offsets: (pl) => offsets(pl),
   signalerVersion: (t) => signalerVersion(t), avertir: (...a) => avertir(...a),
   appliquerMiseAJour: (v) => appliquerMiseAJour(v),
@@ -6976,8 +6973,7 @@ window.__banc = {
   projetActif: () => projetActif(), cleSegment: (p) => cleSegment(p),
   segmentDe: (p) => segmentDe(p), entreeLue: (p) => entreeLue(p),
   estLocal: (p) => estLocal(p), locales: () => locales, segments: () => segments,
-  bandeDe: (p) => bandeDe(p), entreeDe: (p) => entreeDe(p),
-  demanderImagette: (...a) => demanderImagette(...a), pellicule: () => pellicule,
+  entreeDe: (p) => entreeDe(p),
   lecteurDe: (n) => lecteurDe(n), lecteurs: () => NOMS_LECTEURS,
   blocsRefuses: () => blocsRefuses, noterBloc: (c, q) => noterBloc(c, q),
   ecrireBase: (c, b) => ecrireBase(c, b), reprendreSegments: (p) => reprendreSegments(p),
@@ -7027,7 +7023,6 @@ window.__etat = () => ({ pretes: [...moteur.pretes.keys()], refuses: [...moteur.
     parLecteur: fabrique.parLecteur || 0, repris: refaits.size,
     verdicts: [...segments.values()].map((x) => x.verdict).filter(Boolean).slice(0, 4),
     servis: { ...servis }, fileExtraits: fileExtraits.length, compte: { ...compteExtraits },
-    pellicule: { ...pellicule },
     cles: { connues: clesConnues.size, refusees: clesRefusees.size, file: fileCles.length },
     reserve: { ...reserve, octets: poidsReserve(), plafond: PLAFOND_RESERVE,
       lecteurs: NOMS_LECTEURS.length, webkit: SUR_WEBKIT },
@@ -9525,30 +9520,11 @@ function dessinerMoniteur() {
   // qui ne bouge plus : on garde la dernière image décodée à la place.
   let source = null;
 
-  /* Doigt en mouvement : le lecteur ne peut pas suivre. Un fichier ne traite
-     qu'un déplacement à la fois, et il en faudrait des dizaines par seconde.
-     On montre donc l'imagette déjà capturée la plus proche — la même que celle
-     de la pellicule, en basse définition mais immédiate — et l'image pleine
-     reprend la main dès que le doigt s'arrête. C'est ainsi qu'un banc de
-     montage donne l'impression de faire défiler les images. */
-  if (lecture.scrub) {
-    const cible = positionCible();
-    if (cible && !cible.plan.youtube) {
-      const temps = entreeDe(cible.plan) + cible.dans;
-      const pas = pasGrille();
-      const juste = video && video.readyState >= 2 && video.videoWidth
-        && video.dataset.plan === cible.plan.id
-        && Math.abs(video.currentTime - temps) <= 0.08;
-      if (!juste) source = imagetteLaPlusProche(bandeDe(cible.plan), temps, 0.6);
-      // On demande au passage l'imagette de l'endroit survolé : le défilement
-      // se densifie là où le doigt passe.
-      demanderImagette(cible.plan, temps, pas);
-    }
-  }
+  /* Le défilement au doigt montrait ici l'imagette la plus proche, faute de
+     pouvoir déplacer un fichier dix fois par seconde. Le doigt ne défile plus
+     sur aucune piste, et la pellicule qui fournissait ces imagettes non plus. */
 
-  if (source) {
-    // une imagette de défilement a déjà été retenue
-  } else if (plan && lecture.demande && !aJour(video, plan)
+  if (plan && lecture.demande && !aJour(video, plan)
              && imageDavance(plan, sourceMaintenant(plan))) {
     /* La coupe appartient à la réserve, le milieu du plan au lecteur.
 
@@ -9660,12 +9636,13 @@ function dessinerMoniteur() {
        blocs de vidéo » — c'est-à-dire pire, et à chaque coupe au lieu d'une
        fois au démarrage. Une image floue une fraction de seconde se lit comme
        une coupe un peu molle ; un trou noir se voit toujours. */
+    /* Il ne reste que la vignette du plan : les imagettes qui servaient ici
+       venaient de la pellicule. Sur un plan coupé, elle montrerait le début du
+       rush et non celui du bloc — on préfère alors la dernière image tenue. */
     const rienDuTout = !derniereImage.toile.width;
     source = lecture.demande && !rienDuTout
-      ? imagetteLaPlusProche(bandeDe(plan), instant, 0.4)
-      : imagetteLaPlusProche(bandeDe(plan), instant, 1.5)
-        || bandeDe(plan).couverture?.image
-        || (rogne(plan) ? null : vignetteDe(plan));
+      ? null
+      : (rogne(plan) ? null : vignetteDe(plan));
   }
   // Une toile n'a ni videoWidth ni naturalWidth : sans ce troisième recours, la
   // dernière image décodée n'était jamais dessinée et le moniteur passait au
@@ -9873,811 +9850,22 @@ const TENUE_TRANSITION = 700;
    est le seul instant qui ait un sens. */
 const derniereImage = { plan: null, quand: 0, vivante: 0, toile: document.createElement("canvas") };
 
-/* --- pellicule ---------------------------------------------------------
-   La bande d'images d'un banc de montage montre ce qu'il y a sous le curseur,
-   à la densité du zoom : dézoomé, une vignette par plan suffit ; zoomé à fond,
-   on veut l'image par image.
+/* --- la pellicule : retirée ---------------------------------------------
 
-   Elle n'est donc pas dessinée « une fois pour tout le plan » — un plan d'une
-   minute zoomé mesure des dizaines de milliers de pixels, largeur qu'aucune
-   toile n'accepte, et l'ancienne version rendait un bloc noir. Seule la partie
-   visible est peinte, dans une toile de la taille de l'écran, et les images
-   sont demandées pour les instants réellement affichés.
+   Huit cent six lignes pour peindre une bande d'imagettes sous la piste : une
+   sonde vidéo qui capturait image après image, une grille de secours, une
+   réserve bornée, un ordonnanceur qui décidait quels blocs peindre d'abord, et
+   une file qui rendait la main entre deux dessins pour ne pas figer le doigt.
+   Mesuré en son temps : quatre cent cinquante « drawImage » par seconde.
 
-   Les images sont gardées sur une grille temporelle en puissances de deux :
-   en changeant de zoom on retombe sur les instants déjà capturés, ce qui évite
-   de tout recapturer à chaque pincement. */
+   Elle servait à couper à l'œil, dans une piste qu'on ne montre plus. Le tunnel
+   choisit ses fenêtres sur la courbe de mouvement et les images-clés, qui
+   disent mieux ce qu'il cherche et ne coûtent rien à l'affichage.
 
-const bandes = new Map();
-const LARGEUR_IMAGETTE = 64;
-const MARGE_BANDE = 260;        // on peint un peu au-delà de l'écran
-const IMAGETTES_MAX = 600;      // au-delà, on oublie les plus anciennes
+   Ce qui reste du rendu n'en dépendait pas : la fabrique de segments, le fil de
+   décodage et l'écriture du MP4 travaillent sur les fichiers, jamais sur la
+   bande. */
 
-/* Les imagettes d'un plan disparu ne servent plus à rien, et elles pèsent : six
-   cents images de 160 × 90 en font trente-quatre méga-octets pour un seul plan.
-   Rien ne les libérait — ni la suppression d'un plan, ni un fractionnement, qui
-   donne au second morceau un identifiant neuf. Sur une longue séance, la mémoire
-   ne faisait que monter, jusqu'à ce que le système referme l'onglet. */
-function purgerBandes() {
-  const vivants = new Set();
-  for (const projet of state.projets) for (const plan of projet.plans) vivants.add(plan.id);
-  for (const id of bandes.keys()) if (!vivants.has(id)) bandes.delete(id);
-}
-
-function bandeDe(plan) {
-  let bande = bandes.get(plan.id);
-  if (!bande) {
-    // « couverture » : la dernière image d'entrée obtenue pour ce plan. Elle sert
-    // de secours pendant qu'on tire une poignée, le temps que l'image du nouveau
-    // point d'entrée soit capturée.
-    bande = {
-      images: new Map(),
-      demandes: new Map(),
-      epuise: false,
-      ordre: [],
-      couverture: null,
-      // Les instants qu'on n'a pas pu capturer : au-delà de la fin réelle du
-      // fichier, ou sur une zone illisible. Sans cette mémoire, la même capture
-      // était redemandée à chaque redessin, échouait au bout de huit secondes,
-      // et bloquait pendant ce temps toutes les autres — une seule position
-      // impossible suffisait à laisser la pellicule presque vide.
-      echecs: new Set(),
-      // Toutes les images de ce plan, triées par instant : c'est ce qui permet
-      // de trouver la plus proche d'une position quelconque sans dépendre de la
-      // grille sur laquelle elle a été prise.
-      parTemps: [],
-      prechauffe: false,
-    };
-    bandes.set(plan.id, bande);
-  }
-  return bande;
-}
-
-// Pas de la grille : une image tous les 96 px environ, arrondi à la puissance
-// de deux la plus proche, et jamais plus fin qu'une image de la source.
-/* Le pas de la grille de secours. Il était arrondi à la puissance de deux la
-   plus proche, ce qui le rendait jusqu'à une fois et demie plus grossier qu'une
-   colonne : deux colonnes voisines retombaient alors sur la même image, et une
-   colonne pouvait montrer une image prise une seconde plus loin — vingt-quatre
-   images d'écart. Sur un banc de montage, c'est une erreur de coupe. On arrondit
-   donc vers le bas : le pas est toujours au plus égal à la durée d'une colonne,
-   donc l'écart au plus égal à une demi-colonne. */
-function pasGrille() {
-  const brut = LARGEUR_IMAGETTE / Math.max(0.001, lecture.echelle);
-  const puissance = Math.pow(2, Math.floor(Math.log2(Math.max(IMAGE, brut))));
-  return Math.max(IMAGE, puissance);
-}
-
-/* Tout instant demandé à la pellicule est ramené sur la trame de la source : une
-   vidéo n'a pas d'image entre deux images, et deux instants d'une même image
-   doivent donner la même capture — sinon on capture deux fois la même chose et
-   on croit voir deux images différentes. */
-const surImage = (t) => Math.round(t * IMAGES_PAR_SECONDE) / IMAGES_PAR_SECONDE;
-
-const cle = (pas, index) => `${pas.toFixed(4)}:${index}`;
-// La première image d'un bloc n'est pas prise sur la grille : elle doit tomber
-// pile sur le point d'entrée, sinon la couverture d'un plan rogné montre encore
-// une image d'avant la coupe.
-const cleExacte = (temps) => `exact:${temps.toFixed(3)}`;
-
-// Image la plus proche disponible : la grille demandée d'abord, puis les
-// grilles plus grossières — mieux vaut une image approchante que du noir.
-function imagetteProche(bande, temps, pas) {
-  for (let echelon = pas, tours = 0; tours < 9; echelon *= 2, tours += 1) {
-    const trouve = bande.images.get(cle(echelon, Math.round(temps / echelon)));
-    if (trouve) return trouve;
-  }
-  return null;
-}
-
-// Insertion à sa place dans la liste triée, et recherche de la plus proche par
-// dichotomie : appelées à chaque image du moniteur pendant un défilement.
-function rangerParTemps(bande, temps, image) {
-  let bas = 0, haut = bande.parTemps.length;
-  while (bas < haut) {
-    const milieu = (bas + haut) >> 1;
-    if (bande.parTemps[milieu].temps < temps) bas = milieu + 1;
-    else haut = milieu;
-  }
-  bande.parTemps.splice(bas, 0, { temps, image });
-}
-
-function imagetteLaPlusProche(bande, temps, tolerance) {
-  const liste = bande.parTemps;
-  if (!liste.length) return null;
-  let bas = 0, haut = liste.length - 1;
-  while (bas < haut) {
-    const milieu = (bas + haut) >> 1;
-    if (liste[milieu].temps < temps) bas = milieu + 1;
-    else haut = milieu;
-  }
-  const candidats = [liste[bas], liste[bas - 1]].filter(Boolean);
-  let meilleur = null, ecart = Infinity;
-  for (const c of candidats) {
-    const d = Math.abs(c.temps - temps);
-    if (d < ecart) { ecart = d; meilleur = c; }
-  }
-  return ecart <= tolerance ? meilleur.image : null;
-}
-
-// Comme imagetteProche, mais elle refuse une image trop éloignée de l'instant
-// demandé : mieux vaut ne rien montrer qu'une image qui ment.
-function imagetteAssezProche(bande, temps, pas, tolerance) {
-  for (let echelon = pas, tours = 0; tours < 9; echelon *= 2, tours += 1) {
-    const index = Math.round(temps / echelon);
-    if (Math.abs(index * echelon - temps) > tolerance) continue;
-    const trouve = bande.images.get(cle(echelon, index));
-    if (trouve) return trouve;
-  }
-  return null;
-}
-
-function demanderImagette(plan, temps, pas, exact = false) {
-  const bande = bandeDe(plan);
-  const identifiant = exact ? cleExacte(temps) : cle(pas, Math.round(temps / pas));
-  const instant = exact ? temps : Math.round(temps / pas) * pas;
-  if (bande.images.has(identifiant) || bande.demandes.has(identifiant) || bande.echecs.has(identifiant)) return;
-  if (plan.youtube || !mediaDe(plan) || !plan.duree) return;
-  /* Tant qu'un fichier se télécharge, la sonde se tait complètement.
-     Elle passe par le même relais et tient une connexion ouverte pendant qu'elle
-     décode : mesuré, ses lectures occupaient jusqu'à neuf secondes de réseau
-     chacune et retardaient d'autant les vidéos. Or ce qu'on attend, c'est la
-     vidéo. Les blocs montrent en attendant la vignette de la source — qui est
-     bien la première image du fichier tant qu'on n'a rien rogné — et les vraies
-     images arrivent dès l'import terminé, gratuitement, depuis l'appareil.
-     Seule exception : un import qui a échoué. Le fichier ne viendra jamais sur
-     l'appareil, autant tirer les images de la source. */
-  // Exception à l'exception : un plan sans vignette de source n'a rien à montrer
-  // pendant son import. Une seule image, celle de son entrée, lui donne un
-  // visage — le reste attend la copie locale.
-  /* Et le bloc compte comme une copie locale — c'est ici que manquait la moitié
-     de la correction précédente.
-
-     La sonde, elle, savait déjà tirer ses images de l'extrait plutôt que du rush.
-     Mais la demande n'arrivait jamais jusqu'à elle : ce portail-ci exigeait que
-     le RUSH soit sur l'appareil, et depuis que les blocs viennent découpés du
-     serveur le rush n'y arrive plus jamais. Relevé sur l'appareil : « pellicule :
-     0 demandée(s), 0 lancée(s) » sur cent douze plans, c'est-à-dire une
-     pellicule morte et, surtout, plus aucune image de secours quand le lecteur
-     n'a rien à montrer. C'est ce qui transforme un bloc illisible en écran noir
-     au lieu d'une imagette un peu molle. */
-  if (!estLocal(plan) && !surSegment(plan)
-      && !importsRates.has(mediaDe(plan)) && !(exact && !plan.preview)) return;
-  bande.demandes.set(identifiant, instant);
-  pellicule.demandees += 1;
-  attenteImagettes.push({ plan, temps: instant, identifiant });
-  servirImagettes();
-}
-
-/* Une seule sonde, gardée en vie entre deux demandes : sur un fichier importé
-   sur l'appareil, se déplacer dedans est immédiat, alors que recharger la
-   source à chaque image coûterait tout. */
-const attenteImagettes = [];
-let sondeBande = null;
-let sondeOccupee = false;
-let reposSonde = null;
-
-function creerSondeBande() {
-  const sonde = document.createElement("video");
-  sonde.muted = true;
-  sonde.playsInline = true;
-  sonde.preload = "auto";
-  sonde.setAttribute("muted", "");
-  sonde.setAttribute("playsinline", "");
-  // Attachée au document, et pas en display:none : Safari sur iPhone ne décode
-  // pas une vidéo détachée ou masquée, et une toile ne peut alors rien en tirer.
-  // Un pixel transparent dans un coin suffit à la rendre légitime.
-  sonde.style.cssText =
-    "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1";
-  document.body.append(sonde);
-  return sonde;
-}
-
-// Sur iPhone, un lecteur qui n'a jamais joué ne charge rien — « preload » est
-// ignoré en réseau mobile. Une lecture muette et en ligne est autorisée sans
-// geste : on la lance puis on la coupe aussitôt, uniquement pour décider le
-// lecteur à décoder une image. C'est ce qui manquait pour que la pellicule
-// produise quoi que ce soit sur un téléphone.
-function reveillerSonde(sonde) {
-  if (sonde.dataset.reveille === "1" || sonde.readyState >= 2) return;
-  const essai = sonde.play();
-  if (!essai) return;
-  sonde.dataset.reveille = "1";
-  essai.then(() => sonde.pause()).catch(() => { delete sonde.dataset.reveille; });
-}
-
-const pellicule = { demandees: 0, lancees: 0, prises: 0, ratees: 0, dernier: "" };
-// Au-delà, une capture est considérée perdue et la sonde repart : c'est plus
-// long que le délai interne de la capture, qui doit avoir sa chance d'abord.
-const GARDE_SONDE = 12000;
-let gardeSonde = null;
-// Les imagettes qui ont déjà droit à un second essai : on ne tourne pas en rond.
-const secondeChance = new Set();
-
-function servirImagettes() {
-  if (sondeOccupee) return;
-  /* Pendant la lecture, la sonde se tait.
-
-     Elle décode de la vidéo, comme les lecteurs du montage — et un
-     téléphone n'a que quelques décodeurs. Mesuré sur une capture d'écran de
-     l'application : quatre-vingt-huit plans tous rapatriés, et pourtant une
-     seconde et demie d'écran noir au démarrage, puis du noir à presque chaque
-     coupe. La tête de lecture elle-même s'arrêtait — 00:00.3, 00:00.4, 00:00.4
-     pendant une seconde et demie de temps réel : ce n'est pas un fichier qui
-     manque, c'est le fil d'exécution qui est pris ailleurs.
-
-     Les imagettes servent à se repérer quand on cherche ; elles ne servent à
-     rien pendant qu'on regarde. Elles attendent donc la fin de la lecture.
-
-     Et rien du tout pendant un rendu. Mesuré sur la fabrication d'un aperçu
-     fluide de vingt-cinq secondes : quarante-trois secondes, dont trente-six
-     passées à attendre que le lecteur du rendu arrive sur l'image demandée. Ce
-     n'est pas le fichier qui traîne — un déplacement d'une image dans un
-     fichier déjà en mémoire coûte trois dixièmes de milliseconde quand la page
-     ne fait rien d'autre. C'est la sonde à imagettes qui, à côté, décodait de
-     la vidéo pour la pellicule et retenait le décodeur. */
-  if (lecture.demande || rendu.encours) return;
-  /* L'ordre de service compte autant que la capture elle-même.
-
-     La file se servait par la fin, et les colonnes sont demandées de gauche à
-     droite : la dernière colonne du dernier bloc arrivait la première, et la
-     couverture du premier bloc bonne dernière. On sert désormais **ce qu'on
-     regarde** : d'abord les images exactes, et parmi elles la plus proche de la
-     tête de lecture. Zoomé à l'image, la pellicule se remplit ainsi autour du
-     curseur au lieu de commencer par un bord de l'écran. */
-  const cible = positionCible();
-  const vise = cible ? entreeDe(cible.plan) + cible.dans : 0;
-  const note = (d) => {
-    const exact = d.identifiant.startsWith("exact:") ? 0 : 1e6;
-    const loin = cible && d.plan.id === cible.plan.id ? Math.abs(d.temps - vise) : 1e3;
-    return exact + loin;
-  };
-  let choix = 0;
-  for (let i = 1; i < attenteImagettes.length; i += 1) {
-    if (note(attenteImagettes[i]) < note(attenteImagettes[choix])) choix = i;
-  }
-  const demande = attenteImagettes.splice(choix, 1)[0];
-  if (!demande) return;
-  if (!demande) return;
-  const { plan, temps, identifiant } = demande;
-  const bande = bandeDe(plan);
-  if (bande.images.has(identifiant)) { bande.demandes.delete(identifiant); return servirImagettes(); }
-  sondeOccupee = true;
-  pellicule.lancees += 1;
-  /* Un chien de garde sur la sonde elle-même.
-
-     Mesuré sur quarante blocs : quatre-vingts imagettes demandées, UNE seule
-     capture lancée, aucune prise et aucun échec. La capture n'était donc ni
-     réussie ni abandonnée — elle ne rendait simplement jamais la main, et
-     « sondeOccupee » restait vrai pour toute la séance. La pellicule était
-     morte dès la première image, sans un mot.
-
-     Le délai interne de la capture ne suffit pas : il est posé APRÈS le début
-     du travail, et tout ce qui échoue avant lui échappe à sa surveillance. On
-     surveille donc depuis l'extérieur, et l'on rend la sonde quoi qu'il arrive.
-     Une pellicule lente vaut infiniment mieux qu'une pellicule morte. */
-  clearTimeout(gardeSonde);
-  gardeSonde = setTimeout(() => {
-    if (!sondeOccupee) return;
-    sondeOccupee = false;
-    bandeDe(plan).demandes.delete(identifiant);
-    pellicule.ratees += 1;
-    pellicule.dernier = "la sonde n'a pas rendu la main";
-    servirImagettes();
-  }, GARDE_SONDE);
-
-  if (!sondeBande) sondeBande = creerSondeBande();
-  const sonde = sondeBande;
-  /* Tant que la copie locale n'est pas là, la sonde passe par notre relais
-     plutôt que par la source : le relais renvoie les en-têtes qui autorisent la
-     page à relire les pixels. Une imagette prise en direct sur la source
-     « teinte » définitivement toute toile où on la dessine — la pellicule, puis
-     le moniteur — et interdit d'en relire quoi que ce soit. Sur une copie
-     locale, la question ne se pose pas : elle vient de la page elle-même. */
-  /* Le bloc déjà fabriqué fait une source de vignettes idéale.
-
-     La pellicule ne savait tirer ses images que du rush : soit la copie locale,
-     soit le relais. Depuis que les blocs viennent découpés du serveur, le rush
-     n'arrive plus jamais sur l'appareil — et la règle « attends la copie locale
-     plutôt que d'ouvrir une seconde connexion » vidait donc la pellicule pour
-     de bon. Mesuré : quarante blocs, une seule teinte, aucune image.
-
-     Or l'extrait est là, il est local, il pèse mille fois moins que le rush et
-     il contient exactement les images du plan. C'est de lui qu'on tire la
-     pellicule. Ses instants ne sont pas ceux du rush : « versSource » fait la
-     conversion, et c'est la seule chose qui change. */
-  const extrait = segmentDe(plan);
-  const local = estLocal(plan) || Boolean(extrait);
-  /* Une imagette ne vaut pas dix mégaoctets.
-
-     Quand le rush a été rendu au téléphone — son extrait est fait, il ne sert
-     plus —, la bande allait le rechercher sur le réseau pour dessiner une
-     vignette : dix mégaoctets en 4G pour une image de cent points. La pellicule
-     garde ce qu'elle a déjà ; ce qui manque restera gris jusqu'à ce que le rush
-     revienne pour une autre raison. C'est le sens du réglage d'économie. */
-  if (!local && reglages.economie && surSegment(plan)) {
-    bande.demandes.delete(identifiant);
-    return;
-  }
-  /* Et une imagette n'ouvre pas une seconde connexion sur un rush qui arrive.
-
-     Mesuré sur un lien de métro — 1,5 Mb/s, 300 ms — chaque rush traversait le
-     réseau deux fois : une fois par la file d'import, qui le range sur
-     l'appareil, une fois ici pour dessiner des vignettes de cent soixante
-     points. Six rushs de 1,6 Mo faisaient 19 Mo, et cinquante-deux secondes
-     avant que le montage soit prêt.
-
-     La pellicule attend donc la copie locale — elle arrive de toute façon, et
-     alors la vignette ne coûte plus rien. Le réseau ne sert plus qu'aux rushs
-     que l'import n'a pas su rapatrier : là, il n'y a pas d'autre chemin. */
-  if (!local && laisserAuReseau(plan)) {
-    bande.demandes.delete(identifiant);
-    return;
-  }
-  const source = local ? sourceDe(plan) : `/api/media?u=${encodeURIComponent(mediaDe(plan))}`;
-  /* D'un instant du rush à l'instant correspondant dans la source qu'on ouvre.
-     Sur le rush lui-même, c'est l'identité ; sur un extrait, on retranche le
-     début du plan et l'on ajoute l'avance que l'extrait porte devant lui. */
-  const versSource = (instant) => (extrait
-    ? Math.max(0, (extrait.decalage || 0) + (instant - entreeDe(plan)))
-    : instant);
-  const exact = identifiant.startsWith("exact:");
-
-  let fini = false;
-  // Déclarée avant « finir » : une capture qui réussit du premier coup termine
-  // avant la fin de cette fonction, et voudrait déjà arrêter la relance.
-  let relance = null;
-  const finir = (image, pourquoi) => {
-    if (fini) return;
-    fini = true;
-    clearTimeout(abandon);
-    if (relance) clearInterval(relance);
-    sonde.removeEventListener("seeked", capter);
-    sonde.removeEventListener("loadeddata", capter);
-    sonde.removeEventListener("canplay", capter);
-    sonde.removeEventListener("error", rater);
-    bande.demandes.delete(identifiant);
-    if (image) {
-      pellicule.prises += 1;
-      bande.images.set(identifiant, image);
-      if (exact) bande.couverture = { temps, image };
-      bande.ordre.push(identifiant);
-      rangerParTemps(bande, temps, image);
-      // Mémoire bornée : au-delà du plafond, les plus anciennes images sortent.
-      while (bande.ordre.length > IMAGETTES_MAX) {
-        const vieille = bande.images.get(bande.ordre[0]);
-        bande.images.delete(bande.ordre.shift());
-        const rang = bande.parTemps.findIndex((e) => e.image === vieille);
-        if (rang >= 0) bande.parTemps.splice(rang, 1);
-      }
-      redessinerBandes();
-      /* Le moniteur montre peut-être un pis-aller à cet endroit, et cette
-         imagette vaut mieux. Mais s'il affiche déjà le lecteur, elle ne lui
-         apprendrait rien : le réveiller à chaque capture le tenait éveillé tout
-         le temps que la réserve se constitue, pour repeindre la même image. */
-      if (apercu.source && apercu.source !== elementActif()) reveillerMoniteur(200);
-    } else {
-      /* Un échec, une seconde chance — avec une source relue.
-
-         Relevé sur l'appareil : vingt-six captures ratées sur quarante-trois,
-         « état 0/4, erreur 4 », c'est-à-dire « source non gérée ». Or le lecteur
-         du montage ouvre les mêmes fichiers sans broncher. Ce qui les distingue,
-         c'est le temps : la sonde garde l'adresse qu'elle avait au moment de la
-         demande, et pendant ce temps le bloc a pu être refait ou rendu à
-         l'appareil — l'adresse ne désigne plus rien.
-
-         On ne condamne donc l'imagette qu'au deuxième échec. Entre les deux, la
-         demande repart et « sourceDe » rend l'adresse du moment. */
-      const deja = secondeChance.has(identifiant);
-      if (!deja) {
-        secondeChance.add(identifiant);
-        bande.demandes.delete(identifiant);
-        pellicule.dernier = `${pourquoi || "échec"} — on relit la source et on réessaie`;
-        sondeOccupee = false;
-        clearTimeout(gardeSonde);
-        setTimeout(servirImagettes, 0);
-        return;
-      }
-      bande.echecs.add(identifiant);
-      pellicule.ratees += 1;
-      pellicule.dernier = `${pourquoi || "échec"} à ${temps.toFixed(2)} s` +
-        ` (état ${sonde.readyState}/4${sonde.error ? `, erreur ${sonde.error.code}` : ""})`;
-    }
-    sondeOccupee = false;
-    clearTimeout(gardeSonde);
-    setTimeout(servirImagettes, 0);
-    /* File vide : la sonde garde sinon un fichier décodé ouvert, prêt à servir,
-       pour rien. Sur une copie locale, la rouvrir ne coûte presque rien ; sur le
-       relais, la garder coûte une connexion et du décodage en continu. */
-    clearTimeout(reposSonde);
-    reposSonde = setTimeout(() => {
-      if (!sondeOccupee && !attenteImagettes.length) libererSondeBande();
-    }, 3000);
-  };
-
-  const capter = () => {
-    if (sonde.readyState < 2 || !sonde.videoWidth) { reveillerSonde(sonde); return; }
-    // Une image d'entrée doit tomber juste ; ailleurs, quelques centièmes
-    // d'écart ne se voient pas.
-    if (Math.abs(sonde.currentTime - versSource(temps)) > (exact ? 0.12 : 0.35)) return;
-    const toile = document.createElement("canvas");
-    toile.width = 160;
-    toile.height = Math.round((160 * sonde.videoHeight) / sonde.videoWidth) || 90;
-    try {
-      toile.getContext("2d").drawImage(sonde, 0, 0, toile.width, toile.height);
-    } catch {
-      return finir(null, "toile refusée");
-    }
-    finir(toile);
-  };
-  const rater = () => finir(null, "lecteur en erreur");
-  const abandon = setTimeout(() => finir(null, "délai dépassé"), 8000);
-
-  sonde.addEventListener("seeked", capter);
-  sonde.addEventListener("loadeddata", capter);
-  sonde.addEventListener("canplay", capter);
-  sonde.addEventListener("error", rater);
-
-  const viser = () => {
-    if (sonde.readyState < 1) { reveillerSonde(sonde); return; }
-    const vise = versSource(temps);
-    if (Math.abs(sonde.currentTime - vise) < 0.001) capter();
-    else sonde.currentTime = Math.min(vise, sonde.duration || vise);
-  };
-
-  if (sonde.dataset.source !== source) {
-    sonde.dataset.source = source;
-    delete sonde.dataset.reveille;
-    // À poser avant la source, sans quoi il n'a aucun effet.
-    if (local) sonde.removeAttribute("crossorigin");
-    else sonde.crossOrigin = "anonymous";
-    sonde.src = source;
-    sonde.load();
-    sonde.addEventListener("loadedmetadata", viser, { once: true });
-  }
-  reveillerSonde(sonde);
-  viser();
-  // Une consigne posée trop tôt est ignorée en silence : on la repose tant que
-  // le lecteur n'a pas suivi. Sans cela, une sonde restée à zéro bloquait toute
-  // la file jusqu'au délai, puis la suivante repartait dans le même mur.
-  if (!fini) relance = setInterval(viser, 400);
-}
-
-// Les demandes en attente ne valent que pour ce qui est à l'écran : au
-// pincement suivant, elles ne servent plus à rien.
-/* Réserve d'images d'un plan.
-
-   Un banc de montage construit ses vignettes une fois pour toutes après
-   l'import, et ne dépend plus d'elles ensuite. C'est ce qui permet de faire
-   défiler le curseur vite en voyant les images : un fichier ne se déplace que
-   d'une position à la fois, il ne peut pas suivre un doigt, mais des images
-   déjà prises s'affichent instantanément.
-
-   On en prend une toutes les 0,4 s environ, plafonnées à quarante-huit par
-   plan, en tâche de fond et seulement sur la copie locale. Ces demandes sont
-   déposées au fond de la file : tout ce que l'utilisateur regarde passe avant. */
-const PAS_RESERVE = 0.4;
-const RESERVE_MAX = 48;
-
-function prechaufferPellicule(plan) {
-  const bande = bandeDe(plan);
-  if (bande.prechauffe || plan.youtube || !plan.duree || !estLocal(plan)) return;
-  // Tant qu'un fichier se télécharge, on ne lui dispute ni le réseau ni le
-  // décodeur : la réserve est un confort, l'import est ce qu'on attend.
-  if (importsEnCours || fileImport.length) return;
-  bande.prechauffe = true;
-  const duree = dureeSource(plan);
-  const pas = Math.max(PAS_RESERVE, duree / RESERVE_MAX);
-  const demandes = [];
-  for (let temps = 0; temps < duree - IMAGE; temps += pas) {
-    const identifiant = cle(pas, Math.round(temps / pas));
-    if (bande.images.has(identifiant) || bande.demandes.has(identifiant)) continue;
-    bande.demandes.set(identifiant, temps);
-    demandes.push({ plan, temps, identifiant, reserve: true });
-  }
-  // En tête de tableau : la file se sert par la fin, donc ces images passent
-  // après toutes celles qu'on demande pour l'affichage.
-  attenteImagettes.unshift(...demandes);
-  servirImagettes();
-}
-
-// Coupe la source distante de la sonde. Une source locale ne coûte rien, on la
-// garde : la relâcher obligerait à tout recharger à la prochaine imagette.
-function libererSondeBande() {
-  // Jamais pendant une capture : couper la source sous ses pieds ne déclenche
-  // aucun événement, la demande reste en cours et bloque toute la file.
-  if (sondeOccupee) return;
-  if (!sondeBande?.dataset.source || sondeBande.dataset.source.startsWith("blob:")) return;
-  sondeBande.removeAttribute("src");
-  sondeBande.load();
-  delete sondeBande.dataset.source;
-  delete sondeBande.dataset.reveille;
-}
-
-function viderAttenteImagettes() {
-  // Seules les demandes d'affichage sont abandonnées : la réserve du plan, elle,
-  // sert à tous les zooms et n'a pas à être refaite.
-  const gardees = [];
-  for (const demande of attenteImagettes) {
-    if (demande.reserve) gardees.push(demande);
-    else bandeDe(demande.plan).demandes.delete(demande.identifiant);
-  }
-  attenteImagettes.length = 0;
-  attenteImagettes.push(...gardees);
-}
-
-/* Chaque plan déjà sur l'appareil se constitue sa réserve d'images — mais
-   seulement ceux qu'on peut voir, à un écran près de part et d'autre. Constituer
-   d'emblée la réserve de tous les plans, c'était jusqu'à quarante-huit
-   décodages par plan lancés d'un coup, pour des blocs hors de l'écran : du
-   travail, de la chaleur, et rien à montrer. Zoomé au large, tous les blocs sont
-   visibles et rien ne change ; zoomé serré, seul ce qu'on regarde se prépare, et
-   le défilement prépare la suite. */
-function prechaufferVisible() {
-  // L'atelier dort : rien ne se prépare avant qu'on ait demandé à voir.
-  if (!gesteMontage) return;
-  const projet = projetActif();
-  const cadre = $("piste");
-  if (!projet || !cadre) return;
-  /* Pas pendant la lecture, pour la même raison que la pellicule elle-même.
-
-     La piste défile toute seule pour suivre la tête : chaque défilement lève
-     un événement, et cet événement relançait le préchauffage — qui parcourt
-     tout le montage, mesure chaque bloc, et met en file la capture des
-     imagettes visibles. Sur cent vingt plans, à soixante défilements par
-     seconde, c'est du travail continu pendant tout le montage, versé dans la
-     boucle même qui doit produire l'image suivante — et pour une pellicule que
-     personne ne regarde puisqu'elle ne se repeint pas en lecture. On note qu'il
-     y avait à faire, et on le fera à l'arrêt. */
-  if (lecture.demande) { bandesEnAttente = true; return; }
-  const gauche = cadre.scrollLeft - cadre.clientWidth;
-  const droite = cadre.scrollLeft + cadre.clientWidth * 2;
-  let x = 0;
-  for (const plan of projet.plans) {
-    const large = largeurClip(plan);
-    if (x + large >= gauche && x <= droite) prechaufferPellicule(plan);
-    x += large;
-  }
-}
-
-function ordonnancerBandes() {
-  redessinerBandes();
-  prechaufferVisible();
-}
-
-/* Une seule repeinte par image d'écran, jamais plus.
-
-   Chaque imagette capturée demandait une repeinte complète de la pellicule
-   visible. La sonde en capture une vingtaine par seconde pendant qu'elle
-   constitue sa réserve, et chaque repeinte redessine une vingtaine de blocs :
-   mesuré, quatre cent cinquante « drawImage » par seconde sur une application
-   qui, à l'écran, ne bouge pas. Douze pour cent d'un cœur au repos sur une
-   machine de bureau — sur un téléphone, c'est la moitié de la chaleur dont il
-   se plaint.
-
-   Les regrouper à l'image d'écran ne suffisait pas : la sonde en capture assez
-   pour qu'il y en ait une à chaque image, et l'on repeignait encore quatre cent
-   soixante-cinq fois par seconde. Une pellicule qui se remplit n'a pas besoin
-   de soixante rafraîchissements par seconde — quatre suffisent largement à voir
-   les images apparaître. Le dernier appel est toujours honoré : la pellicule
-   finit toujours complète. */
-const RYTHME_BANDES = 250;
-let bandesPrevues = null;
-let bandesDerniere = 0;
-let bandesEnAttente = false;
-
-function redessinerBandes() {
-  /* Pendant la lecture, la pellicule ne se repeint pas.
-
-     Elle ne change pas — seul le curseur avance, et il est dessiné ailleurs.
-     Or repeindre quatre-vingt-huit blocs coûte cher sur un téléphone, et ce
-     coût tombe précisément dans la boucle qui doit produire l'image suivante.
-     On note qu'il y avait quelque chose à faire, et on le fera à l'arrêt. */
-  if (lecture.demande) { bandesEnAttente = true; return; }
-
-  const maintenant = performance.now();
-  const reste = RYTHME_BANDES - (maintenant - bandesDerniere);
-  if (reste > 0) {
-    if (!bandesPrevues) bandesPrevues = setTimeout(() => { bandesPrevues = null; redessinerBandes(); }, reste);
-    return;
-  }
-  if (bandesPrevues) { clearTimeout(bandesPrevues); bandesPrevues = null; }
-  bandesDerniere = maintenant;
-  peindreBandes();
-}
-
-/* Certains gestes veulent la pellicule tout de suite — un zoom, un défilement,
-   un bloc qu'on vient de déplacer. Ceux-là ne passent pas par la file. */
-function redessinerBandesMaintenant() {
-  if (bandesPrevues) { clearTimeout(bandesPrevues); bandesPrevues = null; }
-  bandesDerniere = performance.now();
-  peindreBandes();
-}
-
-/* Peint la partie visible de chaque bloc. Chaque colonne de 96 px porte
-   l'image de l'instant qu'elle occupe : plus on zoome, plus les colonnes
-   couvrent un temps court, donc plus on voit d'images. */
-function peindreBandes() {
-  const projet = projetActif();
-  const rail = $("rail");
-  const cadre = $("piste");
-  if (!projet || !rail || !cadre || $("vue-projet")?.hidden) return;
-  /* Le garde-fou est ici, pas seulement chez les appelants.
-
-     « redessinerBandes » refusait déjà de travailler pendant la lecture, mais
-     il n'est pas le seul chemin : « redessinerBandesMaintenant » existe
-     précisément pour court-circuiter la file, et les gestes qui l'empruntent ne
-     savent pas si l'on est en train de lire. Profilé pendant une lecture de
-     cent vingt plans, la peinture de la pellicule pesait encore 1 400 ms de
-     « drawImage » — c'est-à-dire qu'elle passait par la porte de service.
-
-     La règle appartient donc à la fonction qui peint : une pellicule ne se
-     repeint pas pendant la lecture. Elle ne change pas de toute façon — seule
-     la tête avance, et elle est dessinée ailleurs. */
-  if (lecture.demande) { bandesEnAttente = true; return; }
-
-  const gaucheVue = cadre.scrollLeft - MARGE_BANDE;
-  const droiteVue = cadre.scrollLeft + cadre.clientWidth + MARGE_BANDE;
-  const pas = pasGrille();
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-
-  /* Une seule toile pour toute la piste, et non plus une par bloc.
-
-     Une toile par bloc paraissait naturelle — chacun peint la sienne. Mais
-     dézoomé, un montage de cent soixante-quinze plans les met TOUS à l'écran,
-     larges de deux ou trois points : cent soixante-quinze contextes graphiques
-     ouverts, chacun avec sa mémoire réservée chez le compositeur. C'est cette
-     mémoire-là qui est comptée sur Safari mobile, et c'est elle qui fait tomber
-     l'application sur les longues pistes.
-
-     La toile unique ne couvre que la partie visible de la piste, marge
-     comprise : sa taille ne dépend donc plus de la longueur du montage. Les
-     blocs restent des éléments à part entière — ce sont eux qui portent le nom,
-     la durée, la sélection, le rognage et le déplacement — mais ils ne peignent
-     plus rien. Un div ne coûte pas de contexte graphique.
-
-     Le tracé lui-même ne change pas : on déplace l'origine au bord gauche de
-     chaque bloc, et le code des colonnes s'écrit exactement comme avant. */
-  const largeVue = Math.max(1, Math.round(droiteVue - gaucheVue));
-  const premierBloc = rail.querySelector(".clip");
-  const hautVue = Math.max(1, premierBloc?.clientHeight || 56);
-  let toile = rail.querySelector("canvas.rail-bande");
-  if (!toile) {
-    toile = document.createElement("canvas");
-    toile.className = "rail-bande";
-    rail.prepend(toile);
-  }
-  const largeurVuePx = Math.round(largeVue * dpr);
-  const hauteurPx = Math.round(hautVue * dpr);
-  if (toile.width !== largeurVuePx || toile.height !== hauteurPx) {
-    toile.width = largeurVuePx;
-    toile.height = hauteurPx;
-  }
-  toile.style.left = `${gaucheVue}px`;
-  toile.style.width = `${largeVue}px`;
-  toile.style.height = `${hautVue}px`;
-  toile.style.top = `${premierBloc?.offsetTop || 0}px`;
-  const ctx = toile.getContext("2d");
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, largeurVuePx, hauteurPx);
-
-  let x = 0;
-  [...rail.querySelectorAll(".clip")].forEach((bloc, index) => {
-    const plan = projet.plans[index];
-    const large = largeurClip(plan);
-    if (!plan) { x += large; return; }
-
-    const gauche = Math.max(x, gaucheVue);
-    const droite = Math.min(x + large, droiteVue);
-    if (droite - gauche < 1) { x += large; return; }
-
-    const largeurPx = Math.max(1, Math.round((droite - gauche) * dpr));
-    // L'origine se pose au bord gauche visible du bloc : tout ce qui suit se
-    // dessine comme si le bloc avait sa propre toile.
-    ctx.setTransform(1, 0, 0, 1, Math.round((gauche - gaucheVue) * dpr), 0);
-    // Le fond du bloc, que le CSS ne pose plus : c'est la toile qui le porte.
-    ctx.fillStyle = "#202020";
-    ctx.fillRect(0, 0, largeurPx, hauteurPx);
-
-    /* Deux régimes.
-
-       Dézoomé, une colonne couvre plusieurs secondes : elle en montre une image,
-       prise sur une grille assez fine pour lui appartenir.
-
-       Zoomé, une image de la source occupe assez de place pour être vue : la
-       pellicule montre alors les images une par une, calées sur la trame du
-       fichier. C'est ce qui relie enfin la piste et l'aperçu — le curseur tombe
-       dans la colonne de l'image que le moniteur affiche, et non quelque part
-       dans une colonne qui en couvre quatre. Sur une suite d'impact frames, où
-       deux images voisines n'ont rien à voir, c'est toute la différence entre
-       couper au bon endroit et couper à côté. */
-    /* Le seuil se juge en points, pas en pixels d'écran : sinon il se
-       déclencherait deux fois plus tôt sur un téléphone que sur un ordinateur,
-       pour des images larges de cinq points — invisibles — et deux fois plus de
-       captures. Onze points, c'est la largeur en dessous de laquelle une image
-       ne se distingue plus de sa voisine. */
-    const pxParImage = lecture.echelle * IMAGE;
-    const parImage = pxParImage >= 11;
-    const colonnes = parImage
-      ? Math.max(1, Math.round((droite - gauche) / pxParImage))
-      : Math.max(1, Math.round((droite - gauche) / LARGEUR_IMAGETTE));
-    const largeurColonne = largeurPx / colonnes;
-    const bande = bandeDe(plan);
-    const entree = entreeDe(plan);
-
-    for (let colonne = 0; colonne < colonnes; colonne += 1) {
-      // Chaque colonne montre l'image de son bord gauche, pas de son milieu :
-      // la pellicule se lit alors comme une règle, et la première colonne porte
-      // exactement l'image sur laquelle le plan commence.
-      const bord = gauche + (colonne / colonnes) * (droite - gauche);
-      const brut = Math.min(
-        sortieDe(plan) - IMAGE,
-        Math.max(entree, entree + (bord - x) / lecture.echelle),
-      );
-      // Au régime image par image, la colonne porte l'image de la source qui
-      // occupe cette place — pas un instant quelconque à l'intérieur.
-      const temps = parImage ? Math.max(entree, surImage(brut)) : brut;
-      // Vrai seulement quand le début du bloc est à l'écran : ailleurs, la
-      // première colonne visible n'est pas le début du plan.
-      const couverture = colonne === 0 && Math.abs(gauche - x) < 0.5;
-      /* Une colonne ne peut montrer qu'une image qui lui appartient : au-delà
-         d'une demi-colonne, l'image est celle d'une autre position de la piste,
-         et c'est précisément ce qui fait couper au mauvais endroit. Mieux vaut
-         une colonne vide, le temps de la capture, qu'une colonne qui ment. */
-      const demiColonne = Math.max(IMAGE / 2, (largeurColonne / dpr) / lecture.echelle / 2);
-      let image;
-      if (couverture) {
-        // L'image d'entrée ne se contente pas d'une approximation : dézoomé, le
-        // pas de la grille vaut plusieurs secondes, et l'image la plus proche
-        // était celle du début du fichier — la couverture ne bougeait donc pas
-        // d'un poil quand on rognait. On prend l'image exacte, à défaut la
-        // dernière image d'entrée connue de ce plan, et en dernier recours une
-        // image de la grille seulement si elle tombe assez près.
-        image = bande.images.get(cleExacte(temps))
-          || bande.couverture?.image
-          || imagetteAssezProche(bande, temps, pas, demiColonne);
-        const instant = bande.images.has(cleExacte(temps)) ? temps : bande.couverture?.temps;
-        if (instant !== undefined) bloc.dataset.couverture = instant.toFixed(2);
-      } else if (parImage) {
-        /* Une image, et rien d'autre. Aucun remplacement : à ce niveau de zoom,
-           l'image voisine est une autre image du film, et la montrer à la place
-           serait exactement l'erreur qu'on cherche à supprimer. Une colonne
-           sombre le temps de la capture dit la vérité. */
-        image = bande.images.get(cleExacte(temps));
-      } else {
-        /* L'image exacte de cette colonne d'abord. À défaut, la grille de
-           secours ou l'image connue la plus proche — mais l'une comme l'autre
-           seulement si elles tombent dans la colonne. */
-        image = bande.images.get(cleExacte(temps))
-          || imagetteAssezProche(bande, temps, pas, demiColonne)
-          || imagetteLaPlusProche(bande, temps, demiColonne);
-      }
-      if (image) {
-        const facteur = Math.max(largeurColonne / image.width, hauteurPx / image.height);
-        const l = image.width * facteur;
-        const h = image.height * facteur;
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(colonne * largeurColonne, 0, largeurColonne, hauteurPx);
-        ctx.clip();
-        ctx.drawImage(image, colonne * largeurColonne + (largeurColonne - l) / 2, (hauteurPx - h) / 2, l, h);
-        ctx.restore();
-      }
-      /* Une seule image par colonne, prise sur la grille — dont le pas est
-         désormais au plus égal à la durée d'une colonne, si bien que l'image
-         tombe toujours dans la colonne qui la montre. Demander en plus l'image
-         exacte de chaque colonne aurait été plus juste encore, mais la file s'en
-         trouvait saturée : la pellicule restait vide plusieurs secondes après
-         chaque déplacement, et une bande vide renseigne moins bien qu'une bande
-         juste à la demi-colonne près. Seule l'image d'entrée du bloc reste prise
-         exactement : elle doit tomber pile sur la coupe. */
-      // Au régime image par image, chaque colonne réclame son image exacte.
-      demanderImagette(plan, temps, pas, couverture || (parImage && estLocal(plan)));
-    }
-    x += large;
-  });
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-}
 
 /* Prépare les plans à venir sur les lecteurs disponibles.
 
@@ -11297,7 +10485,6 @@ function remplirLeRail(rail, projet) {
     /* Le rail est complet : ce qui dépend de sa longueur se remet à jour.
        La pellicule et les jauges ne peignent que la fenêtre visible, mais
        elles ont besoin de savoir que les blocs existent. */
-    redessinerBandes();
     peindreImports();
   };
   requestAnimationFrame(suite);
@@ -11868,7 +11055,6 @@ function redessinerPiste() {
   const projet = projetActif();
   const ancienne = $("piste");
   if (!projet || !ancienne) return;
-  purgerBandes();
   ancienne.closest(".piste-enveloppe").replaceWith(pisteComplete(projet));
   // La carte du projet porte la durée totale : elle vieillit dès qu'une durée
   // est mesurée.
@@ -11881,9 +11067,7 @@ function redessinerPiste() {
   // La pellicule est repeinte tout de suite : reconstruire la piste crée des
   // toiles vides, et attendre l'image suivante laissait le bloc noir un instant
   // — visible à chaque mouvement de poignée.
-  redessinerBandes();
   // Les imagettes manquantes se capturent une par une, sans bloquer le reste.
-  requestAnimationFrame(ordonnancerBandes);
 }
 
 function poserPlan(index, decalage = 0, enchainer = false) {
@@ -12231,9 +11415,6 @@ function basculerLecture() {
     reveillerMoniteur();
     // La réserve, mise en sourdine pendant la lecture, reprend ici.
     lancerImport();
-    // Et la pellicule peut se remplir, puis se repeindre, de nouveau.
-    servirImagettes();
-    if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); prechaufferVisible(); }
     return;
   }
   /* Rien de prêt, rien à lire.
@@ -12286,7 +11467,6 @@ function basculerLecture() {
   /* La sonde à imagettes lâche son décodeur avant qu'on démarre : sur un
      téléphone, il n'y en a qu'une poignée, et les lecteurs du montage en
      ont besoin tout de suite. */
-  libererSondeBande();
   // Arrivé au bout, « lecture » reprend depuis le début : sinon le bouton ne
   // ferait rien, ou pire, le lecteur repartirait sur ce qui a été coupé.
   if (lecture.position >= total(projet) - IMAGE) {
@@ -12361,8 +11541,6 @@ function arreter() {
   arreterSon();
   // La réserve reprend : elle se taisait pour laisser le lien à l'aperçu.
   lancerImport();
-  servirImagettes();
-  if (bandesEnAttente) { bandesEnAttente = false; redessinerBandes(); prechaufferVisible(); }
 }
 
 // La tête suit le doigt à la milliseconde : la position du montage est tenue
@@ -12489,7 +11667,6 @@ function reveillerAtelier() {
   try {
     lancerImport();
     fabriquerSuivant().catch(() => {});
-    prechaufferVisible();
     majImports();
     /* Et l'on repose la tête là où elle est.
 
@@ -14044,7 +13221,6 @@ async function rapatrier(plan) {
   // continue de remplir son tampon toute seule, connexion ouverte, et vole la
   // bande passante au téléchargement — mesuré, plus de vingt secondes de réseau
   // pour une poignée d'images dont on n'a pas besoin tout de suite.
-  libererSondeBande();
   // On enchaîne aussitôt sur le suivant, sans attendre celui-ci.
   if (fileImport.length) setTimeout(lancerImport, 0);
   const adresse = mediaDe(plan);
@@ -16083,7 +15259,6 @@ function apresImport(plan) {
   amorcerAvance(lecture.index);
   redessinerPisteDifferee();
   // Les imagettes de ce plan attendaient la copie locale : elles peuvent partir.
-  redessinerBandes();
   // Le dernier import terminé, toutes les réserves peuvent enfin se constituer.
   prechaufferPlusTard();
 }
@@ -16108,7 +15283,6 @@ function retrouveLocalement(plan) {
     }
   }
   oublierSourceReseau(plan);
-  redessinerBandes();
   prechaufferPlusTard();
 }
 
@@ -16121,7 +15295,6 @@ function prechaufferPlusTard() {
   prechauffePrevue = setTimeout(() => {
     prechauffePrevue = null;
     if (importsEnCours || fileImport.length) return;
-    for (const autre of projetActif()?.plans || []) prechaufferPellicule(autre);
   }, 1000);
 }
 
@@ -19512,14 +18685,18 @@ function enchainement(precedent, plan, serie = 0) {
    par un panoramique compte comme « immobile ». */
 const OPPOSES = { right: "left", left: "right", up: "down", down: "up", toward: "away", away: "toward" };
 
-function accordDuMouvement(precedent, plan) {
+function accordDuMouvement(precedent, plan, fort = false) {
   const avant = precedent?.lecture?.mouvement;
   const apres = plan.lecture?.mouvement;
   if (!avant || !apres || avant === "still" || apres === "still") return 0;
   // Une intensité faible ne doit pas commander : on pèse par la plus timide des deux.
   const poids = Math.min(3, Math.min(precedent.lecture.force ?? 2, plan.lecture.force ?? 2)) / 3;
   if (avant === apres) return -3 * poids;
-  if (OPPOSES[avant] === apres) return 3 * poids;
+  /* L'œil poursuit la trajectoire qu'on vient de lui montrer : l'inverser le
+     désoriente, et l'impact tombe à plat. Une seule exception, et c'est
+     justement celle qui vaut : sur un temps qui porte, deux forces qui se font
+     face SONT le choc. Ailleurs, l'inversion reste la pire des suites. */
+  if (OPPOSES[avant] === apres) return fort ? -2 * poids : 3 * poids;
   return 1 * poids;
 }
 
@@ -19565,7 +18742,8 @@ function humeur(id, graine, pris = 0) {
   return (((a % 1000) / 1000) * 8 - 4) / (1 + pris);
 }
 
-function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0, graine = 0) {
+function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0,
+  graine = 0, fort = false) {
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
   const derniereFois = vus.get(plan.id);
   const fraicheur = derniereFois === undefined ? 0 : Math.max(0, 6 - (rang - derniereFois));
@@ -19659,9 +18837,50 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
     illustration = porte ? -Math.min(8, 4 + porte * 2) : 0;
   }
 
+  /* Une frappe forte veut un choc, et un choc qui a un pic.
+
+     Toutes les cases se valaient : le kick du refrain recevait le plan qui
+     tombait là, et l'impact — quand il y en avait un — arrivait où il voulait.
+     Sur les temps qui portent, on demande donc autre chose : la famille du
+     choc, et de quoi frapper. Le pic de la lecture quand on l'a ; à défaut, la
+     courbe de mouvement, où un plan pointu se voit — sa crête vaut deux fois sa
+     moyenne, là où un plan tenu vaut un et demi.
+
+     Les poids restent sous la redite d'une scène : mieux vaut un impact moyen
+     qu'un impact déjà vu. */
+  const impact = (() => {
+    if (!fort) return 0;
+    const famille = familleDe(plan);
+    let note = famille === "choc" ? -5 : famille === "elan" ? -1 : 3;
+    const pic = plan.lecture?.pic;
+    if (typeof pic === "number" && pic > 0) {
+      note -= 4;
+    } else {
+      const profil = profilDe(plan, 0, dureeSource(plan));
+      if (profil?.moyenne > 0) {
+        note -= Math.max(0, Math.min(4, (profil.pic / profil.moyenne - 1.4) * 3));
+      }
+    }
+    return note;
+  })();
+
+  /* Après un choc, la retombée.
+
+     Un plan plat posé juste après l'impact coupe l'énergie net — c'est le défaut
+     que tout monteur connaît : on frappe, et la seconde d'après ne raconte plus
+     rien. La fumée, les débris, les étincelles font redescendre. La règle ne
+     vaut qu'après un choc, et elle ne force rien : elle rend le plat coûteux. */
+  const retombee = (() => {
+    if (!precedent || familleDe(precedent) !== "choc") return 0;
+    if (familleDe(plan) === "suite") return -2;
+    const profil = profilDe(plan, 0, dureeSource(plan));
+    if (!profil) return 0;
+    return profil.tenue > 0.72 && profil.moyenne < 40 ? 6 : 0;
+  })();
+
   return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole + intention
-    + illustration + contraste
-    + accordDuMouvement(precedent, plan)
+    + illustration + contraste + impact + retombee
+    + accordDuMouvement(precedent, plan, fort)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
     + grainDeSable(plan.id, rang, graine)
@@ -20298,7 +19517,7 @@ const CLOTURE = 3.2;
    au plus court. Le dernier tombe sur le premier temps du passage qui monte. */
 const ACCELERATION = [1.15, 0.85, 0.62, 0.45, 0.32];
 
-function grilleDeCoupes(rythme, budget, sections = null) {
+function grilleDeCoupes(rythme, budget, sections = null, avecForce = false) {
   const attaques = rythme?.instruments?.[rythme?.instrument] || [];
   if (attaques.length < 4) return null;
   const duree = rythme.duree || 0;
@@ -20424,7 +19643,13 @@ function grilleDeCoupes(rythme, budget, sections = null) {
     const retirer = new Set(ordreFaiblesse.map((x) => x.i));
     for (let i = points.length - 1; i >= 0; i -= 1) if (retirer.has(i)) points.splice(i, 1);
   }
-  return points.map((x) => Math.round(x.quand * 1000) / 1000);
+  /* La force est jetée par défaut : presque tout le monde ne veut que des
+     instants. Le montage, lui, en a besoin — c'est elle qui distingue le kick
+     du refrain d'un contretemps, donc le plan qui doit frapper du plan qui
+     accompagne. */
+  return avecForce
+    ? points.map((x) => ({ quand: Math.round(x.quand * 1000) / 1000, force: x.force || 0 }))
+    : points.map((x) => Math.round(x.quand * 1000) / 1000);
 }
 
 function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 } = {}) {
@@ -20522,12 +19747,29 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
 
   /* Les coupes tombent sur l'instrument quand on en a un ; sinon sur la division
      régulière d'avant, qui reste juste et ne dépend de rien. */
-  const grille = grilleDeCoupes(rythme, budgetCases, sections);
+  const grille = grilleDeCoupes(rythme, budgetCases, sections, true);
   const prochaineFrappe = (t) => {
     if (!grille) return null;
-    for (const quand of grille) if (quand > t + COUPE_MINI) return quand;
+    for (const point of grille) if (point.quand > t + COUPE_MINI) return point.quand;
     return null;
   };
+  /* La frappe sur laquelle un plan COMMENCE, et sa force.
+
+     Le plan court de sa frappe à la suivante : c'est donc celle de départ qui
+     décide de ce qu'il doit montrer. Un kick de refrain veut un choc dont le
+     pic tombe pile dessus ; un contretemps veut ce qui suit. La distinction
+     n'existait pas — toutes les cases se valaient, et l'impact tombait où il
+     tombait. */
+  const forceMax = (grille || []).reduce((m, p) => Math.max(m, p.force || 0), 0);
+  const frappeSous = (t) => {
+    let vue = null;
+    for (const point of grille || []) {
+      if (point.quand <= t + 0.08) vue = point; else break;
+    }
+    return vue;
+  };
+  // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
+  const PART_FORTE = 0.62;
 
   sections.forEach((section, rangSection) => {
     const accord = projet.accords?.[rangSection] || projet.accords?.[String(rangSection)] || null;
@@ -20563,6 +19805,10 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       // est simplement servie par plus de cases.
       const vise = Math.max(PLAN_MINI, Math.min(ecart, reste, TENUE_MAX));
       const rang = montage.length;
+      /* Ce plan commence-t-il sur une frappe forte ? Si oui, c'est lui qui doit
+         frapper : on le choisit autrement, et on le taille autour de son pic. */
+      const sousLaFrappe = frappeSous(curseur);
+      const fort = forceMax > 0 && (sousLaFrappe?.force || 0) >= PART_FORTE * forceMax;
 
       /* Le plan d'ouverture et le plan de clôture ne se choisissent pas comme
          les autres : un générique ouvre sur un décor qui s'installe et ferme sur
@@ -20608,7 +19854,8 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             // Un rush trop court pour la case n'est pas disqualifié — il n'y en
             // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
             const court = dureeSource(plan) < vise ? 3 : 0;
-            const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets, serie, graine) + court;
+            const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets,
+              serie, graine, fort) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) break;
@@ -20622,8 +19869,8 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       }
       if (!choix) break;
 
-      const bornes = fenetreDans(choix, vise, vu.energie >= 2 && !choix.__picVu, graine, vu,
-        momentsPris);
+      const bornes = fenetreDans(choix, vise, (fort || vu.energie >= 2) && !choix.__picVu,
+        graine, vu, momentsPris);
       if (!bornes) break;
       // Combien de plans d'affilée dans la même famille : c'est ce qui rend le
       // sur-place de plus en plus coûteux.
