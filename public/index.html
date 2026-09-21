@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 18:11";
+const VERSION_PAGE = "2026-09-21 18:14";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6214,6 +6214,39 @@ async function genererLAmv() {
          pas si la règle a servi : un morceau instrumental n'a aucune voix à
          fuir, et un morceau sans grosse caisse n'a rien à ancrer — dans les deux
          cas le montage est le même qu'avant, et il faut pouvoir le constater. */
+      /* L'escalade, mesurée. On dit l'épisode médian de chaque moment : c'est le
+         seul chiffre qui montre que le montage monte — et s'il ne monte pas, on
+         le voit tout de suite. */
+      const axe = projet.__axe;
+      if (axe) {
+        const parPhase = new Map();
+        for (const [rang, section] of projet.rythme.sections.entries()) {
+          const phase = phaseDuMontage(section, rang, projet.rythme.sections,
+            projet.rythme.duree || 0);
+          const dedans = places
+            .map((x, i) => ({ x, bloc: montage[i] }))
+            .filter(({ x }) => x.debut >= section.debut - 0.01 && x.debut < section.fin)
+            .map(({ bloc }) => bloc.episode)
+            .filter((n) => typeof n === "number");
+          if (!dedans.length) continue;
+          if (!parPhase.has(phase)) parPhase.set(phase, []);
+          parPhase.get(phase).push(...dedans);
+        }
+        const median = (liste) => {
+          const rangee = [...liste].sort((a, b) => a - b);
+          return rangee[Math.floor(rangee.length / 2)];
+        };
+        const dit = [...parPhase.entries()]
+          .map(([phase, liste]) => `${DIT_PHASE[phase]?.[0] || phase} ép.${median(liste)}`)
+          .join(" · ");
+        noter(`Escalade sur ${axe.bas}–${axe.haut} : ${dit}`, "fait", {
+          axe: `${axe.bas}–${axe.haut}`,
+          episodesConnus: `${axe.portees}/${axe.total} scènes du vivier`,
+          // Le médian par moment : il doit monter de l'intro au dernier drop.
+          parMoment: [...parPhase.entries()]
+            .map(([phase, liste]) => `${phase}=${median(liste)}`).join(" "),
+        });
+      }
       const bandes = projet.__bandes;
       if (bandes && (bandes.grave || bandes.jugees)) {
         const retirees = Math.max(0, bandes.dansLaVoix - bandes.dansLaVoixTenu);
@@ -7241,6 +7274,7 @@ window.__banc = {
   laVoixLaisseLaPlace: (...a) => laVoixLaisseLaPlace(...a),
   occupationVocale: (...a) => occupationVocale(...a),
   accordDuMouvement: (...a) => accordDuMouvement(...a),
+  escalade: (...a) => escalade(...a), axeDeLaSerie: (s) => axeDeLaSerie(s),
   sensDuPlan: (p) => sensDuPlan(p),
   // Le banc a besoin de repartir d'un cache vide pour éprouver le cas « aucune
   // fiche ne dit rien » — celui de la première génération sur une série.
@@ -19206,6 +19240,70 @@ function focusDuFil(plan, precedent, phase, cibles) {
   return HORS_DU_FIL;
 }
 
+/* ---- L'escalade dramatique : une série monte en puissance ----------------
+
+   Même sans savoir qui est à l'écran, une série animée raconte quelque chose qui
+   s'aggrave. Enchaîner un combat d'arène de l'épisode 12 juste après
+   l'affrontement apocalyptique de l'épisode 350 désamorce la tension : ce n'est
+   pas une faute de rythme, c'est une faute de récit, et c'est celle qui trahit le
+   plus vite un montage fait par une machine.
+
+   Les tags de Sakugabooru portent l'épisode dans la référence du post — « #322
+   (BD) » —, et « episodeNumber » le lit déjà. Relevé sur Naruto Shippuden :
+   127 rushs sur 200 ont un numéro, de l'épisode 20 au 495. Les 73 autres sont
+   des génériques, qui n'en ont légitimement pas.
+
+   On place donc chaque plan sur l'axe de la série — zéro au premier épisode du
+   catalogue, un au dernier — et chaque moment du morceau vise une zone :
+
+     intro, couplet      0,15   l'exposition, ce qui installe
+     montée, retombée    0,50   le milieu de série
+     drop                0,80   le dernier tiers
+     DERNIER drop        0,92   le climax, et rien d'autre
+     outro               0,85   on conclut là où la série conclut
+
+   Un plan sans épisode — un générique — n'est JAMAIS pénalisé : il n'a pas de
+   place sur l'axe, et il sert partout. C'est la même règle que le plan sans
+   crédit d'animateur : une absence de donnée n'est pas une faute.
+
+   Le poids reste sous celui de deux coupes du même épisode (30), donc très sous
+   la redite d'une scène (100) : sur un catalogue qui ne couvre que six épisodes,
+   la préférence s'écrase d'elle-même et le montage sort quand même. */
+const ZONE_DRAMATIQUE = {
+  intro: 0.15,
+  couplet: 0.15,
+  montee: 0.5,
+  retombee: 0.5,
+  drop: 0.8,
+  outro: 0.85,
+};
+const ZONE_CLIMAX = 0.92;
+const POIDS_ESCALADE = 14;
+
+/* L'axe de la série, tel que le catalogue le montre. Rien si moins de trois
+   épisodes distincts : sur un catalogue qui tient en deux épisodes, « tôt » et
+   « tard » ne veulent rien dire, et une préférence sans sens est une préférence
+   qui nuit. */
+function axeDeLaSerie(sources) {
+  const numeros = sources
+    .map((plan) => plan?.episode)
+    .filter((n) => typeof n === "number" && Number.isFinite(n) && n > 0);
+  if (numeros.length < 3) return null;
+  const bas = Math.min(...numeros);
+  const haut = Math.max(...numeros);
+  if (haut - bas < 2) return null;
+  return { bas, haut, portees: numeros.length, total: sources.length };
+}
+
+function escalade(plan, phase, axe, climax = false) {
+  if (!axe || !phase) return 0;
+  const episode = plan?.episode;
+  if (typeof episode !== "number" || !Number.isFinite(episode)) return 0;
+  const part = Math.max(0, Math.min(1, (episode - axe.bas) / (axe.haut - axe.bas)));
+  const vise = climax ? ZONE_CLIMAX : (ZONE_DRAMATIQUE[phase] ?? 0.5);
+  return Math.abs(part - vise) * POIDS_ESCALADE;
+}
+
 /* De quoi départager deux candidats rigoureusement à égalité. Sans cela, cinq
    sources de même énergie et de même note se relayaient dans un ordre
    parfaitement cyclique — p0 p1 p2 p3 p4, quinze fois de suite —, et le montage
@@ -19280,7 +19378,7 @@ function estFixe(plan) {
 }
 
 function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0,
-  graine = 0, partFrappe = 0, phase = "", cibles = []) {
+  graine = 0, partFrappe = 0, phase = "", cibles = [], axe = null, climax = false) {
   // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
   const fort = partFrappe >= 0.62;
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
@@ -19478,6 +19576,7 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
   return deja + episode + colle + ecart * 6 + fraicheur * 2 + usure + parole + intention
     + illustration + contraste + impact + retombee + macro + jumpcut
     + focusDuFil(plan, precedent, phase, cibles)
+    + escalade(plan, phase, axe, climax)
     + accordDuMouvement(precedent, plan, fort)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -20508,6 +20607,14 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
      barème de constater qu'aucun plan ne le porte, et de laisser les autres
      critères décider — le montage sort quand même. */
   const cibles = (projet.auteurs || []).filter(Boolean).slice(0, 2);
+  /* L'axe de la série, et où tombe son climax.
+
+     Le dernier drop du morceau est le climax de l'AMV : c'est là qu'on réserve
+     les épisodes du tiers final. Les autres drops visent plus tôt — sinon tout
+     le montage se battrait pour les mêmes vingt plans de fin de série, et le
+     climax n'aurait plus rien de particulier. */
+  const axe = axeDeLaSerie(sources);
+  projet.__axe = axe;
   const chrono = ordre === "chrono";
   const suite = chrono ? [...sources].sort(parChronologie) : null;
   let rangSuite = 0;
@@ -20607,12 +20714,17 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
   // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
   const PART_FORTE = 0.62;
 
+  /* Le rang du dernier drop : c'est le climax, et il est seul à viser le tiers
+     final de la série. Sans drop, personne ne le vise. */
+  const dernierDrop = sections.reduce((vu, section, rang) =>
+    (phaseDuMontage(section, rang, sections, rythme.duree || 0) === "drop" ? rang : vu), -1);
   sections.forEach((section, rangSection) => {
     const accord = projet.accords?.[rangSection] || projet.accords?.[String(rangSection)] || null;
     /* Où l'on en est dans le morceau : c'est cela qui distingue un passage calme
        qui ouvre d'un passage calme qui conclut, et qui interdit l'explosion dans
        les premières secondes. */
     const phase = phaseDuMontage(section, rangSection, sections, rythme.duree || 0);
+    const climax = phase === "drop" && rangSection === dernierDrop;
     const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
     /* On remplit la section au temps, pas au compte. Un rush plus court que la
        case ne peut pas la couvrir — mesuré : cinq cases de six secondes servies
@@ -20699,7 +20811,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
             const court = dureeSource(plan) < vise ? 3 : 0;
             const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets,
-              serie, graine, partFrappe, bord ? "" : phase, cibles) + court;
+              serie, graine, partFrappe, bord ? "" : phase, cibles, axe, climax) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) break;
