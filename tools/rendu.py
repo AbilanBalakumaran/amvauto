@@ -300,7 +300,7 @@ def duree_de(fichier):
     return int(heures) * 3600 + int(minutes) * 60 + float(secondes)
 
 
-def renvoyer_les_sens(rapatries, plans):
+def renvoyer_les_sens(rapatries, plans, mesures=None):
     """Le sens de chaque rush, mesuré ici et renvoyé au cache des fiches.
 
     Ce Worker-là ne peut pas le faire : il lit des en-têtes, il n'a pas de
@@ -337,7 +337,14 @@ def renvoyer_les_sens(rapatries, plans):
             continue
         if not lu.get("sens"):
             continue
-        charge = json.dumps({"sens": lu["sens"], "force": lu.get("force", 0)}).encode()
+        # La teinte part avec le sens : même fichier, même passage, même appel.
+        # Elle a déjà été mesurée pour l'harmonisation, elle ne coûte rien de plus.
+        dedans = {"sens": lu["sens"], "force": lu.get("force", 0)}
+        couleur = mesures.get(adresse) if mesures else None
+        if couleur and couleur.get("teinte") is not None:
+            dedans["teinte"] = couleur["teinte"]
+            dedans["teinteForce"] = couleur.get("teinteForce", 0)
+        charge = json.dumps(dedans).encode()
         cible = (f"{hote}/api/cles?code={urllib.parse.quote(code)}"
                  f"&u={urllib.parse.quote(adresse, safe='')}")
         requete = urllib.request.Request(cible, data=charge, method="PUT",
@@ -442,7 +449,7 @@ def main():
 
         # Le rendu est écrit : ce qui suit ne peut plus rien casser.
         try:
-            renvoyer_les_sens(rapatries, plans)
+            renvoyer_les_sens(rapatries, plans, mesures)
         except Exception as souci:                      # noqa: BLE001
             print(f"sens : abandonné ({souci})", flush=True)
         return 0

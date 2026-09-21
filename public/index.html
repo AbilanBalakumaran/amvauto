@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 18:14";
+const VERSION_PAGE = "2026-09-21 18:19";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7275,6 +7275,9 @@ window.__banc = {
   occupationVocale: (...a) => occupationVocale(...a),
   accordDuMouvement: (...a) => accordDuMouvement(...a),
   escalade: (...a) => escalade(...a), axeDeLaSerie: (s) => axeDeLaSerie(s),
+  raccordChromatique: (...a) => raccordChromatique(...a),
+  teinteDuPlan: (x) => teinteDuPlan(x), ecartDeTeinte: (a, z) => ecartDeTeinte(a, z),
+  chaleurDe: (a) => chaleurDe(a),
   sensDuPlan: (p) => sensDuPlan(p),
   // Le banc a besoin de repartir d'un cache vide pour éprouver le cas « aucune
   // fiche ne dit rien » — celui de la première génération sur une série.
@@ -19240,6 +19243,81 @@ function focusDuFil(plan, precedent, phase, cibles) {
   return HORS_DU_FIL;
 }
 
+/* ---- Le raccord chromatique : ce que l'œil suit en couleur ---------------
+
+   Le flux rétinien ne tient pas qu'à la direction. Passer d'une prairie verte
+   saturée à une explosion rouge vif sur un temps FAIBLE crée un décrochage qu'on
+   ressent sans savoir le nommer : la couleur a changé sans que la musique le
+   demande.
+
+   La même bascule sur la charnière montée → drop est exactement l'inverse : elle
+   décharge. C'est le clash thermique — chaud contre froid — et c'est un geste de
+   monteur, pas un défaut.
+
+   La teinte vient de « teinte.py », mesurée par le runner et rangée dans la fiche
+   de « /api/cles » avec le sens. Elle est accumulée en VECTEUR : moyenner des
+   angles est faux — un plan moitié rouge (341°) moitié magenta (38°) rendrait
+   190°, c'est-à-dire cyan, la couleur qu'il n'a nulle part. La longueur du vecteur
+   dit si la dominante veut dire quelque chose ; sous un quart, le plan ne se
+   prononce pas et la règle se taît.
+
+   L'axe thermique est celui du rouge contre le cyan, et c'est le même que la
+   composante V du YUV. Un plan rouge vaut +1 de chaleur, un plan cyan −1.
+
+   Comme le raccord de mouvement, la règle dort sur un catalogue qu'aucun rendu
+   n'a réchauffé : c'est le prix d'une mesure qui demande de décoder des images, et
+   le journal le dit. */
+const TEINTE_ROUGE = 341;      // l'angle du rouge dans la convention de teinte.py
+const ACCORD_TEINTE = 30;      // en deçà, deux plans sont de la même couleur
+const PRIME_HARMONIE = 4;      // ce que vaut un raccord harmonieux sur un couplet
+const PRIME_CLASH = 6;         // ce que vaut un clash thermique sur la charnière
+const PUNITION_DECROCHAGE = 5; // ce que coûte un clash là où rien ne le demande
+
+function teinteDuPlan(plan) {
+  const fiche = clesConnues.get(mediaDe(plan));
+  if (!fiche || typeof fiche.teinte !== "number") return null;
+  if ((fiche.teinteForce ?? 0) < 0.25) return null;
+  return { angle: fiche.teinte, force: fiche.teinteForce ?? 0 };
+}
+
+// L'écart entre deux teintes, sur le cercle : 350° et 10° sont à vingt degrés.
+function ecartDeTeinte(a, z) {
+  const brut = Math.abs(a - z) % 360;
+  return brut > 180 ? 360 - brut : brut;
+}
+
+// La chaleur d'une teinte : +1 au rouge, −1 au cyan, zéro sur l'axe perpendiculaire.
+const chaleurDe = (angle) => Math.cos(((angle - TEINTE_ROUGE) * Math.PI) / 180);
+
+/* Le terme, et sa dépendance au moment.
+
+   « charniere » est vrai quand ce plan ouvre un drop qui suit une montée : c'est
+   la seule case où le clash est une décharge et non un décrochage. */
+function raccordChromatique(precedent, plan, phase, charniere = false) {
+  if (!precedent) return 0;
+  const avant = teinteDuPlan(precedent);
+  const apres = teinteDuPlan(plan);
+  if (!avant || !apres) return 0;
+  // Une dominante timide ne commande pas : on pèse par la plus faible des deux.
+  const poids = Math.min(avant.force, apres.force);
+  const ecart = ecartDeTeinte(avant.angle, apres.angle);
+
+  if (charniere) {
+    /* On veut la décharge : plus les deux plans s'opposent thermiquement, mieux
+       c'est. La chaleur va de −1 à +1, donc leur écart va de 0 à 2. */
+    const thermique = Math.abs(chaleurDe(avant.angle) - chaleurDe(apres.angle)) / 2;
+    return -PRIME_CLASH * thermique * poids;
+  }
+
+  const calme = phase === "intro" || phase === "couplet" || phase === "outro"
+    || phase === "retombee";
+  if (!calme) return 0;
+  // Sur un passage calme, la continuité se récompense et la rupture se paie.
+  if (ecart < ACCORD_TEINTE) return -PRIME_HARMONIE * poids;
+  if (ecart > 120) return PUNITION_DECROCHAGE * poids * (ecart - 120) / 60;
+  return 0;
+}
+
 /* ---- L'escalade dramatique : une série monte en puissance ----------------
 
    Même sans savoir qui est à l'écran, une série animée raconte quelque chose qui
@@ -19378,7 +19456,8 @@ function estFixe(plan) {
 }
 
 function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0,
-  graine = 0, partFrappe = 0, phase = "", cibles = [], axe = null, climax = false) {
+  graine = 0, partFrappe = 0, phase = "", cibles = [], axe = null, climax = false,
+  charniere = false) {
   // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
   const fort = partFrappe >= 0.62;
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
@@ -19577,6 +19656,7 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
     + illustration + contraste + impact + retombee + macro + jumpcut
     + focusDuFil(plan, precedent, phase, cibles)
     + escalade(plan, phase, axe, climax)
+    + raccordChromatique(precedent, plan, phase, charniere)
     + accordDuMouvement(precedent, plan, fort)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -20725,6 +20805,14 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
        les premières secondes. */
     const phase = phaseDuMontage(section, rangSection, sections, rythme.duree || 0);
     const climax = phase === "drop" && rangSection === dernierDrop;
+    /* La charnière : le premier plan d'un drop qui suit une montée. C'est la
+       seule case du montage où le clash chromatique est une décharge et non un
+       décrochage — et c'est une case par drop, pas une préférence générale. */
+    const monteeAvant = rangSection > 0
+      && phaseDuMontage(sections[rangSection - 1], rangSection - 1, sections,
+        rythme.duree || 0) === "montee";
+    const charnierePossible = phase === "drop" && monteeAvant;
+    let charniereAPoser = charnierePossible;
     const tenue = (TEMPS_PAR_PLAN[section.energie] ?? 8) * periode;
     /* On remplit la section au temps, pas au compte. Un rush plus court que la
        case ne peut pas la couvrir — mesuré : cinq cases de six secondes servies
@@ -20776,6 +20864,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       const vu = bord ? { ...section, emotion: "calme", energie: Math.min(1, section.energie) } : section;
 
       const precedent = montage[montage.length - 1];
+      const charniere = charniereAPoser && !bord;
       let choix = null;
       if (chrono) {
         /* Même en chronologie, un épisode ne s'étale pas : passé son budget, on
@@ -20811,7 +20900,8 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             // aurait parfois aucun —, mais il passe après ceux qui la couvrent.
             const court = dureeSource(plan) < vise ? 3 : 0;
             const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets,
-              serie, graine, partFrappe, bord ? "" : phase, cibles, axe, climax) + court;
+              serie, graine, partFrappe, bord ? "" : phase, cibles, axe, climax,
+              charniere) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) break;
@@ -20874,6 +20964,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
         __pris: undefined,
         __famille: undefined,
       });
+      if (charniere) charniereAPoser = false;
       choix.__pris = (choix.__pris || 0) + 1;
       dejaPris.add(String(idRush(choix)));
       momentsPris.add(`${idRush(choix)}@${bornes.entree.toFixed(2)}`);

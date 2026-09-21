@@ -18,6 +18,7 @@ sombre doit rester sombre. On rapproche, on n'uniformise pas.
 """
 from __future__ import annotations
 
+import math
 import subprocess
 
 LARGEUR = 48
@@ -58,6 +59,8 @@ def mesurer(source: str, ffmpeg: str = "ffmpeg", debut: float = 0.0,
     somme = 0
     carres = 0
     chroma = 0
+    su = 0
+    sv = 0
     n = 0
     for depart in range(0, len(brut) - plan * 3 + 1, plan * 3):
         y = brut[depart:depart + plan]
@@ -69,16 +72,47 @@ def mesurer(source: str, ffmpeg: str = "ffmpeg", debut: float = 0.0,
             # La distance au gris, en norme de Tchebychev : c'est ce qu'on voit
             # comme « couleur », et ça ne demande pas de racine.
             chroma += max(abs(u[i] - 128), abs(v[i] - 128))
+            # La teinte, accumulée en VECTEUR et non en angle moyen.
+            #
+            # Moyenner des angles est faux : un plan moitié rouge (0°) moitié
+            # magenta (350°) rendrait 175°, c'est-à-dire cyan — la couleur qu'il
+            # n'a nulle part. On somme donc les composantes chroma signées, et
+            # l'angle se lit à la fin sur la somme. Un plan sans couleur dominante
+            # a une somme proche de zéro, et l'on sait alors qu'il n'a pas de
+            # teinte à raccorder.
+            su += u[i] - 128
+            sv += v[i] - 128
         n += plan
     if not n:
         return None
     moyenne = somme / n
     variance = max(0.0, carres / n - moyenne * moyenne)
-    return {
+    mesure = {
         "lumiere": round(moyenne, 2),
         "contraste": round(variance ** 0.5, 2),
         "saturation": round(chroma / n, 2),
     }
+    # La teinte dominante, en degrés sur le cercle des couleurs, et sa force.
+    #
+    # En YUV, U porte le bleu-jaune et V le rouge-cyan : l'angle de (V, U) donne
+    # la teinte, à une convention près qui n'importe pas — ce qui compte est que
+    # deux plans de même couleur rendent le même angle, et que l'écart entre deux
+    # angles se mesure sur le cercle.
+    #
+    # « force » est la longueur du vecteur rapportée à la chroma moyenne : à un,
+    # tout le plan tire dans la même direction et la teinte veut dire quelque
+    # chose ; près de zéro, les couleurs s'annulent et il n'y a pas de dominante à
+    # raccorder. Sous un quart, on ne se prononce pas.
+    mu = su / n
+    mv = sv / n
+    longueur = (mu * mu + mv * mv) ** 0.5
+    if mesure["saturation"] > 1:
+        force = min(1.0, longueur / mesure["saturation"])
+        if force >= 0.25:
+            angle = math.degrees(math.atan2(mu, mv)) % 360
+            mesure["teinte"] = round(angle, 1)
+            mesure["teinteForce"] = round(force, 3)
+    return mesure
 
 
 def _mediane(valeurs: list[float]) -> float:

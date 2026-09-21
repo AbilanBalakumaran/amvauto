@@ -179,8 +179,9 @@ const entetes = {
 
    Le runner GitHub, lui, a ffmpeg — et il a déjà les fichiers sous la main quand
    il rend un AMV. Il mesure donc le sens de chaque plan qu'il vient d'employer,
-   presque gratuitement, et l'écrit ici. La fiche du plan s'enrichit dans R2, et
-   toutes les générations suivantes le trouvent posé.
+   presque gratuitement, et l'écrit ici, avec sa teinte dominante. La fiche du
+   plan s'enrichit dans R2, et toutes les générations suivantes les trouvent
+   posées.
 
    Conséquence assumée : la toute première génération sur une série n'a aucun
    sens à lire, et le montage y est celui d'avant. Le premier rendu réchauffe le
@@ -221,6 +222,13 @@ async function ecrireLeSens(request, url, env) {
   const sens = String(dit?.sens || "");
   if (!SENS_PERMIS.has(sens)) return new Response("sens inconnu", { status: 400 });
   const force = Math.max(0, Math.min(3, Number(dit?.force) || 0));
+  /* La teinte dominante voyage avec le sens : c'est la même mesure, au même
+     moment, sur le même fichier — et le raccord chromatique en a besoin au
+     moment du montage, donc avant le rendu. Facultative : un plan gris n'en a
+     pas, et le dire est une information. */
+  const teinte = Number.isFinite(Number(dit?.teinte))
+    ? ((Number(dit.teinte) % 360) + 360) % 360 : null;
+  const teinteForce = Math.max(0, Math.min(1, Number(dit?.teinteForce) || 0));
 
   const cle = `cles/v${VERSION_CLES}/${await empreinte(source.toString())}.json`;
   const range = await env.GRENIER.get(cle).catch(() => null);
@@ -232,10 +240,14 @@ async function ecrireLeSens(request, url, env) {
 
   fiche.sens = sens;
   fiche.sensForce = force;
+  if (teinte !== null && teinteForce > 0) {
+    fiche.teinte = Math.round(teinte * 10) / 10;
+    fiche.teinteForce = Math.round(teinteForce * 1000) / 1000;
+  }
   await env.GRENIER.put(cle, JSON.stringify(fiche), {
     httpMetadata: { contentType: "application/json", cacheControl: "public, max-age=86400" },
   });
-  return new Response(JSON.stringify({ ecrit: true, sens, force }), {
+  return new Response(JSON.stringify({ ecrit: true, sens, force, teinte, teinteForce }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 }
