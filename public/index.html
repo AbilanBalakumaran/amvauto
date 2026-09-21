@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 17:38";
+const VERSION_PAGE = "2026-09-21 18:11";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -15955,6 +15955,11 @@ function feuilleDeRoute(projet, musique) {
       /* L'éclair ne part que vers le rendu : l'archive DaVinci doit livrer les
          rushs tels quels, pour qu'on puisse reprendre le montage. */
       ...(plan.eclair ? { eclair: true } : {}),
+      /* Le pic du mouvement, en temps source absolu : c'est là que le coup part,
+         et c'est ce qui permet au runner de poser sa rampe de vitesse. Comme
+         l'éclair, il ne va qu'au rendu — l'archive DaVinci livre les rushs tels
+         quels. */
+      ...(typeof plan.pic === "number" ? { pic: Math.round(plan.pic * 1000) / 1000 } : {}),
     });
   }
 
@@ -19854,6 +19859,34 @@ function profilDe(plan, entree, sortie) {
   return { moyenne, tenue: moyenne > 0 ? Math.max(0, 1 - ecart / moyenne) : 0, pic: Math.max(...v) };
 }
 
+/* Où, dans le plan, le mouvement culmine — en temps source absolu.
+
+   « profilDe » rend la VALEUR du pic ; la rampe de vitesse a besoin de sa
+   POSITION, parce que c'est là que le coup part. La courbe est échantillonnée
+   toutes les demi-secondes, donc la position est connue à un quart de seconde
+   près : on vise le milieu de la case la plus haute.
+
+   Rien quand la courbe manque, ou quand le pic tombe si près d'un bord que la
+   fenêtre ne pourrait rien étirer avant lui. Un pic qu'on ne sait pas situer ne
+   se rampe pas — et c'est le cas de toutes les scènes qu'aucun rendu n'a encore
+   lues. */
+function picDuPlan(plan, entree, sortie) {
+  const courbe = clesConnues.get(mediaDe(plan))?.mouvement;
+  if (!courbe?.valeurs?.length || !(courbe.pas > 0)) return null;
+  const a = Math.max(0, Math.floor(entree / courbe.pas));
+  const b = Math.min(courbe.valeurs.length, Math.max(a + 2, Math.ceil(sortie / courbe.pas)));
+  let ou = -1;
+  let haut = -1;
+  for (let i = a; i < b; i += 1) {
+    if (courbe.valeurs[i] > haut) { haut = courbe.valeurs[i]; ou = i; }
+  }
+  if (ou < 0 || haut <= 0) return null;
+  const quand = (ou + 0.5) * courbe.pas;
+  // Un pic qui n'est pas dans la fenêtre ne la concerne pas.
+  if (quand <= entree || quand >= sortie) return null;
+  return Math.round(quand * 1000) / 1000;
+}
+
 /* Zéro quand la fenêtre est exactement ce que le passage demande, un quand elle
    n'a rien de ce qu'il demande. Moitié étiquettes, moitié mouvement : les unes
    sans l'autre se tromperaient — un plan étiqueté « fighting » peut être un plan
@@ -20714,10 +20747,16 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
          seulement sur les crêtes que sert un choc. Il est rare par
          construction — sur un morceau ordinaire, deux ou trois coupes. */
       const eclair = partFrappe >= 0.85 && familleDe(choix) === "choc";
+      /* La rampe de vitesse : même condition que l'éclair, plus un pic qu'on sait
+         situer. C'est le runner qui l'exécute — le téléphone ne fait que dire où
+         le coup part. Sans pic, pas de rampe : un ralenti posé au hasard dans le
+         plan étire un geste qui n'existe pas. */
+      const pic = eclair ? picDuPlan(choix, bornes.entree, bornes.sortie) : null;
       montage.push({
         ...choix,
         ...bornes,
         ...(eclair ? { eclair: true } : {}),
+        ...(pic !== null ? { pic } : {}),
         id: `${idRush(choix)}#${Date.now().toString(36)}${(compteurCoupes += 1).toString(36)}`,
         rush: idRush(choix),
         __pris: undefined,
