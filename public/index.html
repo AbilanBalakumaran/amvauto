@@ -2340,7 +2340,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 10:35";
+const VERSION_PAGE = "2026-09-21 10:58";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -4239,6 +4239,15 @@ function carteRenduLocal(id, fiche, apres) {
       adresseLocale = URL.createObjectURL(blob);
       return adresseLocale;
     },
+    /* Une adresse d'objet retient le fichier entier tant qu'elle vit. Un rendu
+       de quatre-vingt-dix mégaoctets ouvert puis refermé les gardait pour
+       toute la séance, et trois montages regardés à la suite faisaient trois
+       fois le poids. On la rend quand le lecteur la rend. */
+    liberer: () => {
+      if (!adresseLocale) return;
+      URL.revokeObjectURL(adresseLocale);
+      adresseLocale = "";
+    },
     supprimer: async (bouton) => {
       if (!confirm(`Supprimer le rendu de « ${fiche.nom || "ce montage"} » gardé sur l'appareil ?`)) return false;
       bouton.disabled = true;
@@ -5713,7 +5722,43 @@ function projetDuTunnel() {
   }
   const neuf = creerProjet(titreDuTunnel());
   neuf.tunnel = true;
+  bornerLesProjets(neuf.id);
   return neuf;
+}
+
+/* Combien de montages l'appareil garde, et pourquoi il faut le borner.
+
+   Un montage par musique, et le tunnel en crée un à chaque génération. Tant que
+   l'Historique les listait, on les voyait grossir et on en rangeait ; depuis
+   qu'il ne montre plus que les rendus, ils s'empilent sans que rien ne le dise
+   ni ne les compte. Mesuré au banc : trois générations d'affilée, trois
+   montages — et rien ne les efface jamais.
+
+   Ils ne peuvent pas non plus disparaître tout de suite : la page d'un rendu
+   retrouve SON montage pour l'exporter vers DaVinci et pour sa fiche. Le
+   grenier en garde vingt-quatre ; on en garde quarante, de quoi couvrir chaque
+   rendu et le travail en cours, et l'on jette les plus anciens — jamais celui
+   qu'on tient, jamais celui qui vient de naître. */
+const PROJETS_MAX = 40;
+
+function bornerLesProjets(epargne = "") {
+  if (state.projets.length <= PROJETS_MAX) return 0;
+  const gardes = new Set([state.actif, epargne].filter(Boolean));
+  /* Du plus récent au plus ancien : ce qui part est ce qu'on n'a pas regardé
+     depuis le plus longtemps. « maj » quand elle existe, la création sinon. */
+  const ordre = [...state.projets]
+    .sort((a, b) => (b.maj || b.cree || 0) - (a.maj || a.cree || 0));
+  const partants = ordre.slice(PROJETS_MAX).filter((x) => !gardes.has(x.id));
+  if (!partants.length) return 0;
+  const jetes = new Set(partants.map((x) => x.id));
+  state.projets = state.projets.filter((x) => !jetes.has(x.id));
+  for (const id of jetes) {
+    // Les octets vont avec : un montage effacé ne doit pas laisser sa musique.
+    effacerBase(`musique:${id}`).catch(() => {});
+    effacerBase(`rendu:${id}`).catch(() => {});
+  }
+  sauver();
+  return partants.length;
 }
 
 async function genererLAmv() {
@@ -5967,6 +6012,12 @@ async function genererLAmv() {
           de: `${Math.round(section.debut)}s`, a: `${Math.round(section.fin)}s`,
           energie: section.energie,
           couvert: `${Math.round(tenu)}s`,
+        });
+      }
+      const eclairs = montage.filter((x) => x.eclair).length;
+      if (eclairs) {
+        noter(`${eclairs} éclair${eclairs > 1 ? "s" : ""} d'impact sur les crêtes.`, "", {
+          coupes: eclairs, surQuoi: "frappes ≥ 85 % servies par un choc",
         });
       }
       noter(`Plans : du plus court ${longueurs[0].toFixed(2)} s au plus long`
@@ -6951,6 +7002,7 @@ window.__banc = {
   majVersDeLaTrame: () => majVersDeLaTrame(), ficheDuTunnel: () => ficheDuTunnel(),
   journal: () => journalTunnel, noter: (t, n) => noter(t, n),
   journalEnTexte: () => journalEnTexte(),
+  urlDeLaMusique: () => urlDeLaMusique(), bornerLesProjets: (e) => bornerLesProjets(e),
   rendreHistoire: () => rendreHistoire(), renduOuvert: () => renduOuvert,
   peindreRendusEnLigne: () => peindreRendusEnLigne(),
   blocDuRendu: (r, a, o) => blocDuRendu(r, a, o),
@@ -15673,14 +15725,46 @@ function feuilleDeRoute(projet, musique) {
       // Le nom sert au projet DaVinci : une ligne de temps où chaque plan
       // s'appelle « plan 37 » ne se relit pas.
       nom: String(plan.name || plan.nom || "").slice(0, 60),
+      /* Ce que le plan est, dans la grammaire du montage. Resolve en fait une
+         couleur de clip : un monteur qui ouvre la ligne de temps voit d'un coup
+         d'œil où sont les chocs et où sont les respirations, sans lire un seul
+         nom. */
+      famille: familleDe(plan) || "",
+      /* L'éclair ne part que vers le rendu : l'archive DaVinci doit livrer les
+         rushs tels quels, pour qu'on puisse reprendre le montage. */
+      ...(plan.eclair ? { eclair: true } : {}),
     });
   }
+
+  /* Les frontières des six moments, pour en faire des marqueurs.
+
+     Un AMV de trois minutes, c'est cent coupes : sans repères, le monteur qui
+     reprend le montage doit réécouter pour savoir où le refrain commence. Le
+     découpage, lui, est déjà connu — c'est celui qui a décidé des plans. */
+  const duree = projet.rythme?.duree || 0;
+  const sections = projet.rythme?.sections || [];
+  const frappes = projet.rythme?.instruments?.[projet.rythme?.instrument] || [];
+  const reperes = sections.map((section, rang) => {
+    const dedans = frappes.filter((f) => f.quand >= section.debut && f.quand < section.fin);
+    const force = dedans.length
+      ? dedans.reduce((somme, f) => somme + (f.force || 0), 0) / dedans.length : 0;
+    return {
+      quand: Math.round((section.debut || 0) * 1000) / 1000,
+      phase: phaseDuMontage(section, rang, sections, duree),
+      emotion: section.emotion || "",
+      energie: section.energie ?? 2,
+      force: Math.round(force * 100) / 100,
+    };
+  });
+
   return {
     feuille: {
       cadence: IMAGES_PAR_SECONDE,
       largeur: t.largeur - (t.largeur % 2),
       hauteur: t.hauteur - (t.hauteur % 2),
       ...(musique ? { musique } : {}),
+      ...(projet.rythme?.bpm ? { bpm: Math.round(projet.rythme.bpm) } : {}),
+      ...(reperes.length ? { reperes } : {}),
       plans,
     },
     ecartes,
@@ -17833,6 +17917,7 @@ function blocDuRendu(rendu, acces, { retour = null, supprimer = false } = {}) {
       lecteur.pause();
       lecteur.removeAttribute("src");
       lecteur.load();
+      acces.liberer?.();
       if (lecteurHistoire === refermer) lecteurHistoire = null;
     };
     lecteurHistoire?.();
@@ -20039,9 +20124,14 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
          Le lien vers la source est gardé à part, dans « rush » : c'est lui qui
          dit à l'explorateur qu'un rush est déjà dans le projet, et c'est la même
          mécanique que celle d'un plan coupé à la main. */
+      /* L'éclair d'impact : une image blanche sur la première du plan, et
+         seulement sur les crêtes que sert un choc. Il est rare par
+         construction — sur un morceau ordinaire, deux ou trois coupes. */
+      const eclair = partFrappe >= 0.85 && familleDe(choix) === "choc";
       montage.push({
         ...choix,
         ...bornes,
+        ...(eclair ? { eclair: true } : {}),
         id: `${idRush(choix)}#${Date.now().toString(36)}${(compteurCoupes += 1).toString(36)}`,
         rush: idRush(choix),
         __pris: undefined,

@@ -70,7 +70,7 @@ def ffmpeg(*arguments):
         raise RuntimeError(f"ffmpeg a refusé : {fait.stderr.strip()[:400]}")
 
 
-def decouper(source, entree, sortie, vers, cadence, largeur, hauteur):
+def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, eclair=False):
     """Un plan, normalisé au cadre commun.
 
     On réencode ici, et c'est voulu : les rushs viennent de sources différentes,
@@ -79,16 +79,28 @@ def decouper(source, entree, sortie, vers, cadence, largeur, hauteur):
     Le runner a le temps ; le téléphone ne l'avait pas.
     """
     duree = max(0.05, float(sortie) - float(entree))
+    filtres = [
+        f"scale={largeur}:{hauteur}:force_original_aspect_ratio=decrease",
+        f"pad={largeur}:{hauteur}:(ow-iw)/2:(oh-ih)/2:color=black",
+        f"fps={cadence}",
+        "setsar=1",
+    ]
+    if eclair:
+        # L'éclair d'impact : une seule image blanche, sur la première du plan.
+        #
+        # Elle REMPLACE l'image, elle ne s'insère pas. Une image ajoutée
+        # décalerait tout ce qui suit d'un vingt-quatrième de seconde, et vingt
+        # éclairs dans un morceau de trois minutes, c'est presque une seconde de
+        # décalage entre l'image et le son — exactement ce que tout le reste du
+        # montage s'échine à éviter.
+        filtres.append(
+            f"drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='lt(t,{1 / cadence:.4f})'")
     ffmpeg(
         "-ss", f"{float(entree):.3f}",
         "-i", source,
         "-t", f"{duree:.3f}",
         "-an",
-        "-vf", (
-            f"scale={largeur}:{hauteur}:force_original_aspect_ratio=decrease,"
-            f"pad={largeur}:{hauteur}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            f"fps={cadence},setsar=1"
-        ),
+        "-vf", ",".join(filtres),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
@@ -146,7 +158,7 @@ def main():
                 rapatries[adresse] = telecharger(adresse, vers)
             morceau = os.path.join(dossier, f"plan{rang:04d}.mp4")
             decouper(rapatries[adresse], plan["entree"], plan["sortie"],
-                     morceau, cadence, largeur, hauteur)
+                     morceau, cadence, largeur, hauteur, bool(plan.get("eclair")))
             morceaux.append(morceau)
             print(f"plan {rang + 1}/{len(plans)}", flush=True)
 

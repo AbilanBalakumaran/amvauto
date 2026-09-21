@@ -78,7 +78,68 @@ def echapper(texte):
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
-def xmeml(nom, coupes, cadence, largeur, hauteur, musique):
+"""La couleur d'un clip, d'après ce que le plan est.
+
+   Final Cut 7 range les couleurs dans « labels/label2 », et c'est ce que
+   Resolve lit à l'import pour peindre ses clips. On s'en tient donc aux noms de
+   cette liste-là : une valeur inventée serait ignorée — au mieux.
+
+   Le code couleur suit la grammaire du montage, pour qu'une ligne de temps se
+   lise sans ouvrir un seul plan : le choc en rouge, l'élan en jaune, la
+   retombée en violet, le calme en vert.
+"""
+COULEURS = {
+    "choc": "Rose",        # le rouge de Final Cut, « Pink » côté Resolve
+    "elan": "Lemon",       # jaune
+    "suite": "Lavender",   # la dispersion : violet
+    "calme": "Forest",     # vert
+}
+
+# Les six moments, et ce qu'un marqueur en dit. Resolve montre le nom sur la
+# règle et le commentaire au survol.
+PHASES = {
+    "intro": "Intro — on pose",
+    "couplet": "Couplet — on raconte",
+    "montee": "Montée — on accélère",
+    "drop": "Drop — on frappe",
+    "retombee": "Retombée — on laisse redescendre",
+    "outro": "Outro — on conclut",
+}
+
+
+def marqueurs(reperes, cadence, bpm, fin):
+    """Les marqueurs de structure, au format des marqueurs de séquence FCP7.
+
+    Ils se posent sur la séquence, pas sur les clips : un marqueur de structure
+    appartient à la ligne de temps, et il doit survivre au déplacement du plan
+    qui se trouve dessous.
+    """
+    lignes = []
+    for repere in reperes or []:
+        quand = float(repere.get("quand") or 0)
+        if quand < 0 or quand > fin:
+            continue
+        phase = str(repere.get("phase") or "")
+        nom = PHASES.get(phase, phase or "Passage")
+        detail = []
+        if bpm:
+            detail.append(f"{int(round(bpm))} BPM")
+        if repere.get("force") is not None:
+            detail.append(f"force moyenne {float(repere['force']):.2f}")
+        if repere.get("emotion"):
+            detail.append(str(repere["emotion"]))
+        lignes += [
+            "    <marker>",
+            f"      <name>{echapper(nom)}</name>",
+            f"      <comment>{echapper(' · '.join(detail))}</comment>",
+            f"      <in>{images(quand, cadence)}</in>",
+            "      <out>-1</out>",
+            "    </marker>",
+        ]
+    return lignes
+
+
+def xmeml(nom, coupes, cadence, largeur, hauteur, musique, reperes=None, bpm=0):
     """La ligne de temps, au format que Resolve lit le mieux.
 
     Les adresses sont relatives au fichier XML : l'archive se déplace d'un
@@ -122,8 +183,13 @@ def xmeml(nom, coupes, cadence, largeur, hauteur, musique):
             f"                <width>{largeur}</width><height>{hauteur}</height>",
             "              </samplecharacteristics></video></media>",
             "            </file>",
-            "          </clipitem>",
         ]
+        couleur = COULEURS.get(coupe.get("famille") or "")
+        if couleur:
+            lignes += ["            <labels>",
+                       f"              <label2>{couleur}</label2>",
+                       "            </labels>"]
+        lignes += ["          </clipitem>"]
         position += coupe["duree"]
 
     lignes += ["        </track>", "      </video>"]
@@ -150,13 +216,49 @@ def xmeml(nom, coupes, cadence, largeur, hauteur, musique):
             "        </track>", "      </audio>",
         ]
 
-    lignes += ["    </media>", "  </sequence>", "</xmeml>", ""]
+    lignes += ["    </media>"]
+    lignes += marqueurs(reperes, cadence, bpm, fin)
+    lignes += ["  </sequence>", "</xmeml>", ""]
     return "\n".join(lignes)
 
 
-def edl(nom, coupes, cadence):
-    """La même chose en CMX3600 : une liste de coupes, lisible partout."""
+# Les couleurs de repère que Resolve reconnaît dans une EDL. Ce ne sont pas les
+# mêmes noms qu'en XML : côté EDL, il attend « ResolveColor » suivi de la
+# couleur.
+# Et la couleur d'un repère de structure, par moment : on retrouve le code de
+# la grammaire — la montée en jaune, le drop en rouge, la retombée en violet.
+COULEURS_PHASE = {
+    "intro": "ResolveColorGreen",
+    "couplet": "ResolveColorBlue",
+    "montee": "ResolveColorYellow",
+    "drop": "ResolveColorRed",
+    "retombee": "ResolveColorPurple",
+    "outro": "ResolveColorGreen",
+}
+
+COULEURS_EDL = {
+    "choc": "ResolveColorRed",
+    "elan": "ResolveColorYellow",
+    "suite": "ResolveColorPurple",
+    "calme": "ResolveColorGreen",
+}
+
+
+def edl(nom, coupes, cadence, reperes=None, bpm=0):
+    """La même chose en CMX3600 : une liste de coupes, lisible partout.
+
+    Les repères de structure y sont posés en localisateurs, à la syntaxe que
+    Resolve lit — « |C:couleur |M:nom » sur la ligne qui suit la coupe. Une
+    EDL n'a pas de marqueur de séquence : le repère s'accroche donc à la
+    première coupe qui commence après lui, ce qui revient au même à l'image
+    près.
+    """
     lignes = [f"TITLE: {nom}", "FCM: NON-DROP FRAME", ""]
+    if bpm:
+        lignes.insert(1, f"* TEMPO: {int(round(bpm))} BPM")
+    aPoser = sorted(
+        [r for r in (reperes or []) if r.get("phase")],
+        key=lambda r: float(r.get("quand") or 0))
     position = 0.0
     for rang, coupe in enumerate(coupes):
         src_debut = coupe["marge"]
@@ -166,6 +268,20 @@ def edl(nom, coupes, cadence):
             f"{timecode(src_debut, cadence)} {timecode(src_fin, cadence)} "
             f"{timecode(position, cadence)} {timecode(position + coupe['duree'], cadence)}")
         lignes.append(f"* FROM CLIP NAME: {coupe['fichier']}")
+        couleur = COULEURS_EDL.get(coupe.get("famille") or "")
+        if couleur:
+            lignes.append(f"* CLIP COLOR: {couleur}")
+        # Les repères que cette coupe recouvre : ils deviennent ses localisateurs.
+        while aPoser and float(aPoser[0].get("quand") or 0) < position + coupe["duree"]:
+            repere = aPoser.pop(0)
+            titre = PHASES.get(repere.get("phase"), repere.get("phase") or "Passage")
+            detail = f"{int(round(bpm))} BPM" if bpm else ""
+            if repere.get("force") is not None:
+                detail = f"{detail} force {float(repere['force']):.2f}".strip()
+            lignes.append(f" |C:{COULEURS_PHASE.get(repere.get('phase'), 'ResolveColorBlue')}"
+                          f" |M:{titre} |D:1")
+            if detail:
+                lignes.append(f"* MARKER NOTE: {detail}")
         lignes.append("")
         position += coupe["duree"]
     return "\n".join(lignes)
@@ -260,6 +376,7 @@ def main():
                 "marge": entree - depart,
                 "source": max(0.08, arret - depart),
                 "cadence": cadence,
+                "famille": plan.get("famille") or "",
             })
             print(f"plan {rang + 1}/{len(plans)}", flush=True)
 
@@ -276,9 +393,11 @@ def main():
 
         total = sum(c["duree"] for c in coupes)
         with open(os.path.join(dossier, "Montage.xml"), "w", encoding="utf-8") as f:
-            f.write(xmeml(nom, coupes, cadence, largeur, hauteur, musique))
+            f.write(xmeml(nom, coupes, cadence, largeur, hauteur, musique,
+                          montage.get("reperes"), montage.get("bpm") or 0))
         with open(os.path.join(dossier, "Montage.edl"), "w", encoding="utf-8") as f:
-            f.write(edl(nom, coupes, cadence))
+            f.write(edl(nom, coupes, cadence,
+                        montage.get("reperes"), montage.get("bpm") or 0))
         with open(os.path.join(dossier, "LISEZ-MOI.txt"), "w", encoding="utf-8") as f:
             f.write(LISEZMOI.format(nom=nom, plans=len(coupes),
                                     duree=f"{int(total // 60)} min {int(total % 60):02d}",
