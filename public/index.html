@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 18:31";
+const VERSION_PAGE = "2026-09-21 21:36";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6261,6 +6261,52 @@ async function genererLAmv() {
           coupesAjoutees: 0,
         });
       }
+      /* La redite, mesurée sur le montage rendu et non sur une intention.
+
+         Deux blocs sont « le même plan » quand ils viennent du même rush et que
+         leurs fenêtres se recouvrent. Zéro est la seule valeur acceptable, et
+         c'est la ligne qu'un jury regarderait d'abord. */
+      const parRush = new Map();
+      for (const bloc of montage) {
+        const cle = String(bloc.rush ?? bloc.id).split("#")[0];
+        if (!parRush.has(cle)) parRush.set(cle, []);
+        parRush.get(cle).push(bloc);
+      }
+      let identiques = 0;
+      let pireEmploi = 0;
+      for (const [, blocs] of parRush) {
+        pireEmploi = Math.max(pireEmploi, blocs.length);
+        for (let i = 0; i < blocs.length; i += 1) {
+          for (let j = i + 1; j < blocs.length; j += 1) {
+            if (blocs[i].entree < blocs[j].sortie && blocs[i].sortie > blocs[j].entree) {
+              identiques += 1;
+            }
+          }
+        }
+      }
+      noter(`Redites : ${identiques} plan${identiques > 1 ? "s" : ""} identique${identiques > 1 ? "s" : ""}`
+        + ` · ${parRush.size} scènes pour ${montage.length} coupes`
+        + ` · au pire ${pireEmploi} emploi${pireEmploi > 1 ? "s" : ""} d'une même scène`,
+      identiques ? "alerte" : "fait", {
+        identiques,
+        scenesDistinctes: `${parRush.size}/${montage.length}`,
+        pireEmploi,
+        margeInterdite: `${MARGE_REDITE}s`,
+        // Le nombre de fois où la règle a dû céder : au-delà de zéro, le
+        // catalogue n'avait pas assez de matière pour la musique.
+        regleCedee: projet.__redites || 0,
+      });
+      if (projet.__redites) {
+        const matiere = Math.round(surs.reduce((s, r) => s + (dureeSource(r) || 0), 0));
+        noter(`Le catalogue n'a pas assez de matière : ${matiere} s de source pour`
+          + ` ${Math.round(tunnel.rythme.duree)} s de musique.`
+          + " Des plans se répètent, faute de mieux.", "alerte", {
+          matiere: `${matiere}s`,
+          musique: `${Math.round(tunnel.rythme.duree)}s`,
+          cedee: projet.__redites,
+          quoiFaire: "élargir la pioche, ou accepter la répétition",
+        });
+      }
       const bandes = projet.__bandes;
       if (bandes && (bandes.grave || bandes.jugees)) {
         const retirees = Math.max(0, bandes.dansLaVoix - bandes.dansLaVoixTenu);
@@ -7251,6 +7297,8 @@ window.__banc = {
   rendreProjet: () => rendreProjet(),
   tunnel: () => tunnel, rendreCreer: () => rendreCreer(),
   fenetreDans: (...a) => fenetreDans(...a), clesConnues: () => clesConnues,
+  reserver: (...a) => reserver(...a), dejaVue: (...a) => dejaVue(...a),
+  rushEpuise: (...a) => rushEpuise(...a),
   clignement: () => clignement(), absence: () => absence,
   retirerLaPastille: () => retirerLaPastille(), marquerPastille: (n) => marquerPastille(n),
   arreterEcoute: () => arreterEcoute(),
@@ -20126,7 +20174,162 @@ function ecartDIntention(plan, section, entree, sortie) {
   return 1 - Math.max(0, Math.min(1, note));
 }
 
-function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null, moments = null) {
+/* ---- La réservation des intervalles source -------------------------------
+
+   LE défaut qui gâche un visionnage : le même plan exact — mêmes images, même
+   départ, même action — qui revient quatre ou cinq fois. Mesuré au banc avant
+   correction, c'était bien pire : jusqu'à vingt-six emplois d'un même rush,
+   quarante-six pour cent de recouvrement temporel, cent dix-huit paires de
+   fenêtres qui montrent les mêmes images.
+
+   Le garde-fou existait et ne pouvait pas marcher : il comparait des instants
+   d'entrée EXACTS — `rush@12.34` — si bien que deux fenêtres distantes d'un
+   dixième de seconde passaient toutes les deux. Or elles montrent la même chose.
+
+   On ne garde donc plus des instants, mais des INTERVALLES, élargis d'une marge
+   de sécurité de part et d'autre. Une fenêtre `[a, z]` posée bannit
+   `[a − 1,5 s, z + 1,5 s]` pour tout le reste du montage, irrévocablement. Deux
+   coupes du même rush sont dès lors soit franchement différentes, soit
+   impossibles — il n'y a plus de zone grise.
+
+   Et quand un rush n'a plus un seul intervalle libre, il est ÉPUISÉ : il sort
+   des candidats au lieu de rendre une fenêtre déjà vue. C'est la deuxième moitié
+   de la correction, et sans elle la première ne servirait à rien.
+
+   Ce que cela coûte, et qui est assumé : un rush de trois secondes n'offre qu'un
+   seul intervalle, donc un seul emploi. Un catalogue de trente rushs de trois
+   secondes — quatre-vingt-dix secondes de matière — ne peut pas couvrir trois
+   minutes de musique sans répéter. Là, et là seulement, la règle cède, et le
+   journal le dit en clair plutôt que de rendre un montage qui bégaie sans
+   prévenir. */
+const MARGE_REDITE = 1.5;
+/* Les plafonds d'emploi, tels qu'un jury les attend.
+
+   Un rush court n'a rien d'autre à montrer : une fois posé, il est fini. Un rush
+   long peut resservir, mais pas n'importe comment — la seconde coupe doit être
+   loin dans la source ET tomber dans un autre moment du morceau, sans quoi deux
+   coupes voisines du même rush se suivent dans le même drop. */
+const COURT_UNE_FOIS = 4;
+const LONG_ASSEZ = 8;
+const ECART_SECONDE_COUPE = 4;
+
+/* Ce qu'un rush a déjà donné : la liste de ses intervalles pris, et les moments
+   du morceau où il a servi. */
+function prisesDe(prises, plan) {
+  return prises?.get(String(idRush(plan))) || null;
+}
+
+function reserver(prises, plan, entree, sortie, phase) {
+  if (!prises) return;
+  const cle = String(idRush(plan));
+  if (!prises.has(cle)) prises.set(cle, { bandes: [], phases: [] });
+  const sien = prises.get(cle);
+  sien.bandes.push([entree, sortie]);
+  if (phase) sien.phases.push(phase);
+}
+
+// Vrai quand cette fenêtre empiète sur une bande déjà prise, marge comprise.
+function dejaVue(prises, plan, entree, sortie) {
+  const sien = prisesDe(prises, plan);
+  if (!sien) return false;
+  return sien.bandes.some(([a, z]) =>
+    entree < z + MARGE_REDITE && sortie > a - MARGE_REDITE);
+}
+
+/* Un rush épuisé : plus aucune fenêtre de la tenue voulue n'y tient sans
+   recouvrir ce qui a déjà servi. On le sort des candidats — c'est ce qui empêche
+   le montage de rejouer les mêmes images faute de mieux.
+
+   Les plafonds d'emploi passent avant : un rush court est fini dès la première
+   coupe, et un rush long refuse une troisième coupe, ou une seconde qui serait
+   trop près de la première, ou une seconde dans le même moment du morceau. */
+function rushEpuise(plan, prises, tenue, phase = "") {
+  const sien = prisesDe(prises, plan);
+  if (!sien || !sien.bandes.length) return false;
+  const source = dureeSource(plan);
+  if (!(source > 0)) return true;
+
+  /* Plafond d'emploi.
+
+     Un rush de moins de quatre secondes n'a rien d'autre à montrer : une fois
+     posé, il est fini. C'est une règle dure.
+
+     Au-delà, le plafond est DÉDUIT de la source au lieu d'être figé : un rush de
+     douze secondes porte trois fenêtres franchement distinctes, et les employer
+     n'est pas une redite — c'est ce que fait un monteur avec un long plan. Un
+     plafond figé à deux, lui, forçait la redite ailleurs : mesuré, cinquante rushs
+     plafonnés à deux ne fournissent que cent emplois là où le montage en demande
+     cent quatre-vingt-dix-sept, et le manque se payait en plans rejoués.
+
+     Deux conditions tiennent quand même, et ce sont celles qui se voient : chaque
+     nouvelle coupe doit être à quatre secondes au moins de toutes les précédentes
+     DANS la source, et tomber dans un autre moment du morceau. Deux coupes du
+     même rush dans le même drop se suivent de trop près pour qu'on ne les
+     reconnaisse pas. */
+  if (source < COURT_UNE_FOIS) return true;
+  const combienDejaFait = sien.bandes.length;
+  /* Combien de fenêtres distinctes la source admet VRAIMENT, marge comprise :
+     deux fenêtres voisines doivent être séparées de la tenue plus la marge. Un
+     plafond choisi à la main serait plus strict que nécessaire, et cette
+     sur-sévérité se paie ailleurs — mesuré, cinquante rushs plafonnés à trois ne
+     fournissent que cent cinquante emplois là où le montage en demande cent
+     quatre-vingt-dix-sept, et le manque revenait en plans rejoués. */
+  const pasEntreDeux = Math.max(0.2, tenue + MARGE_REDITE);
+  const plafond = Math.max(1, Math.floor((source - tenue) / pasEntreDeux) + 1);
+  if (combienDejaFait >= plafond) return true;
+  if (source < LONG_ASSEZ && combienDejaFait >= 1) return true;
+  // Jamais deux fois dans le même moment du morceau : deux coupes du même rush
+  // dans le même drop se suivent de trop près pour qu'on ne les reconnaisse pas.
+  if (phase && sien.phases.includes(phase)) return true;
+
+  return !placeLibreDans(sien.bandes, source, tenue);
+}
+
+/* Reste-t-il un intervalle libre de la tenue voulue, marge comprise ?
+
+   La première version balayait la source par pas d'un quart de coupe et appelait
+   « dejaVue » à chaque pas — donc, pour chaque candidat de chaque coupe, quelques
+   dizaines de tests sur toutes les bandes. Mesuré sur le vrai catalogue : le
+   calcul du tunnel est passé de deux dixièmes de seconde à DIX-NEUF secondes.
+   C'est le genre de coût qu'on ne voit pas en écrivant, et qui rend l'outil
+   inutilisable sur un téléphone.
+
+   La même question se répond par arithmétique, sur les bandes triées : entre deux
+   bandes consécutives, l'espace disponible est le trou moins deux marges. Trois
+   ou quatre bandes par rush, donc une poignée de comparaisons au lieu de
+   quelques dizaines de balayages. */
+function placeLibreDans(bandes, source, tenue) {
+  if (!bandes.length) return source >= tenue;
+  /* Une marge d'un quart de coupe en plus de la tenue, et ce n'est pas un détail.
+
+     « fenetreDans » ne teste pas n'importe quel instant : il essaie les
+     images-clés, les cases de la découpe dispersée, puis un balayage par pas d'un
+     quart de coupe. Un trou qui fait exactement la tenue peut donc exister sans
+     qu'aucun de ces points d'entrée n'y tombe.
+
+     Répondre « oui » dans ce cas est le pire des deux : l'ordonnanceur garde le
+     rush, la fenêtre se révèle introuvable, et après quelques essais on cède à la
+     redite. Mesuré, c'était deux ou trois plans rejoués par montage — peu, mais
+     ils se voient. On exige donc un trou franchement plus large que la tenue, ce
+     qui fait renoncer un peu plus tôt à un rush et n'a aucun autre coût. */
+  const besoin = tenue + Math.max(0.08, tenue / 4);
+  const triees = [...bandes].sort((a, b) => a[0] - b[0]);
+  // Avant la première bande.
+  if (triees[0][0] - MARGE_REDITE >= besoin) return true;
+  // Entre deux bandes.
+  for (let i = 1; i < triees.length; i += 1) {
+    const depuis = triees[i - 1][1] + MARGE_REDITE;
+    const jusqu = triees[i][0] - MARGE_REDITE;
+    if (jusqu - depuis >= besoin) return true;
+  }
+  // Après la dernière. Les bandes peuvent se chevaucher entre elles — le mode non
+  // strict en pose —, donc on prend la fin la plus tardive.
+  const finMax = triees.reduce((m, [, z]) => Math.max(m, z), 0);
+  return source - (finMax + MARGE_REDITE) >= besoin;
+}
+
+function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null,
+  moments = null, strict = false) {
   const source = dureeSource(plan);
   if (!(source > 0) || source < PLAN_MINI) return null;
   const tenue = Math.min(duree, Math.max(PLAN_MINI, source));
@@ -20188,8 +20391,11 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null
       for (const t of proches) {
         if (meilleure === null || Math.abs(t - entree) < Math.abs(meilleure - entree)) meilleure = t;
       }
-      if (meilleure !== null && Math.abs(meilleure - entree) <= tenue / 2) return rendre(meilleure);
+      if (meilleure !== null && Math.abs(meilleure - entree) <= tenue / 2
+        && (!strict || libre(meilleure))) return rendre(meilleure);
     }
+    // Le pic lui-même peut avoir déjà servi : en strict, on ne le rejoue pas.
+    if (strict && !libre(entree)) return null;
     return rendre(entree);
   }
 
@@ -20212,7 +20418,10 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null
      une redite. On écarte donc les entrées déjà servies avant de classer ; s'il
      n'en reste aucune, on reprend le classement complet — la musique passe
      devant, mais la fenêtre sera au moins la moins mauvaise. */
-  const libre = (entree) => !moments || !moments.has(`${idRush(plan)}@${(Math.round(entree * 1000) / 1000).toFixed(2)}`);
+  /* Une fenêtre est libre quand elle n'empiète sur aucune bande déjà prise, marge
+     de sécurité comprise. C'est ici que la correction opère : le test portait sur
+     l'instant d'entrée exact, il porte sur l'intervalle. */
+  const libre = (entree) => !dejaVue(moments, plan, entree, finDeScene(entree));
 
   /* Une fenêtre qui ne traverse aucun changement de plan passe avant toutes les
      autres, quelle que soit son intention.
@@ -20231,6 +20440,8 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null
 
   const cases = casesUtiles(plan, tenue, graine);
   const ouvertes = cases ? cases.filter(libre) : [];
+  /* En strict, une case déjà vue n'est pas une option : on ne retombe pas sur le
+     classement complet, on passe à la découpe régulière puis au refus. */
   if (ouvertes.length) {
     if (!section) return rendre(ouvertes[pris % ouvertes.length]);
     const classees = ouvertes
@@ -20269,10 +20480,19 @@ function fenetreDans(plan, duree, viserLePic = false, graine = 0, section = null
     const candidate = Math.round(t * 1000) / 1000;
     if (libre(candidate)) return rendre(candidate);
   }
+  /* Plus rien de libre dans ce rush.
+
+     En mode strict — les deux premiers tours de l'ordonnanceur — on REFUSE, et
+     c'est le cœur de la correction anti-redite : refuser laisse l'ordonnanceur
+     essayer un autre rush, là où rendre une fenêtre déjà vue rejouait les mêmes
+     images. Le montage n'a un trou que si TOUT le catalogue est épuisé, et dans
+     ce cas c'est le troisième tour qui repasse sans strict.
+
+     Hors strict, on rend quand même quelque chose : tenir la musique vaut mieux
+     qu'un trou, et le journal dit que la règle a cédé. */
+  if (strict) return null;
   const place = ordre[pris % combien];
-  // Centré dans sa case : un morceau collé au bord en mordrait un autre. Et si
-  // même cet instant a servi, c'est que la source est épuisée : tenir la musique
-  // vaut mieux qu'un trou.
+  // Centré dans sa case : un morceau collé au bord en mordrait un autre.
   const milieu = place * pas + pas / 2;
   const entree = Math.max(0, Math.min(milieu - tenue / 2, source - tenue));
   return rendre(entree);
@@ -20782,6 +21002,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
      climax n'aurait plus rien de particulier. */
   const axe = axeDeLaSerie(sources);
   projet.__axe = axe;
+  projet.__redites = 0;
   const chrono = ordre === "chrono";
   const suite = chrono ? [...sources].sort(parChronologie) : null;
   let rangSuite = 0;
@@ -20835,7 +21056,10 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
      Ce qui reste interdit, donc : le même moment deux fois. Ce qui devient
      possible : le même fichier, ailleurs. */
   const dejaPris = new Set();
-  const momentsPris = new Set();
+  /* Les intervalles source déjà posés, par rush. Une Map de bandes, et non un
+     ensemble d'instants : c'est tout l'objet de la correction anti-redite. */
+  const momentsPris = new Map();
+  let cedeALaRedite = 0;
 
   /* Ce que chaque section voudrait, si les scènes ne manquaient pas. */
   const voulues = sections.map((section) => {
@@ -20968,6 +21192,23 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       const precedent = montage[montage.length - 1];
       const charniere = charniereAPoser && !bord;
       let choix = null;
+      // Quel tour a fourni le plan : c'est lui qui décide si la fenêtre se
+      // cherche en strict.
+      let tourRetenu = 2;
+      /* Les rushs que ce tour-ci a dû écarter : « placeLibreDans » répond par
+         arithmétique et peut être un peu optimiste — une fenêtre existe sur le
+         papier, mais « fenetreDans » ne la trouve pas parce que ses points
+         d'entrée sont les images-clés et les cases, pas n'importe quel instant.
+         Plutôt que d'accepter une redite, on écarte ce rush pour cette coupe et
+         l'on en choisit un autre. */
+      const refuses = new Set();
+
+      /* Le choix du plan, extrait pour pouvoir être REDEMANDÉ.
+
+         Il ne l'était pas, et il le faut : quand la fenêtre d'un rush se révèle
+         introuvable, il faut pouvoir en choisir un autre plutôt que d'accepter de
+         rejouer des images. */
+      const choisirUnPlan = () => {
       if (chrono) {
         /* Même en chronologie, un épisode ne s'étale pas : passé son budget, on
            avance dans la série au lieu de s'attarder. C'est d'ailleurs ce qu'un
@@ -20990,10 +21231,39 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       } else {
         /* Deux tours : les scènes neuves, puis toutes. Le premier tour est la
            règle, le second la promesse de couvrir la musique. */
-        for (const neuvesSeulement of [true, false]) {
+        /* Quatre tours, et l'ordre compte.
+
+           0. les scènes neuves — la règle ;
+           1. celles qui ont déjà servi mais gardent un intervalle libre ET
+              restent sous leur plafond d'emploi ;
+           2. celles qui ont dépassé le plafond mais gardent un intervalle libre ;
+           3. tout, y compris ce qui se répétera — le tout dernier recours.
+
+           La séparation du deuxième et du troisième tour est ce qui a fait tomber
+           les dernières redites. Le plafond d'emploi est plus strict que
+           l'interdiction de recouvrement : un rush peut avoir atteint son plafond
+           alors qu'il lui reste des secondes jamais montrées. Confondre les deux
+           faisait sauter les DEUX règles d'un coup, et le montage rejouait des
+           images alors qu'il en restait de neuves à trois secondes de là.
+
+           Le quatrième tour ne se franchit que lorsque le catalogue n'a
+           réellement pas assez de matière — trente rushs de trois secondes, c'est
+           quatre-vingt-dix secondes pour trois minutes de musique — et le journal
+           le dit en clair. */
+        for (const tour of [0, 1, 2, 3]) {
           let meilleure = Infinity;
           for (const plan of sources) {
-            if (neuvesSeulement && dejaPris.has(String(idRush(plan)))) continue;
+            if (tour < 3 && refuses.has(String(idRush(plan)))) continue;
+            if (tour === 0 && dejaPris.has(String(idRush(plan)))) continue;
+            if (tour <= 1 && rushEpuise(plan, momentsPris, vise, bord ? "" : phase)) continue;
+            /* Au deuxième tour on lève le plafond, pas la réservation : il faut
+               qu'une fenêtre libre existe vraiment dans ce rush. La question se
+               répond sur les bandes triées, sans chercher la fenêtre elle-même —
+               la chercher ici coûtait dix-neuf secondes de calcul. */
+            if (tour === 2) {
+              const sien = prisesDe(momentsPris, plan);
+              if (sien && !placeLibreDans(sien.bandes, dureeSource(plan), vise)) continue;
+            }
             /* Deux blocs de suite venus du même rush, c'est le plan d'origine qui
                réapparaît : exactement ce qu'un mashup doit éviter. La règle est
                dure, pas une pénalité — sauf s'il n'y a rien d'autre. */
@@ -21006,19 +21276,47 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
               charniere) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
-          if (choix) break;
+          if (choix) { tourRetenu = tour; if (tour === 3) cedeALaRedite += 1; break; }
         }
         /* Il ne reste qu'une source dans tout le projet : la règle « pas deux
            fois de suite la même » ne peut plus être tenue, et tenir la musique
            vaut mieux que la tenir. */
         if (!choix && precedent) {
-          choix = sources.find((plan) => dureeSource(plan) >= PLAN_MINI) || null;
+          choix = sources.find((plan) => dureeSource(plan) >= PLAN_MINI
+            && !refuses.has(String(idRush(plan)))) || null;
         }
       }
+      };
+      choisirUnPlan();
       if (!choix) break;
 
-      const bornes = fenetreDans(choix, vise, (fort || vu.energie >= 2) && !choix.__picVu,
-        graine, vu, momentsPris);
+      /* En strict pour les deux premiers tours : une fenêtre déjà vue se refuse, et
+         l'ordonnanceur essaie ailleurs. Le troisième tour l'accepte, et le journal
+         le dit. */
+      /* En strict tant qu'on n'est pas au dernier tour : une fenêtre déjà vue se
+         refuse. Un refus n'abandonne pas la case — cela laisserait un trou dans la
+         musique — mais il n'accepte pas la redite non plus : on écarte ce rush et
+         l'on redemande un candidat. Six essais suffisent largement ; au-delà, on
+         cède et le journal le compte. */
+      let bornes = fenetreDans(choix, vise, (fort || vu.energie >= 2) && !choix.__picVu,
+        graine, vu, momentsPris, tourRetenu <= 2);
+      for (let essai = 0; !bornes && essai < 12 && tourRetenu <= 2; essai += 1) {
+        refuses.add(String(idRush(choix)));
+        choix = null;
+        // Et NON « tourRetenu = 3 » : le forcer désactivait le mode strict de
+        // l'essai suivant, donc le réessai acceptait la redite qu'il devait
+        // éviter. C'est « choisirUnPlan » qui dit de quel tour vient le plan.
+        tourRetenu = 2;
+        choisirUnPlan();
+        if (!choix) break;
+        bornes = fenetreDans(choix, vise, (fort || vu.energie >= 2) && !choix.__picVu,
+          graine, vu, momentsPris, tourRetenu <= 2);
+      }
+      if (!bornes && choix) {
+        cedeALaRedite += 1;
+        bornes = fenetreDans(choix, vise, (fort || vu.energie >= 2) && !choix.__picVu,
+          graine, vu, momentsPris, false);
+      }
       if (!bornes) break;
       // Combien de plans d'affilée dans la même famille : c'est ce qui rend le
       // sur-place de plus en plus coûteux.
@@ -21089,7 +21387,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
       if (charniere) charniereAPoser = false;
       choix.__pris = (choix.__pris || 0) + 1;
       dejaPris.add(String(idRush(choix)));
-      momentsPris.add(`${idRush(choix)}@${bornes.entree.toFixed(2)}`);
+      reserver(momentsPris, choix, bornes.entree, bornes.sortie, bord ? "" : phase);
       vus.set(choix.id, rang);
       const cle = cleEpisode(choix);
       budgets.set(cle, (budgets.get(cle) || 0) + pose);
@@ -21106,9 +21404,31 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
     const manque = section.fin - curseur;
     if (dernier && manque > 0.01) {
       const marge = TENUE_MAX - (dernier.sortie - dernier.entree);
-      const place = Math.min(manque, marge, dureeSource(dernier) - dernier.sortie);
+      let place = Math.min(manque, marge, dureeSource(dernier) - dernier.sortie);
+      /* L'allongement ne doit pas entrer dans une bande réservée ailleurs.
+
+         C'était une fuite de l'anti-redite : la fenêtre était réservée à sa
+         longueur d'origine, puis on l'allongeait pour combler la section — et
+         elle recouvrait alors une autre coupe du même rush. Mesuré, c'est une
+         partie des recouvrements qui restaient après la réservation. On rogne
+         donc l'allongement jusqu'à ce qu'il tienne. */
       if (place > 0) {
+        const bandes = prisesDe(momentsPris, dernier)?.bandes || [];
+        const autres = bandes.filter(([a, z]) =>
+          !(Math.abs(a - dernier.entree) < 0.001 && Math.abs(z - dernier.sortie) < 0.001));
+        for (const [a] of autres) {
+          if (a > dernier.sortie) place = Math.min(place, Math.max(0, a - MARGE_REDITE - dernier.sortie));
+        }
+      }
+      if (place > 0.01) {
+        const avant = dernier.sortie;
         dernier.sortie = Math.round((dernier.sortie + place) * 1000) / 1000;
+        // La bande réservée suit l'allongement, sinon la suite du montage
+        // croirait cet intervalle libre.
+        const sien = prisesDe(momentsPris, dernier);
+        const bande = sien?.bandes.find(([a, z]) =>
+          Math.abs(a - dernier.entree) < 0.001 && Math.abs(z - avant) < 0.001);
+        if (bande) bande[1] = dernier.sortie;
         const cle = cleEpisode(dernier);
         budgets.set(cle, (budgets.get(cle) || 0) + place);
       }
@@ -21117,6 +21437,11 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
 
   sources.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; delete plan.__famille; });
   montage.forEach((plan) => { delete plan.__pris; delete plan.__picVu; delete plan.__morceaux; delete plan.__famille; });
+  /* Combien de fois la règle anti-redite a dû céder. Zéro est la valeur normale ;
+     au-delà, c'est que le catalogue ne contient pas assez de matière pour couvrir
+     la musique, et le journal doit le dire — un montage qui bégaie sans prévenir
+     est le pire des deux. */
+  projet.__redites = cedeALaRedite;
   return montage.length ? montage : null;
 }
 
