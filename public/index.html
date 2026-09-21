@@ -630,7 +630,10 @@ main {
 .lecteur-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .lecteur-actions a, .lecteur-actions button {
   flex: 1 1 120px;
-  padding: 10px;
+  /* Quarante-quatre points : la hauteur en dessous de laquelle un doigt rate sa
+     cible une fois sur trois. Ils en faisaient trente-quatre. */
+  min-height: 44px; display: flex; align-items: center; justify-content: center;
+  padding: 12px;
   border-radius: 8px;
   border: 1px solid var(--trait);
   background: #111;
@@ -1321,7 +1324,7 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
   content: "›"; color: var(--doux); font-size: 1.3rem; line-height: 1;
 }
 .reglages-menu .reglages-onglet:active { background: #191919; }
-.reglages-retour { align-self: flex-start; margin: 0 0 var(--e3); }
+.reglages-retour { margin: 0 0 var(--e3); }
 .reglages-pied { margin: var(--e3) 0 0; text-align: center; }
 .place-liste { display: flex; flex-direction: column; gap: 8px; margin: var(--e3) 0; }
 .place-ligne {
@@ -1460,6 +1463,24 @@ body.ecran-plein .sortie-plein { top: calc(env(safe-area-inset-top, 0px) + 46px)
    unique entre les groupes, et les groupes serrés à l'intérieur : ce qui va
    ensemble se voit sans avoir à lire. */
 .page-rendu { display: flex; flex-direction: column; gap: var(--e5); }
+/* Revenir : un seul bouton, partout le même.
+
+   Il y en avait deux — « ‹ Tous les rendus » et « ‹ Infos » —, chacun avec son
+   libellé et la discrétion d'un bouton secondaire : un rectangle sombre de
+   trente-quatre points de haut, qu'on cherchait en haut d'une page pleine de
+   choses vertes. Un geste qu'on fait à chaque page n'a pas à se chercher.
+
+   Même mot, même vert que ce qui compte ailleurs, et la taille d'une vraie
+   cible : quarante-huit points, la flèche devant. */
+.bouton-retour {
+  display: inline-flex; align-items: center; gap: 8px;
+  align-self: flex-start;
+  min-height: 48px; padding: 12px 20px; border-radius: 12px;
+  border: none; background: linear-gradient(135deg, var(--vert), var(--vert-fonce));
+  color: #fff; font: 700 0.92rem/1 system-ui, sans-serif; cursor: pointer;
+}
+.bouton-retour::before { content: "‹"; font-size: 1.25rem; line-height: 1; margin-top: -2px; }
+.bouton-retour:active { filter: brightness(1.12); }
 .rendu-retour { align-self: flex-start; }
 .rendu-entete { display: flex; flex-direction: column; gap: var(--e1); }
 .rendu-nom {
@@ -2150,7 +2171,7 @@ body.reordre .clip.actif { box-shadow: inset 0 0 0 2px var(--vert), inset 0 0 22
       <!-- La version sous le menu : c'est ce qu'on vient vérifier le plus
            souvent, et cela ne vaut pas de descendre dans une section. -->
       <p class="note-reglage reglages-pied" id="version-page">version inconnue</p>
-      <button type="button" class="archive-action reglages-retour" id="reglages-retour" hidden>‹ Infos</button>
+      <button type="button" class="bouton-retour reglages-retour" id="reglages-retour" hidden>Retour</button>
 
       <div class="reglages-panneau" data-panneau="general" hidden>
         <h2>Général</h2>
@@ -2334,7 +2355,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 05:12";
+const VERSION_PAGE = "2026-09-21 05:20";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -18878,8 +18899,8 @@ function blocDuRendu(rendu, acces, { retour = null, supprimer = false } = {}) {
   if (retour) {
     const revenir = document.createElement("button");
     revenir.type = "button";
-    revenir.className = "archive-action rendu-retour";
-    revenir.textContent = "‹ Tous les rendus";
+    revenir.className = "bouton-retour rendu-retour";
+    revenir.textContent = "Retour";
     revenir.addEventListener("click", retour);
     bloc.append(revenir);
   }
