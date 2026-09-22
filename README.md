@@ -8,7 +8,7 @@ Trois sources alimentent l'outil :
 | Source | Ce qu'elle apporte | Format |
 |---|---|---|
 | [Sakugabooru](https://www.sakugabooru.com) | les cuts : plans d'animation isolés d'un épisode, avec leur animateur | MP4/WebM |
-| [AnimeThemes](https://animethemes.moe) | openings et endings, toutes versions confondues (v2, version TV, Blu-ray), souvent en 1080p sans crédits | WebM |
+| [AnimeThemes](https://animethemes.moe) | openings et endings, toutes versions confondues (v2, version TV, Blu-ray) — **uniquement les versions sans crédits** | WebM |
 | [AniList](https://anilist.co) | bandes-annonces officielles | lien YouTube |
 
 Les deux premières sont interrogées en parallèle par le Worker, et l'échec de l'une
@@ -24,10 +24,14 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
-> **Ce que l'outil est aujourd'hui — v3.1, « AMV France & anti-redite »**.
-> La v2.0 « moteur d'impact » et la v2.1 « sakuga flow » restent le socle :
-> macro-structure en six moments, micro-rythme `{quand, force}`, éclair sur les
-> crêtes, fil d'animateur, bandes de fréquences, sens du plan, harmonisation.
+> **Ce que l'outil est aujourd'hui — le rendu brut et la géographie du combat**.
+> La v2.0 « moteur d'impact », la v2.1 « sakuga flow », la v3.0 « elite » et la
+> v3.1 « AMV France & anti-redite » restent le socle : macro-structure en six
+> moments, micro-rythme `{quand, force}`, crêtes d'impact, fil d'animateur, bandes
+> de fréquences, sens du plan, escalade, raccord chromatique, zéro redite. Le
+> rendu, lui, ne pose **plus aucun effet** : les rushs sont montés à l'état brut,
+> vitesse et cadrage natifs, et la seule retouche qui subsiste est
+> l'harmonisation colorimétrique vers la médiane du montage.
 > **Une musique entre, un AMV en sort.** Quatre onglets — Créer, Veille,
 > Historique, Infos. Il n'y a plus d'explorateur de rushs ni d'atelier de
 > montage : ni timeline multipiste, ni pellicule d'imagettes, ni poignées de
@@ -40,6 +44,24 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 > [HISTORIQUE.md](HISTORIQUE.md). Ce qui y a été mis au point sert toujours : la
 > lecture des en-têtes, le découpage sur images-clés, l'écriture du MP4, le coffre
 > et le grenier n'ont pas bougé.
+
+### Le rendu brut, et la géographie du combat
+
+Quatre ajustements de mise en scène. Les trois premiers changent ce qu'on voit ;
+le quatrième, ce qui a le droit d'entrer.
+
+| | Ce que c'est | Mesuré |
+|---|---|---|
+| **Rendu 100 % naturel** | Les quatre effets procéduraux du runner — éclair blanc, micro-secousse, rampe de vitesse, stroboscope — sont retirés. Les rushs sont montés à l'état brut ; seule l'harmonisation colorimétrique reste. | `zoompan`, `drawbox`, `setpts`, `brightness=`, `geq` : **aucun**, ni dans la commande ffmpeg réelle, ni dans la feuille de route |
+| **Géographie du combat** | Un bloc d'action **ne peut pas** s'ouvrir autrement que sur un plan d'ensemble, et un gros plan exige un plan large dans les trois coupes d'avant. C'est un refus, pas une préférence. | **0 gros plan d'action sans repère sur 35** (avant : 3 orphelins sur 9) · blocs ouverts `large→serré→moyen` et `large→moyen→serré` |
+| **Contraste d'échelles** | Quatre catégories au lieu de trois — serré, moyen, large, **effet** —, et deux plans de même échelle collés bout à bout coûtent cher. Une explosion n'est plus rangée avec les décors. | **15 %** de suites de même échelle, contre 36 % attendus de cette distribution au hasard |
+| **Zéro texte incrusté** | Le « sans crédits » d'AnimeThemes devient une condition d'entrée, fichier de montage compris. Un générique qui n'existe qu'avec crédits est rejeté. | **8 génériques servis sur 8 NC, 0 avec crédits** (avant : un bonus de 15 points, qu'un 1080p crédité rachetait) |
+
+**La rampe de vitesse est partie avec le reste, et c'est une lecture de « vitesse
+native » plus large que la consigne**, qui nommait la secousse, le flash et le
+stroboscope. Elle marchait — impact à l'image près, durée de sortie intacte. Elle
+se remonte en rétablissant une trentaine de lignes de `tools/rendu.py` et le champ
+`pic` de la feuille de route.
 
 ### La v3.1 : la redite, et quatre standards de jury
 
@@ -68,10 +90,10 @@ marqueurs « automatiques » du montage.
 
 | | Ce que c'est | Mesuré |
 |---|---|---|
-| **Rampe de vitesse** | Sur les crêtes servies par un choc, l'anticipation s'étire à 0,65× et le coup s'écrase à 1,8× — la courbe qu'un monteur trace à la main. | durée exacte sur 4 longueurs (24/24, 12/12, 7/7, 48/48 images) · phase de choc 2,45× plus rapide |
+| ~~**Rampe de vitesse**~~ | *Retirée* : l'anticipation s'étirait à 0,65× et le coup s'écrasait à 1,8×. Ce que la crête décide encore, c'est le CHOIX du plan et la fenêtre taillée autour du coup. | durée exacte sur 4 longueurs (24/24, 12/12, 7/7, 48/48 images) — avant retrait |
 | **Escalade dramatique** | Une série monte en puissance : l'intro puise tôt, le climax réserve le tiers final. L'épisode 12 ne suit plus l'épisode 350. | sur l'axe 4–477 : intro ép.84 → montée ép.234 → drop ép.290 |
 | **Raccord chromatique** | La teinte se prolonge sur les passages calmes, et bascule chaud/froid sur la charnière montée → drop. | 28° d'écart moyen au calme contre 65° au vif (~120° au hasard) · charnières à 1,47 sur 2 |
-| **Pulsation des roulements** | Une rafale de doubles croches fait BATTRE l'image, elle n'ajoute aucune coupe. | 2 rafales, 23 pulsations, **0 coupe ajoutée** (50 contre 50) |
+| **Roulements de percussion** | Une rafale de doubles croches **n'ajoute aucune coupe** : on tient le plan. Le stroboscope qui le faisait battre, lui, est retiré. | 2 rafales, **0 coupe ajoutée** (50 contre 50) |
 
 ### Les quatre piliers de la v2.1
 
@@ -84,13 +106,17 @@ et chacun est tenu par son banc.
 | **Continuité de style** | Le montage suit **une main d'animateur**, ou en fait s'affronter deux — alternance sur les couplets, rencontre au drop. Sakugabooru n'étiquette aucun personnage ; l'animateur est la seule identité qu'un cut porte, et le duel de styles est une figure reconnue du sakuga AMV. | 53/105 coupes portent le fil, 47 alternances |
 | **Calage audio par bandes** | Le **grave sous 150 Hz** ancre les frappes lourdes du drop ; la **voix de 1,2 à 5 kHz** protège les couplets, où une coupe cherche la respiration la plus proche plutôt que de trancher un vers. | 9 crêtes sur 9 sur un kick · coupes pendant le chant 19/21 → 11/21 |
 | **Flux vectoriel en cache** | Le **sens de déplacement** de chaque plan, mesuré au rendu par le runner et rangé dans R2. Le Worker ne peut pas décoder d'images ; le runner le fait presque gratuitement, et chaque AMV réchauffe le catalogue pour le suivant. | 18 prolongements de flux contre 2 inversions, contre 5/5 sans le sens |
-| **Polissage au rendu** | Une **micro-secousse de 125 ms** sur les crêtes servies par un choc, et une **harmonisation vers la médiane** du montage qui rapproche un cut de 2003 d'une séquence de 2024. | 3 images exactement, ligne de temps intacte · étendue de contraste 37,7 → 26,6 |
+| **Harmonisation des teintes** | Une **correction bornée vers la médiane** du montage, qui rapproche un cut de 2003 d'une séquence de 2024. C'est la seule retouche d'image qui subsiste : la micro-secousse qui l'accompagnait a été retirée. | étendue de contraste 37,7 → 26,6 · luminance 20,2 → 11,2 |
 
-Rien de tout cela n'est une règle dure, de la v2.1 à la v3.1 — à une exception
-près, et c'est la seule du projet : **l'interdiction de recouvrement est
-absolue.** Elle ne cède que lorsqu'un catalogue n'a arithmétiquement pas assez de
-matière (quatre-vingt-dix secondes de source pour trois minutes de musique), et le
-journal le dit alors en clair. Pour tout le reste, chaque préférence
+Presque rien de tout cela n'est une règle dure : ce sont des préférences chiffrées,
+que la couverture de la musique peut toujours emporter. **Deux exceptions, et deux
+seulement.** L'**interdiction de recouvrement** est absolue : elle ne cède que
+lorsqu'un catalogue n'a arithmétiquement pas assez de matière (quatre-vingt-dix
+secondes de source pour trois minutes de musique), et le journal le dit alors en
+clair. L'**ancrage spatial** est un refus lui aussi — un bloc d'action n'ouvre que
+sur un plan d'ensemble — mais il ne s'arme que si le catalogue peut le tenir, parce
+qu'une géographie parfaite payée d'une redite serait un mauvais échange. Pour tout
+le reste, chaque préférence
 reste sous le budget d'épisode, donc un fil introuvable, un morceau sans grosse
 caisse, un catalogue de six épisodes, une musique sans roulement ou un catalogue
 qu'aucun rendu n'a réchauffé donnent toujours un AMV qui couvre sa musique. C'est
@@ -284,7 +310,7 @@ amvauto/             moteur Python (client API, scoring, CLI)
 worker/src/          Worker Cloudflare
   index.js           routage de toutes les routes /api/
   sakuga.js          accès à l'API, pagination, filtrage, animateurs d'un cut
-  animethemes.js     openings et endings (WebM, 1080p sans crédits)
+  animethemes.js     openings et endings (WebM, sans crédits obligatoire)
   scoring.js         barème d'utilisabilité et ambiances
   naming.js          nom des plans et détection des arcs
   series.js          raccourcis de séries (généré depuis series.py)
@@ -413,11 +439,11 @@ Ce qui suit est la spécification du moteur tel qu'il tourne aujourd'hui.
   lecture   ──►  /api/cles  (durée, images-clés, courbe, sens, teinte, tiers d'action)
         │
   ordonnanceur ─► grille de coupes ─► choix de scène ─► fenêtre dans la scène
-        │         escalade · teinte · pic · pente dE/dt · tiers d'action
+        │         échelle · escalade · teinte · pente dE/dt · tiers d'action
         │         et RÉSERVATION des intervalles source : zéro redite
         │
         ├─► rendu MP4        GitHub Actions + ffmpeg ─► grenier (R2)
-        │                    éclair · secousse · rampe 0,65×→1,8× · pulsations
+        │                    rushs à l'état brut : vitesse et cadrage natifs
         │                    teintes harmonisées vers la médiane du montage
         │                    et sens + teinte de chaque rush réécrits dans /api/cles
         └─► projet DaVinci   XMEML + EDL + sources    ─► grenier (R2)
@@ -493,25 +519,6 @@ Après un choc, un plan plat coupe l'énergie net : la dispersion passe devant l
 et seulement là (52,6 → 60,4 pour le plat après un impact, inchangé après un plan
 calme).
 
-### L'éclair d'impact
-
-Sur les crêtes servies par un choc, le rendu pose **une image blanche sur la
-première image du plan** — deux sur cinquante coupes, par construction.
-
-Elle **remplace** l'image, elle ne s'insère pas. Une image ajoutée décalerait
-tout ce qui suit d'un vingt-quatrième de seconde, et vingt éclairs dans un
-morceau de trois minutes feraient presque une seconde de déphasage — exactement
-ce que tout le reste du montage s'échine à éviter. Un filtre en fin de chaîne
-ffmpeg suffit, sans coût d'encodage :
-
-```
-drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='lt(t,0.0417)'
-```
-
-L'archive DaVinci, elle, ne flashe pas : elle livre les rushs tels quels, pour
-qu'on puisse reprendre le montage. Un éclair est un choix de rendu, pas une
-donnée de source.
-
 ### Ce que l'export Resolve emporte
 
 Le montage part en **XMEML** (Final Cut 7) et en **EDL CMX 3600**, avec les rushs
@@ -553,54 +560,62 @@ paroles minutées. Chaque ligne porte ses chiffres en dessous :
 
 ```
 +0.0s  Génération demandée · Naruto Shippuden · 150 s de musique · instrument caisse
-       duree=150s bpm=120 passages=8 trame=calme>emotion>elan>action>emotion>elan>action>calme
-       paroles=32 fil=hiroyuki_yamashita contre tsutomu_oshiro (duel de mains)
-+0.6s  « Naruto Shippuden » → Naruto Shippuden · 1494 scènes au catalogue
-+0.6s  Pioche : 172 scènes · 164 sakugabooru, 8 animethemes · 76 coupes attendues
+       animes=naruto_shippuuden duree=150s bpm=120 passages=8 trame=calme>emotion>elan>action>emotion>elan>action>calme paroles=32 fil=hiroyuki_yamashita contre tatsuya_koyanagi (duel de mains)
++0.0s  Recherche des scènes…
++0.4s  « Naruto Shippuden » → Naruto Shippuden · 1382 scènes au catalogue
++0.4s  Recherche terminée
+       scenes=172 en=422ms
++0.4s  Pioche : 172 scènes · 164 sakugabooru, 8 animethemes · 76 coupes attendues
        sources=sakugabooru:164/animethemes:8 avecFichier=172/172 parScene=2.3
-+2.2s  Scènes lues : 123/172 durées · 123 courbes de mouvement · 0 illisibles
-       en=1569ms arretA=assez lu refusees=0
-+2.4s  Montage : 106 coupes · 150 s sur 150 s · 106 moments distincts
-       en=198ms scenesEmployees=106/123 couverture=100%
-+2.4s  [0:00–0:19] Intro — ambiance et décors · 7 coupes
-       phase=intro emotion=calme energie=0 couvert=23s coupeMoyenne=3.25s
-+2.4s  [0:19–0:38] Couplet — acting et narration · 6 coupes
-+2.4s  [0:38–0:56] Montée — accélération · 20 coupes · 1 éclair
-+2.4s  [0:56–1:15] Drop — impact sakuga · 19 coupes · 2 éclairs
++0.4s  Lecture des en-têtes…
++1.5s  Scènes lues : 120/172 durées · 120 courbes de mouvement · 0 illisibles
+       en=1090ms arretA=assez lu refusees=0
++1.5s  Construction du montage…
++1.7s  Montage : 104 coupes · 150 s sur 150 s · 104 moments distincts
+       en=200ms scenesEmployees=104/120 couverture=100%
++1.7s  [0:00–0:19] Intro — ambiance et décors · 9 coupes
+       phase=intro emotion=calme energie=0 couvert=23s coupeMoyenne=2.53s
++1.7s  [0:19–0:38] Couplet — acting et narration · 7 coupes
++1.7s  [0:38–0:56] Montée — accélération · 19 coupes · 1 éclair
++1.7s  [0:56–1:15] Drop — impact sakuga · 19 coupes · 2 éclairs
        phase=drop emotion=action energie=3 couvert=19s coupeMoyenne=0.99s
-+2.4s  [1:15–1:34] Retombée — dispersion · 8 coupes
-+2.4s  [1:34–1:53] Montée — accélération · 18 coupes
-+2.4s  [1:53–2:11] Drop — impact sakuga · 20 coupes
-+2.4s  [2:11–2:30] Outro — plan tenu · 9 coupes
-+2.4s  106 coupes · 0 à cheval sur 106 mesurées · 3 éclairs d'impact
-       aCheval=0/106 eclairs=3 surQuoi=frappes ≥ 85 % servies par un choc
-+2.7s  Fil du duel de mains : 55/108 coupes le portent (51 %) · 36 alternances
-       portees=55/108 ensemble=0 alternances=36 vivier=56/123
-+2.7s  Escalade sur 4–477 : Intro ép.84 · Couplet ép.85 · Montée ép.234 · Drop ép.290
-       axe=4–477 episodesConnus=86/123 parMoment=intro=84 couplet=85 montee=234 drop=290
-+2.7s  Roulements : 2 rafales sur les montées · 2 plans qui bat · 23 pulsations
-       rafales=2 plansQuiBattent=2 pulsations=23 coupesAjoutees=0
-+2.4s  Bandes : 71 coupes ancrées sur le grave · 5 glissées hors d'un vers
-       · 13 retirées pour la même raison
-       surLeGrave=71/75 jugees=39 glissees=5 retireesParLeBudget=13
-       resteesDansUnVers=0 source=paroles minutées (Whisper)
-+2.4s  Plans : du plus court 0.25 s au plus long 4.00 s · médian 1.00 s
-+2.4s  Génération terminée · total=2.4s coupes=106 appels=131 echecs=0
++1.7s  [1:15–1:34] Retombée — dispersion · 7 coupes
++1.7s  [1:34–1:53] Montée — accélération · 17 coupes
++1.7s  [1:53–2:11] Drop — impact sakuga · 20 coupes
+       phase=drop emotion=action energie=3 couvert=19s coupeMoyenne=0.94s
++1.7s  [2:11–2:30] Outro — plan tenu · 9 coupes
++1.7s  104 coupes · 0 à cheval sur 104 mesurées · 2 éclairs d'impact
+       aCheval=0/104 eclairs=2 surQuoi=frappes ≥ 85 % servies par un choc
++1.7s  Fil du duel de mains : 54/104 coupes le portent (52 %) · 43 alternances · 0 plans à deux
+       cibles=hiroyuki_yamashita contre tatsuya_koyanagi portees=54/104 ensemble=0 alternances=43 vivier=55/120
++1.7s  Escalade sur 85–477 : Intro ép.238 · Couplet ép.303 · Montée ép.245 · Drop ép.290 · Retombée ép.290
+       axe=85–477 episodesConnus=77/120 scènes du vivier parMoment=intro=238 couplet=303 montee=245 drop=290 retombee=290
++1.7s  Roulements : 2 rafales sur les montées · 2 plans tenus en travers · 24 frappes traversées
+       rafales=2 plansTenus=2 frappesTraversees=24 coupesAjoutees=0
++1.8s  Redites : 0 plan identique · 104 scènes pour 104 coupes · au pire 1 emploi d'une même scène
+       identiques=0 scenesDistinctes=104/104 pireEmploi=1 margeInterdite=1.5s regleCedee=0
++1.8s  Bandes : 71 coupes ancrées sur le grave · 5 glissées hors d'un vers · 13 retirées pour la même raison
+       surLeGrave=71/75 jugees=39 glissees=5 retireesParLeBudget=13 resteesDansUnVers=0 source=paroles minutées (Whisper)
++1.8s  Plans : du plus court 0.25 s au plus long 4.00 s · médian 1.00 s
++1.8s  Génération terminée
+       total=1.8s coupes=104 appels=128 echecs=0
 ```
 
 Une ligne marquée `[!]` est reprise en tête du rapport, sous « ce qui a alerté » :
 on colle, et ce qui a mal tourné se lit en premier. Ce relevé-là n'en porte
-aucune — zéro coupe à cheval sur cent six, et pas un vers tranché.
+aucune — zéro coupe à cheval sur cent quatre, et pas un vers tranché.
 
-Cinq de ces lignes sont celles de la v2.1 et de la v3.0, et elles disent ce qu'un
-chiffre seul cacherait. L'escalade : l'épisode médian monte de 84 à 290 sur un axe
-qui va de 4 à 477 — le montage suit la série. Les roulements : deux rafales, vingt-
-trois pulsations, et **zéro coupe ajoutée**, ce qui est tout l'enjeu. Le fil : cinquante-quatre coupes sur cent six le portent, mais le
-vivier n'en offrait que cinquante-cinq sur cent vingt-trois — le montage a donc
-employé presque tout ce qu'il avait. Les bandes : trente-neuf coupes ont été jugées
-sur les passages où la voix commande, cinq déplacées vers une respiration, treize
-retirées par le budget parce que leur force avait baissé, **zéro restée dans un
-vers**.
+Six de ces lignes disent ce qu'un chiffre seul cacherait. **Les redites** : zéro plan
+identique, cent quatre scènes pour cent quatre coupes, au pire un seul emploi d'une
+même scène — c'est la ligne qui se lit en premier, parce que c'est le défaut qui se
+voyait le plus. L'escalade : l'épisode médian va de 238 à 303 sur un axe qui court de
+85 à 477. Les roulements : deux rafales, deux plans **tenus** en travers, **zéro coupe
+ajoutée** — c'est tout l'enjeu, et depuis que le rendu ne fait plus battre l'image,
+c'est le seul enjeu. Le fil : cinquante-quatre coupes sur cent quatre le portent, mais
+le vivier n'en offrait que cinquante-cinq sur cent vingt — le montage a donc employé
+presque tout ce qu'il avait. Les bandes : trente-neuf coupes jugées sur les passages
+où la voix commande, cinq déplacées vers une respiration, treize retirées par le
+budget parce que leur force avait baissé, **zéro restée dans un vers**.
 
 « Copier le rapport » ajoute l'appareil, la version, l'écran, l'état du réseau et
 de la mémoire, la demande complète (musique, tempo, trame, portée), les appels au
@@ -608,11 +623,11 @@ serveur résumés par route — et listés un par un quand ils ont raté. Le cod
 coffre y est masqué.
 
 **Deux comptes qui ne s'additionnent pas.** La somme des coupes par passage
-(7 + 6 + 20 + 19 + 8 + 18 + 20 + 9 = 107) dépasse le total (106) : une coupe qui
-commence pile sur une frontière de passage est comptée des deux côtés, à cause de la
-tolérance de 10 ms qui sert à rattraper les arrondis. Le total, lui, est juste —
-c'est la longueur du montage, et la couverture est à 100 %. Le défaut est dans
-l'affichage, pas dans le montage.
+(9 + 7 + 19 + 19 + 7 + 17 + 20 + 9 = 107) dépasse le total (104), et l'intro annonce
+23 s couvertes pour un passage de 19 : une coupe qui déborde sur le passage suivant
+est comptée des deux côtés, à cause de la tolérance de 10 ms qui sert à rattraper les
+arrondis. Le total, lui, est juste — c'est la longueur du montage, et la couverture
+est à 100 %. Le défaut est dans l'affichage, pas dans le montage.
 
 ### Ce qui n'a pas été touché, et pourquoi
 
@@ -683,7 +698,7 @@ un kick de refrain pesait autant qu'une harmonique de guitare.
 adossée à un coup sous 150 Hz voit sa force montée d'un tiers ; une coupe qui n'en
 a aucun la voit baisser d'un quart. La grille ne bouge pas — c'est la régularité
 qui la tient — mais ce qui compte comme fort change, et c'est cette force que
-lisent le choix du choc, la réservation des images d'impact et l'éclair. Mesuré :
+lisent le choix du choc et la réservation des images d'impact. Mesuré :
 les neuf crêtes du morceau tombent **toutes** sur un coup de grave, là où elles se
 dispersaient sur n'importe quel transitoire.
 
@@ -740,24 +755,45 @@ le choc.
 La fiche n'est plus servie `immutable` pour un an : un enrichissement n'arriverait
 jamais chez le visiteur. Un jour de cache, une semaine de sursis.
 
-### La secousse d'impact, et l'harmonisation des teintes
+### Le rendu brut, et l'harmonisation des teintes
 
-Deux effets ajoutés au rendu, et à lui seul.
+**Le rendu ne pose plus un seul effet.** Un rush de sakuga est monté tel qu'il a
+été dessiné : vitesse native, cadrage natif. Quatre effets procéduraux ont vécu
+ici, tous mesurés, tous validés, tous retirés :
 
-**La secousse.** Sur les crêtes servies par un choc — les mêmes coupes que
-l'éclair — la caméra accuse le coup : 5 % de zoom, trois pixels de déplacement
-latéral, **trois images**, soit 125 ms à 24 i/s.
+| Ce qui a été retiré | Ce que c'était |
+|---|---|
+| l'éclair d'impact | une image blanche substituée à la première image du plan |
+| la micro-secousse | 5 % de zoom et 3 px de déplacement, trois images (125 ms) |
+| la rampe de vitesse | 0,65× sur l'anticipation, 1,8× sur le coup, l'impact à l'image |
+| la pulsation | un stroboscope d'une image sur les roulements de percussion |
 
-```
-zoompan=z='if(lt(it,0.125),1.05,1)':d=1:x='iw/2-(iw/zoom/2)+if(lt(it,0.125),3*sin(it*180),0)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=24
-```
+Ils marchaient — la durée de sortie ne bougeait pas d'une image, la rampe trouvait
+le pic à l'image près. **Ce n'est pas pour un défaut technique qu'ils partent.** Du
+zoom numérique et du ré-échantillonnage temporel posés sur de l'animation dessinée
+à la main la dénaturent : un animateur a décidé de la vitesse de son geste, et la
+rejouer à 0,65× efface ce qu'il a fait. Leur mise au point est racontée dans
+[HISTORIQUE.md](HISTORIQUE.md).
 
-`d=1` avec une taille de sortie imposée rend exactement une image par image reçue :
-48 images avant, 48 après, et tout ce qui suit la secousse rigoureusement
-identique au plan sans elle. **La ligne de temps ne bouge pas d'un vingt-quatrième
-de seconde**, ce qui est la seule chose qui compte.
+**Les marques sont parties avec eux.** La feuille de route envoyée au runner
+portait `eclair`, `pic` et `pulsations` ; ces trois champs ont été retirés en même
+temps que les filtres qu'ils commandaient. Transmettre une consigne que personne
+n'exécute n'est pas inoffensif : à la relecture, ça se lit comme une intention à
+honorer. Ce que la feuille de route contient est ce que le rendu fait — une
+adresse, deux bornes, un nom, une famille, une correction de couleur.
 
-**L'harmonisation.** Un AMV monte côte à côte un cut de 2003 — contraste mou,
+**Ce qui reste mesuré dans la page, en revanche, l'est toujours** : les crêtes et
+les roulements décident des IMAGES qu'on montre, pas du traitement qu'on leur
+applique. Une crête à 85 % de la frappe la plus forte appelle un plan de la famille
+*choc* et taille sa fenêtre autour du coup ; un roulement de doubles croches tient
+le plan au lieu de le hacher. Cette frontière est exactement celle qui a été
+demandée, et le banc la tient des deux côtés : `rendu.mjs` vérifie que la feuille
+de route ne commande aucun effet **et** que `tools/rendu.py` ne sait plus écrire
+`zoompan`, `drawbox`, `setpts`, `brightness=` ni `geq`.
+
+**Un seul survivant, et il ne touche ni le cadre ni la vitesse.**
+
+Un AMV monte côte à côte un cut de 2003 — contraste mou,
 couleurs délavées — et une séquence de 2024 contrastée et saturée. À la coupe, ça
 saute. Un filtre global sur le master ne corrige pas ça : il déplace tout le monde
 sans rien rapprocher. On mesure donc chaque rush (luminance, contraste,
@@ -783,42 +819,14 @@ pas à zéro. On rapproche, on n'uniformise pas — et les bornes le disent :
 Un plan déjà au milieu ne reçoit aucun filtre du tout : poser un `eq` neutre
 coûterait une passe de calcul et arrondirait des pixels pour rien.
 
-L'archive DaVinci ne reçoit ni l'une ni l'autre : elle livre les rushs tels quels
-pour qu'on puisse reprendre le montage. Une secousse et un étalonnage sont des
-choix de rendu, pas des données de source.
+L'archive DaVinci ne la reçoit pas : elle livre les rushs tels quels pour qu'on
+puisse reprendre le montage. Un étalonnage est un choix de rendu, pas une donnée
+de source — et c'est maintenant le seul choix de rendu qui existe.
 
-### La rampe de vitesse, et la géométrie qui la contraint
+**Le compte d'images, lui, est un correctif qui reste.** Il a été trouvé en
+mesurant la rampe, mais il n'avait rien à voir avec elle.
 
-Un monteur ne laisse presque jamais un plan de frappe à vitesse constante :
-l'anticipation s'étire pour faire monter la tension, puis le coup s'écrase en
-accélération pile sur le temps fort. Sur les crêtes servies par un choc dont on
-sait situer le pic, le runner pose donc une courbe en deux morceaux — 0,65× avant
-le pic, 1,8× après.
-
-**L'énoncé naïf est impossible, et c'est là que tout se joue.** On ne peut pas à
-la fois garder la durée de sortie, garder la fenêtre source et choisir les deux
-vitesses. Jouer `[0, p)` à 0,65× et `[p, D)` à 1,8× fait durer la sortie
-`p/0,65 + (D−p)/1,8`, et cela ne vaut `D` que si le pic tombe pile à 45,2 % du
-plan. Il n'y tombe jamais.
-
-C'est donc la **fenêtre source** qu'on recalcule autour du pic — exactement ce que
-fait un monteur quand il déplace son point d'entrée pour que l'impact tombe sur le
-temps :
-
-```
-sortie : N images, dont l'impact à l'image Ni = round(0,62 × N)
-avant  : Ni images de sortie à 0,65×   ->  0,65 × Ni/cadence de source
-après  : N−Ni images de sortie à 1,8×  ->  1,8 × (N−Ni)/cadence de source
-```
-
-Il faut environ 8,7 % de source de plus que la case, et l'on s'abstient quand le
-fichier ne peut pas les fournir. Pas de pic connu, plan sous cinq images, pic trop
-près d'un bord : pas de rampe non plus. Mesuré : **24/24, 12/12, 7/7 et 48/48
-images**, l'impact à l'image annoncée à une près, et la phase de choc 2,45 fois
-plus rapide que la phase d'élan.
-
-**Un défaut qui était là avant la rampe.** Le banc a montré qu'une case de 0,5 s
-sortait à **onze** images au lieu de douze : `-ss` tombe entre deux images de la
+Le banc a montré qu'une case de 0,5 s sortait à **onze** images au lieu de douze : `-ss` tombe entre deux images de la
 source, ffmpeg part de la suivante, et la dernière n'entre plus dans le `-t`. Sur
 cent coupes dont beaucoup sont courtes, ce sont des dixièmes de seconde de dérive
 entre l'image et la musique — tout ce que le montage s'échine à éviter, perdu au
@@ -877,30 +885,84 @@ sur un montage entier : **28°** d'écart moyen sur les passages calmes contre 6
 sur les passages vifs, là où le hasard donnerait ~120°, et les deux charnières
 basculent de 1,47 sur une échelle qui plafonne à 2.
 
-### La pulsation des roulements
+### Les roulements de percussion : on tient le plan
 
-Dans une montée de trap, de phonk ou de drum & bass, les charleys roulent en
-doubles croches jusqu'au drop. **On ne coupe pas dessus** : huit plans différents
-en une seconde ne se lisent pas, et le résultat est un bruit visuel, pas une
-accélération. On tient le plan et on le fait battre.
+Dans une montée de trap, de phonk ou de drum & bass, les charleys roulent en doubles
+croches jusqu'au drop. **On ne coupe pas dessus** : huit plans différents en une
+seconde ne se lisent pas, et le résultat est un bruit visuel, pas une accélération.
 
 La page repère les rafales — au moins quatre frappes à moins de 150 ms, sur une
-montée, dans la bande la plus fine disponible — et le rendu y pose une pulsation
-de luminance de 18 %. Vérifié : **50 coupes avec rafales, 50 sans**, à la coupe
+montée, dans la bande la plus fine disponible — et le montage les traverse **sans
+ajouter une seule coupe**. Vérifié : 50 coupes avec rafales, 50 sans, à la coupe
 près.
 
 Deux garde-fous, et les deux comptent. Un roulement plus long que 2,4 s n'en est
-plus un : c'est le motif ordinaire du morceau, et le faire battre serait un tic.
-Et une rafale n'est reconnue que sur une **montée** — la même sur un drop est
-ignorée, ce que le banc vérifie explicitement.
+plus un : c'est le motif ordinaire du morceau. Et une rafale n'est reconnue que sur
+une **montée** — la même sur un drop est ignorée, ce que le banc vérifie
+explicitement.
 
-**La largeur de la pulsation est tout le problème.** À deux images, les créneaux se
-recouvrent : un roulement frappe toutes les 80 ms, une pulsation de 83 ms déborde
-sur la suivante, et les huit battements fondent en un seul éclaircissement de huit
-images — ce n'est plus un stroboscope, c'est une lampe qu'on allume. La pulsation
-tient donc dans une image, et les frappes plus serrées que deux images sont
-écartées : à 24 images par seconde, on ne peut pas alterner clair et sombre plus
-vite. Mesuré : images claires **5, 9, 13** — une allumée, trois éteintes.
+Le rendu, lui, y posait une pulsation de luminance d'une image. Elle est partie avec
+les trois autres effets ; sa mise au point est dans
+[HISTORIQUE.md](HISTORIQUE.md#la-pulsation-des-roulements).
+
+### La géographie du combat, et le contraste d'échelles
+
+Enchaîner des plans serrés plonge le spectateur dans l'action sans qu'il sache où
+elle se déroule. Un affrontement d'animé s'ouvre sur un **plan d'établissement** —
+un décor, une arène, deux silhouettes en pied — puis l'échelle se resserre :
+
+```
+large  →  moyen  →  serré
+où        engagement  impact et réaction
+```
+
+Chaque rush est donc rangé dans **quatre catégories**, et la quatrième est celle
+qui manquait :
+
+| | Ce qu'on y trouve |
+|---|---|
+| `large` | décors animés, foule, paysage, vent, liquide |
+| `moyen` | course, combat, vol, mécha, transformation |
+| `serré` | acting, dialogue, larmes, cheveux, tissu |
+| `effet` | explosions, débris, fumée, faisceaux, impact frames, smears |
+
+**Une explosion n'a pas d'échelle propre.** Elle était rangée avec les décors : un
+plan d'explosion passait donc pour un plan d'ensemble, c'est-à-dire pour exactement
+ce qu'il ne faut pas quand on cherche à poser un lieu. Les plans d'effet ne
+comptent maintenant dans aucune des trois règles — ni comme ancrage, ni comme
+monotonie.
+
+**L'ancrage est une règle dure, et c'est la deuxième du projet.** Une préférence
+chiffrée ne suffisait pas : le barème est une somme, et quinze points de grammaire
+se font racheter par un accord d'énergie et une scène neuve. Mesuré avant
+correction : **un bloc d'action sur deux s'ouvrait sur une explosion**, et **trois
+gros plans d'action sur neuf** tombaient sans qu'un plan d'ensemble ait été posé
+dans les trois coupes d'avant. C'est donc un refus, comme « pas deux fois le même
+rush de suite » :
+
+- à l'**entrée d'un bloc d'action**, seul un plan d'ensemble peut ouvrir ;
+- **ailleurs dans le bloc**, un gros plan exige un plan large dans les **trois
+  coupes** précédentes.
+
+Elle ne s'arme que si le catalogue peut la tenir — un projet sans le moindre plan
+large viderait la pioche à chaque entrée de bloc et pousserait le montage vers la
+redite, qui coûte bien plus cher au spectateur qu'un cadrage mal posé. La descente
+d'échelle, elle, reste une préférence : la deuxième coupe penche vers le moyen, la
+troisième vers le serré.
+
+**L'anti-monotonie** vaut partout, y compris hors action : deux plans de même
+échelle collés bout à bout aplatissent le relief. La règle existait mais ne
+s'appliquait que si les DEUX plans étaient fixes — donc presque jamais dans un
+drop.
+
+Mesuré sur le catalogue réel (Naruto Shippuden, 1382 scènes, 104 coupes) :
+
+| | Résultat |
+|---|---|
+| ouverture des blocs d'action | `large→serré→moyen` et `large→moyen→serré` |
+| gros plans d'action sans repère spatial | **0 sur 35** |
+| suites de même échelle | **15 %**, contre 36 % attendus de cette distribution au hasard |
+| échelles posées | 33 larges · 20 moyens · 49 serrés · 2 effets |
 
 ### L'interdiction de recouvrement, et pourquoi elle est absolue
 
@@ -964,19 +1026,24 @@ l'arbitrage : une redite se voit, une concentration un peu molle ne se voit pas.
 ### Les bancs
 
 Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
-La suite en fait tourner **quarante** ; ceux du moteur de montage sont ici, ceux
-de l'interface dans [« Le banc d'essai »](#le-banc-dessai). Au dernier passage,
-tous au vert :
+La suite en fait tourner **quarante**, soit **638 vérifications** ; ceux du moteur
+de montage sont ici, ceux de l'interface dans
+[« Le banc d'essai »](#le-banc-dessai). Au dernier passage, **638 sur 638**, aucun
+raté :
 
 | Banc | Ce qu'il tient | |
 |---|---|---|
+| **le rendu brut et la géographie** | | |
+| `vfx.py` | l'ABSENCE de secousse, de flash, de rampe et de stroboscope | 22/22 |
+| `rendu.mjs` | la feuille de route qui ne commande aucun effet, et un runner qui ne sait plus les écrire | 19/19 |
+| `geographie.mjs` | l'ancrage, le gros plan sans repère, la monotonie d'échelle | 23/23 |
+| `generique.mjs` | 100 % des sources AnimeThemes strictement sans crédits | 13/13 |
 | **la v3.1** | | |
 | `antiredite.mjs` | zéro plan identique, zéro recouvrement, et le mur arithmétique | 23/23 |
 | `sources-propres.mjs` | ce qui porte du texte, et un plancher qui ne vide pas le catalogue | 27/27 |
 | `synchro-interne.mjs` | la pente du mouvement contre l'enveloppe sonore | 17/17 |
 | `regard.mjs` | le tiers de l'action, et les charnières masquées | 16/16 |
-| **les quatre piliers de la v3.0** | | |
-| `remap.py` | la rampe qui ne décale pas d'une image | 21/21 |
+| **les piliers de la v3.0** | | |
 | `escalade.mjs` | l'intro tôt, le climax tard, et un catalogue plat qui tient | 24/24 |
 | `teinte-match.mjs` | le raccord de couleur et le clash de la charnière | 21/21 |
 | `stutter.mjs` | les rafales trouvées, et aucune coupe ajoutée | 14/14 |
@@ -984,17 +1051,16 @@ tous au vert :
 | `fil.mjs` | une main, un duel, et un fil introuvable qui ne bloque rien | 20/20 |
 | `voix.mjs` | le grave qui ancre, la voix qu'on ne coupe pas | 17/17 |
 | `raccord.mjs` | le raccord cinétique, avec et sans le sens | 15/15 |
-| `vfx.py` | la secousse, les teintes qui se resserrent, le stroboscope | 24/24 |
 | **le socle de la v2.0** | | |
 | `macro.mjs` | les six moments, ce que chacun refuse | 13/13 |
-| `impact.mjs` | la frappe forte, la retombée, la collision, les éclairs | 13/13 |
+| `impact.mjs` | la frappe forte, la retombée, la collision, les crêtes | 13/13 |
 | `regimes.mjs` | les cinq régimes, au catalogue et au choix | 10/10 |
 | `entrees.mjs` | l'animé unique ou mixte, la trame, le catalogue pauvre | 16/16 |
 | **ce qui ne doit jamais régresser** | | |
 | `vitesse.mjs` | trois minutes de musique, soixante rushs, le temps de calcul | 4/4 |
 | `fuite.mjs` | trois générations sans rien qui s'empile | 14/14 |
-| `couverture.mjs` · `generique.mjs` | toute la musique, la grammaire du générique | 9/9 · 6/6 |
-| `rendu.mjs` · `mp4.mjs` | 53 images et un MP4 écrit ; Annex B, AVCC, boîtes | 12/12 · 22/22 |
+| `couverture.mjs` | toute la musique, quoi qu'il arrive | 9/9 |
+| `mp4.mjs` | Annex B, AVCC, boîtes | 22/22 |
 | `resolve.py` · `davinci.mjs` | couleurs FCP7, marqueurs, EDL ; l'archive qui part | 23/23 + 6/6 · 13/13 |
 | `journal.mjs` · `panne.mjs` | le rapport, et ce qu'il dit quand ça rate | 32/32 · 15/15 |
 | `page-rendu.mjs` | la page d'un rendu, sa fiche et ses boutons | 19/19 |
@@ -1015,6 +1081,11 @@ deux mains, paroles minutées et grosse caisse :
 Relevé de nouveau après les quatre chantiers de la v3.0, sur le même montage :
 **2,7 s** de bout en bout, 108 coupes, 100 % de couverture. Les quatre règles
 ajoutées n'ont pas coûté un dixième mesurable — elles lisent des données déjà là.
+
+Et de nouveau après la géographie du combat, sur le même montage : **1,6 s** de
+bout en bout, **185 ms de construction**, 104 coupes, 150 s sur 150. L'ancrage
+spatial est un refus, donc il ÉLAGUE la pioche au lieu de l'alourdir : une échelle
+se lit sur les étiquettes déjà chargées, et un candidat refusé n'est pas noté.
 
 Le calcul pur, mesuré sans réseau sur trois minutes de musique et soixante rushs :
 **348 ms** pour 106 coupes et cent pour cent de couverture. Les quatre évolutions
@@ -1089,6 +1160,26 @@ l'entrelacement les noyait. Huit par génération au plus — Naruto en a cent
 quarante-sept, et les lire tous épuisait le budget de lecture avant d'avoir touché
 aux cuts.
 
+**Le « sans crédits » est une condition d'entrée, et ce n'en était pas une.** Un
+générique crédité porte les noms du staff en surimpression : dans un AMV de
+concours, c'est du texte à l'écran, et le montage est jugé avant qu'on regarde le
+rythme. Le NC n'était pourtant qu'un **bonus de quinze points** au barème de
+qualité — donc un générique crédité en 1080p Blu-ray passait devant un sans-crédits
+en 720p web, et entrait dans la pioche. **Un tri n'est pas un filtre.**
+
+Maintenant : une version qui n'a aucun fichier `nc: true` est écartée entière, et
+un générique qui n'existe qu'avec crédits n'entre pas. Le fichier de MONTAGE — le
+léger, celui qu'on regarde pendant qu'on monte — se choisit lui aussi parmi les NC ;
+c'était la dernière porte par laquelle du texte entrait, et `montageCredite` la
+signalait au lieu de l'interdire. Le bonus de quinze points a disparu du barème :
+depuis que tout ce qui arrive en porte un, quinze points pour tout le monde ne
+trient rien.
+
+Vérifié en direct sur Naruto Shippuden : **8 génériques servis, 8 NC, 0 avec
+crédits**. Et au banc, sur un catalogue fabriqué exprès — un générique qui existe
+dans les deux versions, un qui n'existe qu'avec crédits, un qui a deux NC de poids
+différents : `generique.mjs` tient les sept cas.
+
 ### Le montage se cale sur la grammaire d'un générique
 
 Un opening ne coupe pas au hasard : il pose une phrase, accélère, et retombe. Le
@@ -1118,10 +1209,11 @@ GitHub (`tools/rendu.py`), qui télécharge les rushs, coupe, assemble, encode, 
 GitHub est un secret du Worker : le navigateur ne présente que son code de coffre.
 
 Le runner porte tout ce qui demande un décodeur, parce qu'il est le seul endroit
-qui ait ffmpeg. Il pose l'éclair, la secousse, la rampe de vitesse, les pulsations
-et l'harmonisation des teintes ; et il **mesure le sens de déplacement et la teinte
-dominante de chaque rush** pour les réécrire dans la fiche de `/api/cles`, ce qui
-réchauffe le catalogue pour les générations suivantes.
+qui ait ffmpeg. Il découpe au cadre commun, il **harmonise les teintes vers la
+médiane du montage**, il assemble et il encode — et c'est tout ce qu'il fait à
+l'image. Il **mesure** en revanche le sens de déplacement, la teinte dominante et
+le tiers d'action de chaque rush, pour les réécrire dans la fiche de `/api/cles` :
+c'est ce qui réchauffe le catalogue pour les générations suivantes.
 
 La feuille de route est le seul contrat entre les deux. Le téléphone n'envoie que
 ça — quelques kilo-octets de JSON — et chaque plan y porte :
@@ -1130,13 +1222,11 @@ La feuille de route est le seul contrat entre les deux. Le téléphone n'envoie 
 |---|---|
 | `video`, `entree`, `sortie` | le découpage, et rien d'autre |
 | `nom`, `famille` | le nom de piste et la couleur de clip dans DaVinci |
-| `eclair` | l'image blanche **et** la secousse de 125 ms |
-| `pic` | la rampe de vitesse, quand le fichier peut la fournir |
-| `pulsations` | le stroboscope, sur les instants d'un roulement |
 
-`pic` et `pulsations` ne vont qu'au rendu : l'archive DaVinci livre les rushs tels
-quels, pour qu'on puisse reprendre le montage. Une rampe, une secousse et un
-stroboscope sont des choix de rendu, pas des données de source.
+**Et rien de plus.** Le contrat portait trois champs d'effet — `eclair`, `pic`,
+`pulsations` — retirés avec les filtres qu'ils commandaient. Ce que la feuille de
+route contient est maintenant ce que le rendu fait, ce qui est la seule façon
+qu'elle reste lisible ; `rendu.mjs` le vérifie.
 
 ### Une page par rendu, et l'accueil garde le sien
 
@@ -1240,9 +1330,10 @@ nombre de navigations. Quelques-uns, et ce qu'ils gardent :
 | `couverture.mjs`, `generique.mjs` | l'AMV qui dure toute la musique, et la grammaire du générique |
 | `page-rendu.mjs`, `accueil.mjs`, `espace.mjs` | les pages de rendu, les écarts mesurés au pixel |
 | `davinci.mjs` | la feuille de route, le flux demandé, la fiche qui voyage |
-| `macro.mjs`, `impact.mjs`, `regimes.mjs` | les six moments, la frappe et l'éclair, les cinq régimes |
+| `macro.mjs`, `impact.mjs`, `regimes.mjs` | les six moments, la frappe et la crête, les cinq régimes |
 | `entrees.mjs`, `fuite.mjs` | ce qui entre dans le tunnel, et rien qui s'empile sur trois générations |
-| `remap.py`, `stutter.mjs` | la rampe qui ne décale pas d'une image, les rafales qui n'ajoutent pas une coupe |
+| `vfx.py`, `rendu.mjs` | l'absence totale d'effet : ni zoompan, ni drawbox, ni setpts, ni stroboscope — et une feuille de route qui n'en commande aucun |
+| `geographie.mjs`, `stutter.mjs` | le plan d'ensemble avant le gros plan, les rafales qui n'ajoutent pas une coupe |
 | `escalade.mjs`, `teinte-match.mjs` | le montage qui monte avec la série, la couleur qui se prolonge ou décharge |
 
 Trois pièges de ce banc-là, pour qui le reprendra : la dernière route Playwright

@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-22 05:52";
+const VERSION_PAGE = "2026-09-22 07:15";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -6248,16 +6248,21 @@ async function genererLAmv() {
         });
       }
       if (projet.__roulements) {
-        const battues = montage.filter((x) => x.pulsations?.length);
-        const total = battues.reduce((s, x) => s + x.pulsations.length, 0);
+        const tenus = montage.filter((x) => x.pulsations?.length);
+        const total = tenus.reduce((s, x) => s + x.pulsations.length, 0);
+        /* « qui battent » était juste quand le rendu posait un stroboscope. Il ne
+           le pose plus : le plan est simplement TENU en travers de la rafale, et
+           c'est cela qu'il faut dire. Un journal qui annonce un effet retiré est
+           pire qu'un journal muet — on le croit. */
         noter(`Roulements : ${projet.__roulements} rafale${projet.__roulements > 1 ? "s" : ""}`
-          + ` sur les montées · ${battues.length} plan${battues.length > 1 ? "s" : ""} qui bat`
-          + ` · ${total} pulsations`, battues.length ? "fait" : "alerte", {
+          + ` sur les montées · ${tenus.length} plan${tenus.length > 1 ? "s" : ""} tenu`
+          + `${tenus.length > 1 ? "s" : ""} en travers · ${total} frappes traversées`,
+        tenus.length ? "fait" : "alerte", {
           rafales: projet.__roulements,
-          plansQuiBattent: battues.length,
-          pulsations: total,
+          plansTenus: tenus.length,
+          frappesTraversees: total,
           // On ne coupe pas sur un roulement : huit plans en une seconde ne se
-          // lisent pas. C'est l'image qui bat, pas le montage qui accélère.
+          // lisent pas. Le plan tient, et c'est tout ce qui se passe.
           coupesAjoutees: 0,
         });
       }
@@ -7340,6 +7345,7 @@ window.__banc = {
   raccordChromatique: (...a) => raccordChromatique(...a),
   synchroInterne: (...a) => synchroInterne(...a),
   guidageDuRegard: (...a) => guidageDuRegard(...a), ouDuPlan: (x) => ouDuPlan(x),
+  grammaireSpatiale: (...a) => grammaireSpatiale(...a),
   penteDuMouvement: (...a) => penteDuMouvement(...a),
   roulementsDe: (...a) => roulementsDe(...a),
   teinteDuPlan: (x) => teinteDuPlan(x), ecartDeTeinte: (a, z) => ecartDeTeinte(a, z),
@@ -16055,18 +16061,22 @@ function feuilleDeRoute(projet, musique) {
          d'œil où sont les chocs et où sont les respirations, sans lire un seul
          nom. */
       famille: familleDe(plan) || "",
-      /* L'éclair ne part que vers le rendu : l'archive DaVinci doit livrer les
-         rushs tels quels, pour qu'on puisse reprendre le montage. */
-      ...(plan.eclair ? { eclair: true } : {}),
-      /* Le pic du mouvement, en temps source absolu : c'est là que le coup part,
-         et c'est ce qui permet au runner de poser sa rampe de vitesse. Comme
-         l'éclair, il ne va qu'au rendu — l'archive DaVinci livre les rushs tels
-         quels. */
-      ...(typeof plan.pic === "number" ? { pic: Math.round(plan.pic * 1000) / 1000 } : {}),
-      /* Les frappes d'un roulement, comptées depuis le début du plan : le rendu
-         y pose une pulsation de luminance. Le plan ne se coupe pas davantage —
-         huit plans différents en une seconde ne se lisent pas. */
-      ...(plan.pulsations?.length ? { pulsations: plan.pulsations } : {}),
+      /* Et rien d'autre. La feuille de route portait trois marques d'effet —
+         « eclair » pour l'image blanche d'impact, « pic » pour la rampe de
+         vitesse, « pulsations » pour le stroboscope des roulements. Les trois
+         effets ont été retirés du runner le 22/09/2026 : un rush de sakuga se
+         monte à l'état brut, vitesse et cadrage natifs.
+
+         Les marques partent avec eux. Transmettre une consigne que personne
+         n'exécute, c'est laisser la porte ouverte : la prochaine lecture du
+         script y verrait une intention à honorer. Ce que la feuille de route
+         contient est ce que le rendu fait — sinon elle ne se lit plus.
+
+         Les crêtes et les roulements, eux, restent mesurés DANS LA PAGE : c'est
+         d'eux que dépendent le choix du plan, la fenêtre taillée autour du coup
+         et ce que le journal annonce. Ils décident des images qu'on montre, non
+         du traitement qu'on leur applique — et c'est très exactement la
+         frontière demandée. */
     });
   }
 
@@ -19313,6 +19323,82 @@ function focusDuFil(plan, precedent, phase, cibles) {
   return HORS_DU_FIL;
 }
 
+/* ---- La géographie du combat : on pose le lieu avant de frapper ----------
+
+   Enchaîner directement des plans serrés plonge le spectateur dans l'action sans
+   qu'il sache où elle se déroule. Dans un animé professionnel, un affrontement
+   s'ouvre par un PLAN D'ÉTABLISSEMENT — un décor, une arène, deux silhouettes en
+   pied — pour ancrer l'espace et la distance entre les protagonistes. Puis
+   l'échelle se resserre :
+
+     large  →  moyen  →  serré
+     où      engagement  impact et réaction
+
+   Deux règles en découlent, et la seconde est la plus utile.
+
+   **L'ancrage.** À l'entrée d'un bloc d'action — la première coupe d'un drop, ou
+   d'une montée qui ouvre la séquence —, un plan large est fortement préféré et un
+   plan serré fortement découragé. La coupe suivante préfère le moyen, celle
+   d'après le serré : la descente d'échelle se fait d'elle-même.
+
+   **L'interdiction de l'action désorientante.** Sur TOUTE coupe d'un bloc
+   d'action, un plan serré coûte cher si aucun plan large n'a été posé dans les
+   trois coupes précédentes. C'est la règle qui tient le montage sur la durée :
+   sans elle, l'ancrage ne vaudrait que pour la première coupe et le drop
+   repartirait en gros plans dès la quatrième.
+
+   **L'anti-monotonie**, enfin, qui vaut partout : deux plans de même échelle
+   collés bout à bout aplatissent le relief. La règle existait mais ne valait que
+   si les DEUX plans étaient fixes — donc presque jamais dans un drop. Elle vaut
+   maintenant pour tous, et plus lourdement.
+
+   Les plans d'effet ne comptent dans aucune des trois : une explosion n'a pas
+   d'échelle. */
+const ANCRAGE_LARGE = 16;      // ce que vaut un plan d'ensemble en tête de bloc
+const ANCRAGE_SERRE = 18;      // ce que coûte un gros plan en tête de bloc
+const DESCENTE_MOYEN = 8;      // la deuxième coupe préfère le plan moyen
+const DESCENTE_SERRE = 7;      // la troisième préfère le gros plan
+const SANS_ANCRAGE = 14;       // un gros plan sans plan large récent
+const MEMONOTONIE = 11;        // deux plans de même échelle de suite
+const MEMOIRE_ANCRAGE = 3;     // combien de coupes en arrière on regarde
+
+const EN_ACTION = new Set(["montee", "drop"]);
+
+/* « rangDansLeBloc » vaut 0 sur la première coupe du bloc d'action, 1 sur la
+   suivante, et ainsi de suite. « echelles » est la liste des échelles des
+   dernières coupes posées, la plus récente en dernier. */
+function grammaireSpatiale(plan, precedent, phase, rangDansLeBloc, echelles) {
+  const ici = echelleDe(plan);
+  let note = 0;
+
+  /* L'anti-monotonie, partout. Un effet n'a pas d'échelle : il ne monotonise
+     rien, et rien ne le monotonise. */
+  if (precedent && ici !== "effet") {
+    const avant = echelleDe(precedent);
+    if (avant === ici) note += MEMONOTONIE;
+  }
+
+  if (!EN_ACTION.has(phase)) return note;
+
+  /* L'ancrage, en tête de bloc. */
+  if (rangDansLeBloc === 0) {
+    if (ici === "large") note -= ANCRAGE_LARGE;
+    else if (ici === "serre") note += ANCRAGE_SERRE;
+  } else if (rangDansLeBloc === 1) {
+    if (ici === "moyen") note -= DESCENTE_MOYEN;
+  } else if (rangDansLeBloc === 2) {
+    if (ici === "serre") note -= DESCENTE_SERRE;
+  }
+
+  /* L'interdiction de l'action désorientante : pas de gros plan sans repère
+     spatial récent. C'est la règle qui tient sur la durée. */
+  if (ici === "serre") {
+    const recentes = echelles.slice(-MEMOIRE_ANCRAGE);
+    if (!recentes.includes("large")) note += SANS_ANCRAGE;
+  }
+  return note;
+}
+
 /* ---- Le guidage du regard, et les charnières masquées -------------------
 
    L'œil suit une chose à la fois. Sur une suite de coupes rapides — une montée,
@@ -19655,10 +19741,32 @@ function humeur(id, graine, pris = 0) {
    immobiles collés bout à bout se lisent comme un seul plan qui saute. Il ne
    compte que lorsque les DEUX sont fixes — deux plans serrés qui bougent sont
    deux gestes, pas une répétition. */
+/* Quatre valeurs de cadre, et non deux — parce que les effets n'en ont pas.
+
+   La liste comptait « serre » et « large », et « large » contenait « debris »,
+   « smoke », « explosions », « beams ». Or une explosion n'a pas d'échelle : elle
+   remplit le cadre, qu'il soit serré ou large. La ranger avec les décors faisait
+   passer un plan d'explosion pour un plan d'ensemble — exactement ce qu'il ne faut
+   pas quand on cherche à poser un lieu.
+
+   Les quatre valeurs, et ce qu'elles servent :
+
+     large   décors, panoramas, foules      ce qui POSE le lieu
+     moyen   corps entiers, courses, mecha  ce qui ENGAGE l'action
+     serre   visages, regards, acting       ce qui montre la RÉACTION
+     effet   feu, fumée, débris, rayons     aucune échelle propre
+
+   « effet » ne participe ni à l'ancrage spatial ni à l'anti-monotonie : deux
+   explosions de suite ne sont pas deux plans de même cadre, ce sont deux
+   explosions. */
 const ECHELLES = {
   serre: ["character_acting", "dialogue", "crying", "eating", "smoking", "hair", "fabric"],
-  large: ["background_animation", "debris", "smoke", "explosions", "beams", "wind",
-    "liquid", "ice", "creatures", "vehicle", "motorcycles"],
+  large: ["background_animation", "3d_background", "wind", "crowd", "scenery",
+    "liquid", "ice"],
+  moyen: ["running", "chase", "fighting", "flying", "sliding", "walk_cycle", "dancing",
+    "sports", "mecha", "creatures", "vehicle", "motorcycles", "henshin", "morphing"],
+  effet: ["debris", "smoke", "explosions", "beams", "sparks", "fire", "lightning",
+    "impact_frames", "effects", "smears"],
 };
 
 function echelleDe(plan) {
@@ -19677,7 +19785,7 @@ function estFixe(plan) {
 
 function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0,
   graine = 0, partFrappe = 0, phase = "", cibles = [], axe = null, climax = false,
-  charniere = false, ecartApres = 0) {
+  charniere = false, ecartApres = 0, rangDansLeBloc = -1, echelles = []) {
   // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
   const fort = partFrappe >= 0.62;
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
@@ -19867,8 +19975,9 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
   })();
 
   /* Deux plans fixes du même cadrage collés bout à bout se lisent comme un seul
-     plan qui saute. Deux plans serrés qui BOUGENT sont deux gestes : la règle ne
-     vaut que quand les deux sont immobiles. */
+     plan qui saute. La règle ne valait QUE dans ce cas-là — les deux immobiles —
+     donc presque jamais dans un drop. Elle garde son supplément pour le cas le
+     plus voyant, et « grammaireSpatiale » se charge du cas général. */
   const jumpcut = precedent && estFixe(precedent) && estFixe(plan)
     && echelleDe(precedent) === echelleDe(plan) ? 9 : 0;
 
@@ -19879,6 +19988,7 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
     + raccordChromatique(precedent, plan, phase, charniere)
     + synchroInterne(plan, 0, dureeSource(plan), ecartApres, fort)
     + guidageDuRegard(precedent, plan, phase, ecartApres > 0 && ecartApres <= 0.9)
+    + grammaireSpatiale(plan, precedent, phase, rangDansLeBloc, echelles)
     + accordDuMouvement(precedent, plan, fort)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -21149,6 +21259,11 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
      barème de constater qu'aucun plan ne le porte, et de laisser les autres
      critères décider — le montage sort quand même. */
   const cibles = (projet.auteurs || []).filter(Boolean).slice(0, 2);
+  /* Les échelles des dernières coupes posées, et le rang dans le bloc d'action en
+     cours. Le bloc commence à la première coupe d'une montée ou d'un drop qui
+     suit un passage calme : c'est là qu'il faut poser le lieu. */
+  const echellesPosees = [];
+  let rangDansLeBloc = -1;
   /* L'axe de la série, et où tombe son climax.
 
      Le dernier drop du morceau est le climax de l'AMV : c'est là qu'on réserve
@@ -21286,6 +21401,13 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
        les premières secondes. */
     const phase = phaseDuMontage(section, rangSection, sections, rythme.duree || 0);
     const climax = phase === "drop" && rangSection === dernierDrop;
+    /* Un nouveau bloc d'action : ce passage est en action et le précédent ne
+       l'était pas. C'est l'entrée en séquence de combat, et c'est le seul moment
+       où l'on impose un plan d'ensemble. */
+    const avantEnAction = rangSection > 0 && EN_ACTION.has(
+      phaseDuMontage(sections[rangSection - 1], rangSection - 1, sections, rythme.duree || 0));
+    if (EN_ACTION.has(phase) && !avantEnAction) rangDansLeBloc = 0;
+    else if (!EN_ACTION.has(phase)) rangDansLeBloc = -1;
     /* La charnière : le premier plan d'un drop qui suit une montée. C'est la
        seule case du montage où le clash chromatique est une décharge et non un
        décrochage — et c'est une case par drop, pas une préférence générale. */
@@ -21405,10 +21527,37 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
            réellement pas assez de matière — trente rushs de trois secondes, c'est
            quatre-vingt-dix secondes pour trois minutes de musique — et le journal
            le dit en clair. */
+        /* ---- L'interdiction de l'action désorientante ---------------------
+
+           Une préférence chiffrée ne suffisait pas : le barème est une somme, et
+           quinze points de grammaire se font racheter par un accord d'énergie et
+           une scène neuve. Mesuré — un bloc d'action sur deux s'ouvrait sur une
+           explosion, et trois gros plans d'action sur neuf tombaient sans qu'un
+           plan d'ensemble ait été posé dans les trois coupes d'avant.
+
+           C'est donc une règle, comme « pas deux fois le même rush de suite » :
+           à l'entrée d'un bloc d'action, seul un plan d'ensemble pose le lieu ;
+           ailleurs dans le bloc, un gros plan exige un repère spatial récent.
+
+           Elle ne s'arme que si le catalogue peut la tenir. Un projet sans le
+           moindre plan large viderait la pioche à chaque entrée de bloc et
+           pousserait le montage vers le quatrième tour — donc vers la redite,
+           qui coûte bien plus cher au spectateur qu'un cadrage mal posé. */
+        const phaseIci = bord ? "" : phase;
+        const geoInterdit = (plan) => {
+          if (!EN_ACTION.has(phaseIci)) return false;
+          const ici = echelleDe(plan);
+          if (rangDansLeBloc === 0) return ici !== "large";
+          if (ici === "serre") return !echellesPosees.slice(-MEMOIRE_ANCRAGE).includes("large");
+          return false;
+        };
+        const geoTenable = sources.some((plan) => !geoInterdit(plan));
+
         for (const tour of [0, 1, 2, 3]) {
           let meilleure = Infinity;
           for (const plan of sources) {
             if (tour < 3 && refuses.has(String(idRush(plan)))) continue;
+            if (tour < 3 && geoTenable && geoInterdit(plan)) continue;
             if (tour === 0 && dejaPris.has(String(idRush(plan)))) continue;
             if (tour <= 1 && rushEpuise(plan, momentsPris, vise, bord ? "" : phase)) continue;
             /* Au deuxième tour on lève le plafond, pas la réservation : il faut
@@ -21428,7 +21577,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             const court = dureeSource(plan) < vise ? 3 : 0;
             const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets,
               serie, graine, partFrappe, bord ? "" : phase, cibles, axe, climax,
-              charniere, vise) + court;
+              charniere, vise, rangDansLeBloc, echellesPosees) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) { tourRetenu = tour; if (tour === 3) cedeALaRedite += 1; break; }
@@ -21540,6 +21689,9 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
         __famille: undefined,
       });
       if (charniere) charniereAPoser = false;
+      echellesPosees.push(echelleDe(choix));
+      if (echellesPosees.length > 8) echellesPosees.shift();
+      if (rangDansLeBloc >= 0) rangDansLeBloc += 1;
       choix.__pris = (choix.__pris || 0) + 1;
       dejaPris.add(String(idRush(choix)));
       reserver(momentsPris, choix, bornes.entree, bornes.sortie, bord ? "" : phase);

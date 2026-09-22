@@ -25,7 +25,6 @@ modules voisins — « sens.py » et « teinte.py » — suivent la même règle
 """
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -77,176 +76,53 @@ def ffmpeg(*arguments):
         raise RuntimeError(f"ffmpeg a refusé : {fait.stderr.strip()[:400]}")
 
 
-# La secousse d'impact : trois images, et pas une de plus.
+# ---- Ce qui a été RETIRÉ, et pourquoi c'est écrit ici ---------------------
 #
-# Sur une crête servie par un choc — les mêmes coupes que l'éclair —, la caméra
-# accuse le coup : cinq pour cent de zoom et un déplacement latéral de trois
-# pixels, le temps de trois images, soit cent vingt-cinq millisecondes à 24 i/s.
-# C'est sous le seuil où l'on voit « un effet » et au-dessus de celui où l'on ne
-# voit rien : on sent la frappe sans savoir ce qui l'a produite.
+# Ce fichier a porté quatre effets procéduraux, tous mesurés, tous validés, tous
+# retirés le 22/09/2026 sur une décision de mise en scène : un rush de sakuga se
+# monte À L'ÉTAT BRUT.
 #
-# « zoompan » avec « d=1 » et une taille de sortie imposée rend exactement une
-# image par image reçue : le compte est conservé, donc la ligne de temps ne bouge
-# pas d'un vingt-quatrième de seconde. Vérifié : 36 images avant, 36 après, et les
-# images 3 et suivantes rigoureusement identiques au plan sans secousse.
-TRAMES_SECOUSSE = 3
-ZOOM_IMPACT = 1.05
-ECART_IMPACT = 3
-
-
-def secousse(cadence):
-    """Le filtre de secousse, ou rien."""
-    fin = TRAMES_SECOUSSE / float(cadence)
-    return (
-        f"zoompan=z='if(lt(it,{fin:.4f}),{ZOOM_IMPACT},1)':d=1"
-        f":x='iw/2-(iw/zoom/2)+if(lt(it,{fin:.4f}),{ECART_IMPACT}*sin(it*180),0)'"
-        f":y='ih/2-(ih/zoom/2)'"
-        f":s={{largeur}}x{{hauteur}}:fps={cadence}"
-    )
-
-
-# ---- La rampe de vitesse -------------------------------------------------
+#   l'éclair d'impact     une image blanche sur la première image du plan
+#   la secousse           5 % de zoom et 3 px de déplacement, trois images
+#   la rampe de vitesse   0,65× avant le pic, 1,8× après
+#   la pulsation          un stroboscope d'une image sur les roulements
 #
-# Un monteur ne laisse presque jamais un plan de frappe à vitesse constante :
-# l'anticipation s'étire pour faire monter la tension, puis le coup s'écrase en
-# accélération pile sur le temps fort. C'est le geste le plus reconnaissable du
-# montage de concours, et il ne s'improvise pas — il se calcule.
+# Ils marchaient. La durée de sortie ne bougeait pas d'une image, la rampe allait
+# chercher le pic à l'image près, le stroboscope stroboscopait vraiment. Ce n'est
+# pas pour un défaut technique qu'ils partent : c'est que du zoom numérique et du
+# ré-échantillonnage temporel posés sur de l'animation dessinée à la main la
+# dénaturent. Un animateur a décidé de la vitesse de son geste ; la rejouer à
+# 0,65× efface ce qu'il a fait.
 #
-# LA CONTRAINTE QUI COMMANDE TOUT : la durée du segment sur la ligne de temps ne
-# doit pas bouger d'un vingt-quatrième de seconde. Tout le montage est calé sur la
-# musique ; un plan qui s'allonge de deux images décale tout ce qui suit.
+# Ce qui RESTE, et c'est le seul survivant : l'harmonisation colorimétrique vers
+# la médiane du montage. Elle ne change ni le cadre, ni la vitesse, ni une seule
+# image — elle rapproche un cut de 2003 d'une séquence de 2024 pour que la coupe
+# entre les deux ne saute pas.
 #
-# Or on ne peut pas à la fois garder la durée de sortie, garder la fenêtre source
-# ET choisir les deux vitesses : les trois se contredisent. Si l'on joue [0, p) à
-# 0,65× et [p, D) à 1,8×, la sortie dure p/0,65 + (D−p)/1,8, et cela ne vaut D que
-# si le pic tombe pile à 45,2 % du plan. Il n'y tombe jamais.
-#
-# C'est donc la FENÊTRE SOURCE qu'on recalcule autour du pic, et c'est exactement
-# ce que fait un monteur : il déplace son point d'entrée pour que l'impact tombe
-# sur le temps. La durée de sortie, elle, ne bouge pas d'une image.
-#
-#   sortie : N images, dont l'impact à l'image Ni = round(f × N)
-#   avant  : Ni images de sortie à 0,65×  ->  0,65 × Ni/cadence de source
-#   après  : N−Ni images de sortie à 1,8× ->  1,8 × (N−Ni)/cadence de source
-#
-# Le point d'impact est posé à 62 % du segment : assez d'élan pour qu'on sente
-# l'attente, assez de chute pour que le coup se voie.
-LENT = 0.65
-VIF = 1.8
-PART_IMPACT = 0.62
+# Le montage continue de MESURER les crêtes et les roulements : c'est d'eux que
+# dépendent le choix du plan et la fenêtre taillée autour du coup. Mais ils ne
+# traversent plus. La feuille de route portait « eclair », « pic » et
+# « pulsations » ; ces trois champs ont été retirés avec les effets qu'ils
+# commandaient. Une consigne que personne n'exécute n'est pas inoffensive : elle
+# se relit comme une intention à honorer. Ce que la feuille de route contient est
+# désormais ce que ce script fait, et rien de plus — une adresse, deux bornes, un
+# nom, une famille, et la correction de couleur.
 
 
-def rampe(pic, entree, sortie, cadence, duree_source):
-    """La fenêtre source et l'expression « setpts » d'une rampe, ou rien.
-
-    Rien dès que le fichier ne peut pas fournir ce qu'il faut de part et d'autre
-    du pic : mieux vaut un plan à vitesse constante qu'un plan qui déborde.
-    """
-    if pic is None or cadence <= 0:
-        return None
-    longueur = float(sortie) - float(entree)
-    images = int(round(longueur * cadence))
-    # Sous cinq images, une rampe ne se voit pas et ne laisse pas la place aux
-    # deux phases.
-    if images < 5:
-        return None
-
-    avant = int(round(PART_IMPACT * images))
-    avant = max(2, min(images - 2, avant))
-    apres = images - avant
-
-    besoin_avant = LENT * avant / cadence
-    besoin_apres = VIF * apres / cadence
-    debut = float(pic) - besoin_avant
-    fin = float(pic) + besoin_apres
-    if debut < 0 or (duree_source and fin > duree_source):
-        return None
-
-    # « T » est l'instant d'entrée en secondes, remis à zéro par le « -ss ». Le
-    # pic tombe donc à « besoin_avant » dans le segment découpé.
-    k = besoin_avant
-    expression = (f"setpts='(if(lt(T,{k:.6f}),T/{LENT},"
-                  f"{k / LENT:.6f}+(T-{k:.6f})/{VIF}))/TB'")
-    return {
-        "debut": round(debut, 4),
-        "fin": round(fin, 4),
-        "images": images,
-        "imageImpact": avant,
-        "setpts": expression,
-    }
-
-
-# ---- La pulsation des roulements -----------------------------------------
-#
-# Dans une montée de trap, de phonk ou de drum & bass, la caisse claire et les
-# charleys roulent : des doubles croches de plus en plus serrées jusqu'au drop.
-# La page les repère et dit au rendu à quels instants elles tombent.
-#
-# Ce qu'on NE fait pas : couper à chaque frappe. Huit plans différents en une
-# seconde ne se lisent pas — l'œil n'a pas le temps de comprendre une image, et
-# le résultat est un bruit visuel, pas une accélération. Un monteur tient son
-# plan et le fait battre.
-#
-# UNE image plus claire par frappe, et rien entre : c'est un stroboscope discret,
-# calé au son. Et une seule, parce que le banc a montré ce qui se passe sinon.
-#
-# À deux images de large, les créneaux se RECOUVRENT : un roulement de doubles
-# croches frappe toutes les 80 ms, une pulsation de 83 ms déborde sur la suivante,
-# et les huit battements fondent en un seul éclaircissement de huit images. Ce
-# n'est plus un stroboscope, c'est une lampe qu'on allume. Mesuré : images 5 à 12
-# claires d'un bloc là où l'on en voulait quatre isolées.
-#
-# La pulsation doit donc tenir dans l'intervalle du roulement. Un peu moins d'une
-# image — « between » est inclusif aux deux bouts, et à 1/cadence pile il en
-# attrape deux.
-#
-# Comme tout le reste, ça ne touche ni la durée du plan ni son nombre d'images :
-# c'est un filtre de luminance, pas une coupe.
-FORCE_PULSE = 0.18
-# Sous deux images d'écart, on ne peut plus alterner clair et sombre : la
-# pulsation n'existe qu'à partir du moment où il y a un « entre ».
-ECART_MINI_PULSE = 2
-
-
-def pulsation(pulsations, cadence):
-    """Le filtre qui fait battre l'image sur les frappes d'un roulement."""
-    if not pulsations:
-        return ""
-    cadence = float(cadence)
-    largeur = 0.9 / cadence
-    # On écarte les frappes trop serrées pour que l'œil les distingue : sous deux
-    # images d'intervalle, deux pulsations n'en feraient qu'une.
-    gardees = []
-    for q in sorted(float(x) for x in pulsations if float(x) >= 0):
-        if gardees and (q - gardees[-1]) * cadence < ECART_MINI_PULSE:
-            continue
-        gardees.append(q)
-    if not gardees:
-        return ""
-    # « eq » accepte une expression pour sa luminosité, évaluée à chaque image :
-    # on somme des créneaux, un par frappe. Le plan reste le même, il bat.
-    creneaux = "+".join(f"between(t,{q:.4f},{q + largeur:.4f})" for q in gardees[:24])
-    return f"eq=brightness='{FORCE_PULSE}*({creneaux})':eval=frame"
-
-
-def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, eclair=False,
-             couleur="", pic=None, duree_source=0.0, pulsations=None):
-    """Un plan, normalisé au cadre commun.
+def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, couleur=""):
+    """Un plan, normalisé au cadre commun — et rien d'autre.
 
     On réencode ici, et c'est voulu : les rushs viennent de sources différentes,
-    avec des définitions et des cadences qui ne concordent pas. Les concaténer
-    en copie de flux produirait un fichier que la plupart des lecteurs refusent.
-    Le runner a le temps ; le téléphone ne l'avait pas.
+    avec des définitions et des cadences qui ne concordent pas. Les concaténer en
+    copie de flux produirait un fichier que la plupart des lecteurs refusent. Le
+    runner a le temps ; le téléphone ne l'avait pas.
+
+    La chaîne de filtres ne contient plus que du cadrage et, quand il y a lieu, la
+    correction colorimétrique. Ni « zoompan », ni « drawbox », ni « setpts » : la
+    vitesse et le cadre du rush sont ceux que l'animateur a dessinés.
     """
     duree = max(0.05, float(sortie) - float(entree))
     images_voulues = int(round(duree * cadence))
-
-    # La rampe, quand le pic est connu ET que le fichier peut la fournir. Elle
-    # recalcule la fenêtre source ; la durée de sortie, elle, ne bouge pas.
-    courbe = rampe(pic, entree, sortie, cadence, duree_source) if eclair else None
-    if courbe:
-        entree = courbe["debut"]
-        duree = courbe["fin"] - courbe["debut"]
 
     filtres = [
         f"scale={largeur}:{hauteur}:force_original_aspect_ratio=decrease",
@@ -254,37 +130,12 @@ def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, eclair=Fal
         f"fps={cadence}",
         "setsar=1",
     ]
-    # L'harmonisation d'abord : elle corrige l'image du rush, et il ne faut pas
-    # qu'elle teinte le blanc de l'éclair ni les bords noirs du cadrage.
+    # Le seul effet qui reste, et il ne touche ni le cadre ni la vitesse : ramener
+    # la luminance, le contraste et la saturation vers la médiane du montage, pour
+    # qu'un cut de 2003 ne saute pas à côté d'une séquence de 2024.
     if couleur:
         filtres.append(couleur)
-    if courbe:
-        # La rampe se pose avant tout ce qui se règle sur le temps de sortie.
-        # « setpts » réécrit les horodatages ; « fps » refait ensuite une cadence
-        # constante, et c'est cette sortie-là que l'éclair et la secousse voient.
-        filtres.append(courbe["setpts"])
-        filtres.append(f"fps={cadence}")
-    # La pulsation après l'harmonisation — elle s'ajoute à l'image corrigée — et
-    # avant l'éclair, qui doit rester blanc pur.
-    battement = pulsation(pulsations, cadence)
-    if battement:
-        filtres.append(battement)
-    if eclair:
-        # L'éclair d'impact : une seule image blanche, sur la première du plan.
-        #
-        # Elle REMPLACE l'image, elle ne s'insère pas. Une image ajoutée
-        # décalerait tout ce qui suit d'un vingt-quatrième de seconde, et vingt
-        # éclairs dans un morceau de trois minutes, c'est presque une seconde de
-        # décalage entre l'image et le son — exactement ce que tout le reste du
-        # montage s'échine à éviter.
-        filtres.append(
-            f"drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='lt(t,{1 / cadence:.4f})'")
-        # La secousse accompagne l'éclair : ce sont les mêmes coupes — une crête
-        # à 85 % de la frappe la plus forte, servie par un plan de la famille du
-        # choc. Zoomer une image blanche la laisse blanche, l'ordre est donc sans
-        # conséquence, et la secousse doit venir en dernier pour que le cadrage
-        # qu'elle déplace soit celui qui sort.
-        filtres.append(secousse(cadence).format(largeur=largeur, hauteur=hauteur))
+
     ffmpeg(
         "-ss", f"{float(entree):.4f}",
         "-i", source,
@@ -294,7 +145,7 @@ def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, eclair=Fal
         # douze. « -ss » tombe entre deux images de la source, ffmpeg part donc de
         # la suivante et la dernière n'entre plus dans le « -t ». Sur cent coupes
         # dont beaucoup sont courtes, ce sont des dixièmes de seconde de dérive
-        # entre l'image et la musique — et c'était là avant la rampe.
+        # entre l'image et la musique.
         #
         # On demande donc un peu plus que nécessaire et l'on coupe au compte.
         "-t", f"{duree + 2 / cadence:.4f}",
@@ -328,34 +179,6 @@ def poser_musique(video, musique, vers):
         "-shortest", "-movflags", "+faststart",
         vers,
     )
-
-
-def duree_de(fichier):
-    """La durée d'un fichier, lue par ffprobe.
-
-    La rampe en a besoin : elle recalcule la fenêtre source autour du pic, et
-    déborder la fin du fichier donnerait un segment plus court que sa case —
-    c'est-à-dire un décalage entre l'image et la musique. Une durée inconnue rend
-    zéro, et la rampe s'abstient.
-    """
-    try:
-        fait = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", fichier],
-            capture_output=True, text=True, check=False)
-        return float(fait.stdout.strip())
-    except (OSError, TypeError, ValueError):
-        pass
-    # Pas de ffprobe : ffmpeg dit la même chose en tête de son journal. Le paquet
-    # « ffmpeg » des runners fournit les deux, mais on ne le suppose pas — un
-    # binaire seul suffit à tout faire tourner.
-    fait = subprocess.run(["ffmpeg", "-hide_banner", "-i", fichier],
-                          capture_output=True, text=True, check=False)
-    trouve = re.search(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)", fait.stderr or "")
-    if not trouve:
-        return 0.0
-    heures, minutes, secondes = trouve.groups()
-    return int(heures) * 3600 + int(minutes) * 60 + float(secondes)
 
 
 def renvoyer_les_sens(rapatries, plans, mesures=None):
@@ -459,9 +282,7 @@ def main():
         # calcule, et la correction s'applique ensuite. Quelques images par rush à
         # 48 x 27 — une poignée de millisecondes chacune.
         mesures = {}
-        durees = {}
         for adresse, fichier in rapatries.items():
-            durees[adresse] = duree_de(fichier)
             try:
                 mesures[adresse] = teinte.mesurer(fichier)
             except Exception:                           # noqa: BLE001
@@ -483,21 +304,14 @@ def main():
         for rang, plan in enumerate(plans):
             morceau = os.path.join(dossier, f"plan{rang:04d}.mp4")
             decouper(rapatries[plan["video"]], plan["entree"], plan["sortie"],
-                     morceau, cadence, largeur, hauteur, bool(plan.get("eclair")),
-                     couleurs.get(plan["video"], ""),
-                     plan.get("pic"), durees.get(plan["video"], 0.0),
-                     plan.get("pulsations"))
+                     morceau, cadence, largeur, hauteur,
+                     couleurs.get(plan["video"], ""))
             morceaux.append(morceau)
-            marques = []
-            if plan.get("eclair"):
-                marques.append("éclair+secousse")
-            if plan.get("eclair") and rampe(plan.get("pic"), plan["entree"], plan["sortie"],
-                                            cadence, durees.get(plan["video"], 0.0)):
-                marques.append("rampe 0,65× → 1,8×")
-            if plan.get("pulsations"):
-                marques.append(f"{len(plan['pulsations'])} pulsations")
-            print(f"plan {rang + 1}/{len(plans)}"
-                  + (f" · {' · '.join(marques)}" if marques else ""), flush=True)
+            # Une ligne par plan, et ce qu'elle dit est tout ce qui lui arrive :
+            # le cadre commun, la cadence commune, et une correction de couleur
+            # quand le plan en demande une.
+            teinte = "couleur harmonisée" if couleurs.get(plan["video"]) else "brut"
+            print(f"plan {rang + 1}/{len(plans)} · {teinte}", flush=True)
 
         muet = os.path.join(dossier, "muet.mp4")
         assembler(morceaux, muet, dossier)

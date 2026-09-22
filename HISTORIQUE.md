@@ -5185,3 +5185,125 @@ ailleurs.
 - Deux coupes dans la même milliseconde produisaient deux plans de même
   identifiant, ce qui dérègle la sélection et l'historique.
 - L'export échouait sur un rush sans adresse de fichier.
+
+---
+
+## Les quatre effets procéduraux du rendu, et pourquoi ils sont partis
+
+Le runner a porté quatre effets ajoutés à l'image, mis au point entre la v2.1 et
+la v3.0. Ils sont tous partis le 22/09/2026, d'un coup, sur une décision de mise en
+scène : **un rush de sakuga se monte à l'état brut**, vitesse et cadrage natifs.
+
+Ce n'est pas un échec technique, et c'est pour ça qu'ils sont racontés ici en
+entier. La durée de sortie ne bougeait pas d'une image, la rampe trouvait le pic à
+l'image près, le stroboscope stroboscopait vraiment — les bancs le tenaient. Mais du
+zoom numérique et du ré-échantillonnage temporel posés sur de l'animation dessinée à
+la main la dénaturent : un animateur a décidé de la vitesse de son geste, et la
+rejouer à 0,65× efface ce qu'il a fait.
+
+Ce qui a survécu — l'harmonisation colorimétrique vers la médiane du montage — est
+décrit dans le [README](README.md#le-rendu-brut-et-lharmonisation-des-teintes). Elle
+ne change ni le cadre, ni la vitesse, ni une seule image.
+
+Ce que les crêtes et les roulements décident encore, en revanche, est intact : la
+famille du plan, la fenêtre taillée autour du coup, et le refus de couper sur un
+roulement. Ce qui a disparu, c'est le TRAITEMENT de l'image, pas la lecture de la
+musique.
+
+Le banc `remap.py`, qui tenait la rampe, a été retiré de la suite. `vfx.py`, qui
+tenait les effets, a été réécrit pour tenir leur **absence** : il espionne la
+commande ffmpeg réelle et vérifie qu'aucun `zoompan`, `drawbox`, `setpts` ni
+`brightness=` n'y figure.
+
+### L'éclair d'impact
+
+Sur les crêtes servies par un choc, le rendu pose **une image blanche sur la
+première image du plan** — deux sur cinquante coupes, par construction.
+
+Elle **remplace** l'image, elle ne s'insère pas. Une image ajoutée décalerait
+tout ce qui suit d'un vingt-quatrième de seconde, et vingt éclairs dans un
+morceau de trois minutes feraient presque une seconde de déphasage — exactement
+ce que tout le reste du montage s'échine à éviter. Un filtre en fin de chaîne
+ffmpeg suffit, sans coût d'encodage :
+
+```
+drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='lt(t,0.0417)'
+```
+
+L'archive DaVinci, elle, ne flashe pas : elle livre les rushs tels quels, pour
+qu'on puisse reprendre le montage. Un éclair est un choix de rendu, pas une
+donnée de source.
+
+
+### La rampe de vitesse, et la géométrie qui la contraint
+
+Un monteur ne laisse presque jamais un plan de frappe à vitesse constante :
+l'anticipation s'étire pour faire monter la tension, puis le coup s'écrase en
+accélération pile sur le temps fort. Sur les crêtes servies par un choc dont on
+sait situer le pic, le runner pose donc une courbe en deux morceaux — 0,65× avant
+le pic, 1,8× après.
+
+**L'énoncé naïf est impossible, et c'est là que tout se joue.** On ne peut pas à
+la fois garder la durée de sortie, garder la fenêtre source et choisir les deux
+vitesses. Jouer `[0, p)` à 0,65× et `[p, D)` à 1,8× fait durer la sortie
+`p/0,65 + (D−p)/1,8`, et cela ne vaut `D` que si le pic tombe pile à 45,2 % du
+plan. Il n'y tombe jamais.
+
+C'est donc la **fenêtre source** qu'on recalcule autour du pic — exactement ce que
+fait un monteur quand il déplace son point d'entrée pour que l'impact tombe sur le
+temps :
+
+```
+sortie : N images, dont l'impact à l'image Ni = round(0,62 × N)
+avant  : Ni images de sortie à 0,65×   ->  0,65 × Ni/cadence de source
+après  : N−Ni images de sortie à 1,8×  ->  1,8 × (N−Ni)/cadence de source
+```
+
+Il faut environ 8,7 % de source de plus que la case, et l'on s'abstient quand le
+fichier ne peut pas les fournir. Pas de pic connu, plan sous cinq images, pic trop
+près d'un bord : pas de rampe non plus. Mesuré : **24/24, 12/12, 7/7 et 48/48
+images**, l'impact à l'image annoncée à une près, et la phase de choc 2,45 fois
+plus rapide que la phase d'élan.
+
+
+### La secousse d'impact
+
+Sur les crêtes servies par un choc — les mêmes coupes que
+l'éclair — la caméra accuse le coup : 5 % de zoom, trois pixels de déplacement
+latéral, **trois images**, soit 125 ms à 24 i/s.
+
+```
+zoompan=z='if(lt(it,0.125),1.05,1)':d=1:x='iw/2-(iw/zoom/2)+if(lt(it,0.125),3*sin(it*180),0)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=24
+```
+
+`d=1` avec une taille de sortie imposée rend exactement une image par image reçue :
+48 images avant, 48 après, et tout ce qui suit la secousse rigoureusement
+identique au plan sans elle. **La ligne de temps ne bouge pas d'un vingt-quatrième
+de seconde**, ce qui est la seule chose qui compte.
+
+
+### La pulsation des roulements
+
+Dans une montée de trap, de phonk ou de drum & bass, les charleys roulent en
+doubles croches jusqu'au drop. On ne coupe pas dessus — huit plans différents en une
+seconde ne se lisent pas — et cette règle-là est toujours en vigueur : elle vit dans
+la page, pas dans le rendu. Ce qui est parti, c'est ce qui suit : faire BATTRE
+l'image au lieu de la couper.
+
+La page repère les rafales — au moins quatre frappes à moins de 150 ms, sur une
+montée, dans la bande la plus fine disponible — et le rendu y pose une pulsation
+de luminance de 18 %. Vérifié : **50 coupes avec rafales, 50 sans**, à la coupe
+près.
+
+Deux garde-fous, et les deux comptent. Un roulement plus long que 2,4 s n'en est
+plus un : c'est le motif ordinaire du morceau, et le faire battre serait un tic.
+Et une rafale n'est reconnue que sur une **montée** — la même sur un drop est
+ignorée, ce que le banc vérifie explicitement.
+
+**La largeur de la pulsation est tout le problème.** À deux images, les créneaux se
+recouvrent : un roulement frappe toutes les 80 ms, une pulsation de 83 ms déborde
+sur la suivante, et les huit battements fondent en un seul éclaircissement de huit
+images — ce n'est plus un stroboscope, c'est une lampe qu'on allume. La pulsation
+tient donc dans une image, et les frappes plus serrées que deux images sont
+écartées : à 24 images par seconde, on ne peut pas alterner clair et sombre plus
+vite. Mesuré : images claires **5, 9, 13** — une allumée, trois éteintes.

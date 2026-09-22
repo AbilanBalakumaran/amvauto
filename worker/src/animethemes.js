@@ -22,7 +22,9 @@ function qualite(video) {
   let note = 40;
   if (video.resolution >= 1080) note += 20;
   else if (video.resolution >= 720) note += 10;
-  if (video.nc) note += 15;
+  // Plus de bonus NC : depuis que le NC est une condition d'entrée, tout ce qui
+  // arrive ici en porte un, et quinze points pour tout le monde ne trient rien.
+
   if (video.source === "BD") note += 12;
   else if (video.source === "WEB") note += 5;
   else note += 3;
@@ -65,13 +67,40 @@ export async function themes(query) {
         // C'est ce qui permet de monter sur l'un et de rendre sur l'autre :
         // les points de coupe tombent au même endroit.
         if (!variantes.length) continue;
-        const parQualite = [...variantes].sort((a, b) => qualite(b) - qualite(a));
+
+        /* ---- Sans crédits, ou rien --------------------------------------
+
+           Un générique crédité porte les noms du staff en surimpression, et
+           souvent la typographie du titre. Dans un AMV de concours, c'est du
+           texte à l'écran : ça disqualifie le montage avant qu'on regarde le
+           rythme.
+
+           On ne « préférait » que le NC, par un bonus de quinze points au
+           barème de qualité — donc un générique crédité en 1080p Blu-ray
+           passait devant un NC en 720p web, et se retrouvait dans la pioche.
+           Le tri n'est pas un filtre.
+
+           Maintenant : le NC est une condition d'entrée. Une version qui n'en
+           a aucun est écartée entière, même si sa variante créditée était plus
+           légère ou mieux définie. Un générique qui n'existe qu'avec crédits
+           n'entre pas dans la pioche.
+
+           AnimeThemes le dit lui-même, par « nc: true » sur chaque fichier —
+           c'est la métadonnée du site, pas une devinette sur un nom de
+           fichier. */
+        const sansCredits = variantes.filter((v) => v.nc === true);
+        if (!sansCredits.length) continue;
+        const parQualite = [...sansCredits].sort((a, b) => qualite(b) - qualite(a));
         const rendu = parQualite[0];
         // À poids égal on préfère la variante qui montre la même chose que le
         // rendu — créditée ou non : pendant le montage, autant voir l'image
         // qu'on rendra. Et on ne double le nombre de fichiers que si le gain
         // est réel : en dessous de 15 % d'économie, un seul fichier suffit.
-        const candidats = variantes
+        /* Le fichier de montage se choisit PARMI LES NC, lui aussi. Il s'affiche
+           pendant qu'on monte, et c'était la dernière porte par laquelle du
+           texte entrait : « montageCredite » le signalait au lieu de
+           l'interdire. */
+        const candidats = sansCredits
           .filter((v) => v.link !== rendu.link && v.size && rendu.size && v.size < rendu.size * 0.85)
           .sort(
             (a, b) =>
@@ -82,7 +111,7 @@ export async function themes(query) {
         const montage = candidats[0] || null;
 
         const etiquettes = [
-          rendu.nc ? "NC" : "crédité",
+          "NC",
           `${rendu.resolution}p`,
           rendu.source || "",
         ].filter(Boolean);
@@ -105,13 +134,12 @@ export async function themes(query) {
           // source n'offre qu'un seul fichier.
           montage: montage ? montage.link : null,
           montageHauteur: montage ? montage.resolution || 0 : 0,
-          // Le fichier de montage porte parfois les crédits que le rendu n'a
-          // pas : même image, même durée, du texte en plus. À dire, sinon la
-          // surprise arrive au rendu.
-          montageCredite: montage ? montage.nc !== rendu.nc : false,
+          // Toujours faux depuis que les deux fichiers sortent du même lot de NC.
+          // Le champ reste pour la page, qui l'affiche.
+          montageCredite: false,
           preview: null,
           page: anime.slug ? `https://animethemes.moe/anime/${anime.slug}` : "https://animethemes.moe",
-          flags: [rendu.nc ? "sans crédits" : "avec crédits", rendu.source].filter(Boolean),
+          flags: ["sans crédits", rendu.source].filter(Boolean),
           episode: null,
         });
       }
