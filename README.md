@@ -24,7 +24,7 @@ Trois autres pistes ont été écartées après essai : **Internet Archive** ne 
 reuploads YouTube et des rips d'épisodes, **openings.moe** sert des liens morts sur un
 catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et contenu explicite.
 
-> **Ce que l'outil est aujourd'hui — v3.0, « Elite / Akross »** (`v3.0-elite-engine`).
+> **Ce que l'outil est aujourd'hui — v3.1, « AMV France & anti-redite »**.
 > La v2.0 « moteur d'impact » et la v2.1 « sakuga flow » restent le socle :
 > macro-structure en six moments, micro-rythme `{quand, force}`, éclair sur les
 > crêtes, fil d'animateur, bandes de fréquences, sens du plan, harmonisation.
@@ -40,6 +40,26 @@ catalogue arrêté en 2015, et **Danbooru** mélange animations amateurs et cont
 > [HISTORIQUE.md](HISTORIQUE.md). Ce qui y a été mis au point sert toujours : la
 > lecture des en-têtes, le découpage sur images-clés, l'écriture du MP4, le coffre
 > et le grenier n'ont pas bougé.
+
+### La v3.1 : la redite, et quatre standards de jury
+
+Un défaut gâchait tout le reste, et trois règles manquaient pour tenir un
+visionnage de concours.
+
+| | Ce que c'est | Mesuré |
+|---|---|---|
+| **Zéro redite** | Une fenêtre posée bannit sa bande — ±1,5 s — pour tout le reste du montage. Le garde-fou d'avant comparait des instants exacts : deux fenêtres à un dixième de seconde passaient toutes les deux. | **0 plan identique · 102 scènes pour 102 coupes** (avant : jusqu'à 26 emplois d'un même rush, 46 % de recouvrement) |
+| **Sources propres** | Vingt-quatre tags écartés au lieu de quatre — comparaisons, cartons-titres, captures, papier de production — et le 4:3 comme le cinémascope refusés. | 1494 cuts → 1382 · plus un seul ratio hors 16:9 |
+| **Synchro interne** | Quand le son s'étire, un plan qui s'éteint ; sur un break, un plan qui s'arrête net. La pente de la courbe de mouvement le dit. | 80 % des coupes longues prennent un plan qui retombe, contre 41 % des courtes |
+| **Guidage du regard** | Sur les coupes rapides, l'action reste dans le même tiers de l'écran. Et un smear ou de la fumée masque un saut d'arc. | 84 % de même tiers (33 % au hasard) · 6 % de traversées (22 % au hasard) |
+
+**Deux consignes ont été écartées après audit, et c'est ce que l'audit sert à
+faire.** Aucun tag de sous-titre, de watermark ou d'incrustation TV n'existe sur
+Sakugabooru — `subtitled`, `watermark`, `credits`, `broadcast_screen`,
+`lower_third`, `hardsub`, `tv_broadcast` rendent tous une liste vide. Et un
+plancher de définition à 720p viderait le catalogue : sur trois cents cuts réels,
+**cent pour cent sont entre 480 et 719 lignes**, aucun n'atteint 720. Le site sert
+des extraits volontairement légers.
 
 ### Les quatre piliers de la v3.0
 
@@ -66,7 +86,11 @@ et chacun est tenu par son banc.
 | **Flux vectoriel en cache** | Le **sens de déplacement** de chaque plan, mesuré au rendu par le runner et rangé dans R2. Le Worker ne peut pas décoder d'images ; le runner le fait presque gratuitement, et chaque AMV réchauffe le catalogue pour le suivant. | 18 prolongements de flux contre 2 inversions, contre 5/5 sans le sens |
 | **Polissage au rendu** | Une **micro-secousse de 125 ms** sur les crêtes servies par un choc, et une **harmonisation vers la médiane** du montage qui rapproche un cut de 2003 d'une séquence de 2024. | 3 images exactement, ligne de temps intacte · étendue de contraste 37,7 → 26,6 |
 
-Rien de tout cela n'est une règle dure, en v2.1 comme en v3.0 : chaque préférence
+Rien de tout cela n'est une règle dure, de la v2.1 à la v3.1 — à une exception
+près, et c'est la seule du projet : **l'interdiction de recouvrement est
+absolue.** Elle ne cède que lorsqu'un catalogue n'a arithmétiquement pas assez de
+matière (quatre-vingt-dix secondes de source pour trois minutes de musique), et le
+journal le dit alors en clair. Pour tout le reste, chaque préférence
 reste sous le budget d'épisode, donc un fil introuvable, un morceau sans grosse
 caisse, un catalogue de six épisodes, une musique sans roulement ou un catalogue
 qu'aucun rendu n'a réchauffé donnent toujours un AMV qui couvre sa musique. C'est
@@ -140,7 +164,7 @@ Routes :
 | `GET /api/moods` | ambiances disponibles |
 | `GET /api/media?u=…` | relais à liste blanche pour les octets d'un rush |
 | `GET /api/cles?u=…` | durée, images-clés et courbe de mouvement d'un plan |
-| `PUT /api/cles?u=…&code=…` | le runner y écrit le sens de déplacement du plan et sa teinte dominante |
+| `PUT /api/cles?u=…&code=…` | le runner y écrit le sens du plan, sa teinte dominante et le tiers où l'action se concentre |
 | `GET /api/casting?anime=…` | les animateurs de la série, pour choisir le fil |
 | `GET /api/extrait?u=…` | vignette ou extrait calculé côté serveur |
 
@@ -288,7 +312,7 @@ public/
 tools/
   stamp.mjs          estampille page + worker + sw au déploiement
   rendu.py           rendu du MP4 sur un runner GitHub
-  sens.py            direction dominante d'un plan, par corrélation d'images
+  sens.py            direction dominante d'un plan, et le tiers où l'action se concentre
   teinte.py          luminance, contraste, saturation, teinte dominante — et la correction
   projet.py          archive DaVinci Resolve (XMEML + EDL + sources)
 .github/workflows/   rendu.yml, projet.yml
@@ -386,10 +410,11 @@ Ce qui suit est la spécification du moteur tel qu'il tourne aujourd'hui.
   recherche  ──►  /api/rushes  (Sakugabooru + AnimeThemes)
         │         par ambiance : combat, vitesse, effets, acting, decor
         │
-  lecture   ──►  /api/cles  (durée, images-clés, courbe, sens, teinte dominante)
+  lecture   ──►  /api/cles  (durée, images-clés, courbe, sens, teinte, tiers d'action)
         │
   ordonnanceur ─► grille de coupes ─► choix de scène ─► fenêtre dans la scène
-        │         escalade par épisode · raccord de teinte · pic du mouvement
+        │         escalade · teinte · pic · pente dE/dt · tiers d'action
+        │         et RÉSERVATION des intervalles source : zéro redite
         │
         ├─► rendu MP4        GitHub Actions + ffmpeg ─► grenier (R2)
         │                    éclair · secousse · rampe 0,65×→1,8× · pulsations
@@ -877,18 +902,82 @@ tient donc dans une image, et les frappes plus serrées que deux images sont
 écartées : à 24 images par seconde, on ne peut pas alterner clair et sombre plus
 vite. Mesuré : images claires **5, 9, 13** — une allumée, trois éteintes.
 
+### L'interdiction de recouvrement, et pourquoi elle est absolue
+
+Le défaut que l'utilisateur a rapporté : le même plan exact — mêmes images, même
+départ, même action — qui revient quatre ou cinq fois. Mesuré avant correction,
+c'était pire : **jusqu'à vingt-six emplois d'un même rush, 46 % de recouvrement
+temporel, cent dix-huit paires de fenêtres montrant les mêmes images.**
+
+**La cause.** Le garde-fou existait et ne pouvait pas marcher : il comparait des
+instants d'entrée exacts — `rush@12.34`. Deux fenêtres distantes d'un dixième de
+seconde passaient toutes les deux. Pire, **un banc validait ce comportement** : il
+comptait les « moments distincts » avec la même clé exacte, et affichait 118/118 là
+où il y avait deux plans identiques. Un test qui mesure le bug avec l'outil du bug.
+
+**La correction.** On réserve des INTERVALLES et non des instants. Une fenêtre
+`[a, z]` posée bannit `[a − 1,5 s ; z + 1,5 s]` pour tout le reste du montage. Et un
+rush dont plus aucun intervalle n'est libre est **épuisé** : il sort des candidats
+au lieu de rendre une fenêtre déjà vue — sans cette seconde moitié, la première ne
+servait à rien.
+
+Quatre tours de choix, et la séparation des deux derniers est ce qui a fait tomber
+les dernières redites :
+
+| Tour | Ce qu'il accepte |
+|---|---|
+| 0 | une scène jamais employée — la règle |
+| 1 | une scène déjà employée, sous son plafond, avec un intervalle libre |
+| 2 | au-delà du plafond, mais **toujours** avec un intervalle libre |
+| 3 | tout, y compris la redite — le dernier recours, et le journal le compte |
+
+Le plafond d'emploi est plus strict que l'interdiction de recouvrement, et les
+confondre faisait sauter les **deux** règles d'un coup : le montage rejouait des
+images alors qu'il en restait de neuves à trois secondes de là. Le plafond est
+d'ailleurs déduit de la source et non figé : un rush de douze secondes porte cinq
+fenêtres franchement distinctes, et les employer n'est pas une redite. Restent deux
+conditions dures — moins de quatre secondes de source, un seul emploi ; et jamais
+deux fois dans le même moment du morceau.
+
+Trois fuites trouvées et bouchées, dont une vicieuse : l'allongement du dernier
+plan de chaque section grandissait **après** réservation, et recouvrait alors une
+autre coupe du même rush.
+
+| Configuration | Avant | Après |
+|---|---|---|
+| **cas réel** — 172 scènes, 102 coupes | le défaut rapporté | **0 paire · 102 scènes pour 102 coupes** |
+| contraint — 50 rushs, 196 coupes | 67 paires · 27,5 % | ≤ 2 paires · < 2 % |
+| insuffisant — 90 s de source pour 180 s | montage qui bégaie sans prévenir | couverture tenue, **et le journal le dit** |
+
+**Une régression de vitesse créée puis corrigée.** Le premier jet balayait la source
+par pas d'un quart de coupe pour chaque candidat de chaque coupe : le calcul du
+tunnel est passé de 0,2 s à **dix-neuf secondes**. La même question — reste-t-il un
+intervalle libre ? — se répond par arithmétique sur les bandes triées, trois ou
+quatre comparaisons au lieu de dizaines de balayages. Retour à **312 ms**.
+
+**Deux arbitrages, tous deux au bénéfice de l'anti-redite** : la bascule thermique
+de la charnière passe de 1,47 à 0,53 sur une échelle de 2, et le drop se concentre
+moins sur la fin de série. Interdire de rejouer un plan interdit aussi de
+concentrer le montage sur les mêmes vingt scènes. C'est le bon sens de
+l'arbitrage : une redite se voit, une concentration un peu molle ne se voit pas.
+
 ### Les bancs
 
 Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
-La suite en fait tourner **trente-six** ; ceux du moteur de montage sont ici, ceux
+La suite en fait tourner **quarante** ; ceux du moteur de montage sont ici, ceux
 de l'interface dans [« Le banc d'essai »](#le-banc-dessai). Au dernier passage,
 tous au vert :
 
 | Banc | Ce qu'il tient | |
 |---|---|---|
+| **la v3.1** | | |
+| `antiredite.mjs` | zéro plan identique, zéro recouvrement, et le mur arithmétique | 23/23 |
+| `sources-propres.mjs` | ce qui porte du texte, et un plancher qui ne vide pas le catalogue | 27/27 |
+| `synchro-interne.mjs` | la pente du mouvement contre l'enveloppe sonore | 17/17 |
+| `regard.mjs` | le tiers de l'action, et les charnières masquées | 16/16 |
 | **les quatre piliers de la v3.0** | | |
 | `remap.py` | la rampe qui ne décale pas d'une image | 21/21 |
-| `escalade.mjs` | l'intro tôt, le climax tard, et un catalogue plat qui tient | 22/22 |
+| `escalade.mjs` | l'intro tôt, le climax tard, et un catalogue plat qui tient | 24/24 |
 | `teinte-match.mjs` | le raccord de couleur et le clash de la charnière | 21/21 |
 | `stutter.mjs` | les rafales trouvées, et aucune coupe ajoutée | 14/14 |
 | **les quatre piliers de la v2.1** | | |
