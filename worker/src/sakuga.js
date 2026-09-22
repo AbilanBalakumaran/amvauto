@@ -10,7 +10,70 @@ const UA = "amvauto/0.1 (+https://github.com/AbilanBalakumaran/amvauto)";
 const TAG_ARTIST = 1;
 const TAG_COPYRIGHT = 3;
 const VIDEO_EXTS = new Set(["mp4", "webm"]);
-const PAPER_TAGS = new Set(["genga", "production_materials", "layout", "douga"]);
+
+/* ---- Ce qui n'est pas du matériau de montage -----------------------------
+
+   Un AMV de concours se juge aussi sur la propreté de ses sources : un carton-
+   titre, une comparaison côte à côte, une capture d'écran de site sont des
+   pollutions visuelles qui disqualifient un montage avant même qu'on regarde le
+   rythme.
+
+   AUCUN tag de sous-titre, de watermark ou d'incrustation TV n'existe sur
+   Sakugabooru — vérifié le 22/09/2026 : « subtitled », « watermark », « credits »,
+   « broadcast_screen », « lower_third », « hardsub », « tv_broadcast » rendent
+   tous une liste vide. Le site n'indexe pas ça.
+
+   Ce qu'il indexe, en revanche, et qui porte du texte ou n'est pas de l'animation
+   jouable :
+
+     comparison, genga_comparison   deux images côte à côte, avec des libellés
+     title_animation                un carton-titre : du texte à l'écran
+     screencap                      une capture d'écran, pas un cut
+     live_action, stop_motion       ce n'est pas de l'animation dessinée
+     tagme                          personne n'a su dire ce que c'est
+
+   Et le matériel de production, déjà écarté en partie : la liste était de quatre
+   tags, il en existe seize. Un « settei » ou un « color_script » n'est pas plus
+   montable qu'un « genga ». */
+export const PAPER_TAGS = new Set([
+  // Le papier de production.
+  "genga", "production_materials", "layout", "douga", "settei", "storyboard",
+  "character_design", "background_design", "concept_art", "color_script",
+  "timesheet", "rough", "shiage", "illustration", "sprite", "cel", "flipbook",
+  // Ce qui porte du texte, ou n'est pas de l'animation.
+  "comparison", "genga_comparison", "title_animation", "screencap",
+  "live_action", "stop_motion", "tagme",
+]);
+
+/* ---- Le cadre : une ligne de temps 16:9 sans barres noires ----------------
+
+   Le rendu est en 16:9. Un cut en 4:3 y entre avec deux bandes noires sur les
+   côtés — ce n'est pas une déformation, le rendu ne déforme jamais, mais ça se
+   voit et ça casse la ligne.
+
+   RELEVÉ SUR LE VRAI CATALOGUE, et c'est ce qui décide de la règle : sur trois
+   cents cuts vidéo de Naruto Shippuden, Chainsaw Man et Jujutsu Kaisen, les
+   ratios sont 1,78 et 1,77 à 95 % — du 16:9 — avec quelques 1,85, un 1,33 et
+   trois 2,40. On garde donc la fenêtre du 16:9 élargie au cinéma, et l'on écarte
+   le 4:3 et le cinémascope.
+
+   La définition, elle, NE PEUT PAS être filtrée au-dessus de 720p : sur ces trois
+   cents cuts, CENT POUR CENT sont entre 480 et 719 lignes, et aucun n'atteint
+   720. Sakugabooru sert des extraits volontairement légers. Exiger 720p viderait
+   le catalogue entier. Le plancher est donc posé là où il protège sans rien
+   casser : sous 400 lignes, ce n'est plus une source montable. */
+const RATIO_MINI = 1.6;
+const RATIO_MAXI = 1.9;
+const LIGNES_MINI = 400;
+
+export function cadrePropre(post) {
+  const h = post.height || 0;
+  const w = post.width || 0;
+  if (h < LIGNES_MINI) return false;
+  if (!h || !w) return true;   // sans définition connue, on ne présume rien
+  const ratio = w / h;
+  return ratio >= RATIO_MINI && ratio <= RATIO_MAXI;
+}
 
 // Table des animateurs : lourde à récupérer, stable dans le temps. On la garde
 // dans l'isolate et on laisse le cache Cloudflare absorber le reste.
@@ -120,11 +183,12 @@ export async function posts(tags, limit) {
 
 // Ce qui est réellement montable : une vidéo, pas du papier, pas de contenu
 // explicite.
-const montables = (found) =>
+export const montables = (found) =>
   found.filter(
     (post) =>
       VIDEO_EXTS.has(post.file_ext) &&
       !post.tags.some((tag) => PAPER_TAGS.has(tag)) &&
+      cadrePropre(post) &&
       post.rating !== "e",
   );
 

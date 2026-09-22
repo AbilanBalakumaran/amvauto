@@ -398,6 +398,10 @@ def renvoyer_les_sens(rapatries, plans, mesures=None):
         # La teinte part avec le sens : même fichier, même passage, même appel.
         # Elle a déjà été mesurée pour l'harmonisation, elle ne coûte rien de plus.
         dedans = {"sens": lu["sens"], "force": lu.get("force", 0)}
+        # Le tiers où l'action se concentre : c'est lui qui guide le regard d'un
+        # plan au suivant sur les coupes rapides.
+        if lu.get("ou"):
+            dedans["ou"] = lu["ou"]
         couleur = mesures.get(adresse) if mesures else None
         if couleur and couleur.get("teinte") is not None:
             dedans["teinte"] = couleur["teinte"]

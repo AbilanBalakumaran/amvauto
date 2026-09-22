@@ -202,6 +202,7 @@ const entetes = {
    déposant malveillant puisse faire est de se tromper de direction, ce qui coûte
    un raccord moins joli. */
 const SENS_PERMIS = new Set(["left", "right", "up", "down", "still"]);
+const OU_PERMIS = new Set(["gauche", "centre", "droite"]);
 
 async function ecrireLeSens(request, url, env) {
   const code = url.searchParams.get("code") || "";
@@ -229,6 +230,9 @@ async function ecrireLeSens(request, url, env) {
   const teinte = Number.isFinite(Number(dit?.teinte))
     ? ((Number(dit.teinte) % 360) + 360) % 360 : null;
   const teinteForce = Math.max(0, Math.min(1, Number(dit?.teinteForce) || 0));
+  /* Le tiers de l'image où l'action se concentre. Trois valeurs, pas une de plus :
+     un champ libre serait une porte ouverte dans une fiche partagée. */
+  const ou = OU_PERMIS.has(String(dit?.ou || "")) ? String(dit.ou) : null;
 
   const cle = `cles/v${VERSION_CLES}/${await empreinte(source.toString())}.json`;
   const range = await env.GRENIER.get(cle).catch(() => null);
@@ -240,6 +244,7 @@ async function ecrireLeSens(request, url, env) {
 
   fiche.sens = sens;
   fiche.sensForce = force;
+  if (ou) fiche.ou = ou;
   if (teinte !== null && teinteForce > 0) {
     fiche.teinte = Math.round(teinte * 10) / 10;
     fiche.teinteForce = Math.round(teinteForce * 1000) / 1000;
@@ -247,7 +252,7 @@ async function ecrireLeSens(request, url, env) {
   await env.GRENIER.put(cle, JSON.stringify(fiche), {
     httpMetadata: { contentType: "application/json", cacheControl: "public, max-age=86400" },
   });
-  return new Response(JSON.stringify({ ecrit: true, sens, force, teinte, teinteForce }), {
+  return new Response(JSON.stringify({ ecrit: true, sens, force, teinte, teinteForce, ou }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 }

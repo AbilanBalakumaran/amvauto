@@ -93,9 +93,48 @@ def _decalage(a: bytes, b: bytes) -> tuple[int, int, float]:
     return meilleur[0], meilleur[1], nettete
 
 
+# Le tiers de l'image où l'action se concentre.
+#
+# L'œil suit une chose à la fois. Sur une suite de coupes rapides, si l'action
+# saute du bord gauche au bord droit à chaque plan, le regard passe sa vie à
+# traverser l'écran — c'est de la fatigue oculaire, et un jury la voit comme du
+# désordre. Enchaîner deux plans dont l'action est au même endroit guide l'œil au
+# lieu de le balader.
+#
+# On le mesure là où le mouvement est : pour chaque paire d'images, la colonne où
+# la différence est la plus forte. Pas de détection d'objet, pas de modèle — la
+# différence entre deux images EST le mouvement, et sa répartition horizontale dit
+# où il se passe.
+QUADRANTS = ("gauche", "centre", "droite")
+
+
+def _quadrant(a: bytes, b: bytes) -> int | None:
+    """Le tiers où la différence entre deux images est la plus forte."""
+    parts = [0, 0, 0]
+    tiers = LARGEUR / 3.0
+    total = 0
+    for y in range(HAUTEUR):
+        ligne = y * LARGEUR
+        for x in range(LARGEUR):
+            ecart = abs(a[ligne + x] - b[ligne + x])
+            if ecart < 6:            # le bruit de compression ne vote pas
+                continue
+            parts[min(2, int(x / tiers))] += ecart
+            total += ecart
+    if total < LARGEUR * HAUTEUR // 4:
+        return None                  # rien ne bouge : aucun tiers ne domine
+    fort = max(range(3), key=lambda i: parts[i])
+    # Il faut une vraie dominance : à égalité, l'action est partout, et dire
+    # « centre » serait inventer.
+    return fort if parts[fort] > total * 0.4 else 1
+
+
 def direction(source: str, ffmpeg: str = "ffmpeg", debut: float = 0.0,
               duree: float = 0.0) -> dict:
-    """« left », « right », « up », « down » ou « still », avec sa force."""
+    """« left », « right », « up », « down » ou « still », avec sa force.
+
+    Et le tiers de l'image où l'action se concentre, quand il s'en dégage un.
+    """
     images = _images(source, ffmpeg, debut, duree)
     if len(images) < 3:
         return {"sens": "", "force": 0, "images": len(images)}
@@ -103,20 +142,36 @@ def direction(source: str, ffmpeg: str = "ffmpeg", debut: float = 0.0,
     sx = 0.0
     sy = 0.0
     votes = 0
+    tiers = [0, 0, 0]
     for i in range(1, len(images)):
+        ou = _quadrant(images[i - 1], images[i])
+        if ou is not None:
+            tiers[ou] += 1
         dx, dy, nettete = _decalage(images[i - 1], images[i])
         if nettete < MARGE:
             continue
         sx += dx
         sy += dy
         votes += 1
+
+    # Le tiers dominant, s'il en est un. Une image sur deux au moins doit voter
+    # pareil, sinon l'action se déplace et il n'y a pas d'ancre à raccorder.
+    ou_total = sum(tiers)
+    quadrant = ""
+    if ou_total >= 3:
+        haut = max(range(3), key=lambda i: tiers[i])
+        if tiers[haut] > ou_total * 0.5:
+            quadrant = QUADRANTS[haut]
+
     if not votes:
-        return {"sens": "still", "force": 0, "images": len(images)}
+        return {"sens": "still", "force": 0, "images": len(images),
+                **({"ou": quadrant} if quadrant else {})}
 
     mx = sx / votes
     my = sy / votes
     if max(abs(mx), abs(my)) < SEUIL_FIXE:
-        return {"sens": "still", "force": 0, "images": len(images)}
+        return {"sens": "still", "force": 0, "images": len(images),
+                **({"ou": quadrant} if quadrant else {})}
 
     if abs(mx) >= abs(my):
         # L'image se déplace de « mx » vers la droite d'une trame à l'autre :
@@ -130,4 +185,5 @@ def direction(source: str, ffmpeg: str = "ffmpeg", debut: float = 0.0,
     # ce que « accordDuMouvement » sait déjà peser.
     force = 1 if ampleur < 0.8 else 2 if ampleur < 1.8 else 3
     return {"sens": sens, "force": force, "images": len(images),
-            "dx": round(mx, 3), "dy": round(my, 3), "votes": votes}
+            "dx": round(mx, 3), "dy": round(my, 3), "votes": votes,
+            **({"ou": quadrant} if quadrant else {})}

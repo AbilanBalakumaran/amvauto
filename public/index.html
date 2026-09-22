@@ -2348,7 +2348,7 @@ function retirerLaPastille() {
 // disparaît, et se remontre — ce qui se lit comme deux démarrages.
 const masquerDemarrage = () => $("demarrage")?.classList.add("parti");
 const montrerDemarrage = () => $("demarrage")?.classList.remove("parti");
-const VERSION_PAGE = "2026-09-21 21:36";
+const VERSION_PAGE = "2026-09-22 05:52";
 
 // Installation et mise à jour. Le service worker est vérifié à chaque
 // lancement : un navigateur peut servir une copie de sw.js pendant 24 h, et
@@ -7338,6 +7338,9 @@ window.__banc = {
   accordDuMouvement: (...a) => accordDuMouvement(...a),
   escalade: (...a) => escalade(...a), axeDeLaSerie: (s) => axeDeLaSerie(s),
   raccordChromatique: (...a) => raccordChromatique(...a),
+  synchroInterne: (...a) => synchroInterne(...a),
+  guidageDuRegard: (...a) => guidageDuRegard(...a), ouDuPlan: (x) => ouDuPlan(x),
+  penteDuMouvement: (...a) => penteDuMouvement(...a),
   roulementsDe: (...a) => roulementsDe(...a),
   teinteDuPlan: (x) => teinteDuPlan(x), ecartDeTeinte: (a, z) => ecartDeTeinte(a, z),
   chaleurDe: (a) => chaleurDe(a),
@@ -19310,6 +19313,156 @@ function focusDuFil(plan, precedent, phase, cibles) {
   return HORS_DU_FIL;
 }
 
+/* ---- Le guidage du regard, et les charnières masquées -------------------
+
+   L'œil suit une chose à la fois. Sur une suite de coupes rapides — une montée,
+   un drop —, si l'action saute du bord gauche au bord droit à chaque plan, le
+   regard passe sa vie à traverser l'écran. C'est de la fatigue oculaire, et un
+   jury la lit comme du désordre. Enchaîner deux plans dont l'action est au même
+   endroit guide l'œil au lieu de le balader.
+
+   « ou » vient de « sens.py », mesuré par le runner et rangé dans la fiche avec le
+   sens et la teinte : pour chaque paire d'images, le tiers où la différence est la
+   plus forte. La différence entre deux images EST le mouvement, et sa répartition
+   horizontale dit où il se passe — sans détection d'objet et sans modèle.
+
+   La règle ne parle que sur les coupes rapides. Ailleurs, l'œil a le temps de
+   trouver l'action tout seul, et l'obliger à rester au même tiers ferait un
+   montage qui regarde toujours le même coin de l'écran.
+
+   **Les charnières masquées.** Un smear, un jaillissement de fumée, une pluie
+   d'étincelles remplissent l'écran : ils servent d'obturateur naturel. C'est par
+   là qu'on passe d'un arc à un autre, ou d'un animé à un autre, sans que le saut
+   se voie. Quand le plan d'avant vient d'ailleurs, un plan de dispersion coûte
+   donc moins cher qu'un plan net. */
+const PRIME_MEME_TIERS = 5;
+const PUNITION_TRAVERSEE = 4;
+const PRIME_CHARNIERE_MASQUEE = 6;
+const MASQUES = new Set(["smears", "smoke", "debris", "sparks", "effects", "fire", "lightning"]);
+
+const ouDuPlan = (plan) => clesConnues.get(mediaDe(plan))?.ou || "";
+
+const AILLEURS = (a, z) => {
+  if (!a || !z) return false;
+  const arcA = String(a.anime || "").toLowerCase();
+  const arcZ = String(z.anime || "").toLowerCase();
+  if (arcA && arcZ && arcA !== arcZ) return true;
+  // À défaut d'animé, l'épisode : un saut de plus de trente épisodes est un
+  // changement d'arc dans toute série longue.
+  const epA = Number(a.episode);
+  const epZ = Number(z.episode);
+  return Number.isFinite(epA) && Number.isFinite(epZ) && Math.abs(epA - epZ) > 30;
+};
+
+function guidageDuRegard(precedent, plan, phase, rapide) {
+  if (!precedent) return 0;
+  let note = 0;
+
+  /* Le tiers de l'action, sur les coupes rapides seulement. */
+  if (rapide && (phase === "montee" || phase === "drop")) {
+    const avant = ouDuPlan(precedent);
+    const apres = ouDuPlan(plan);
+    if (avant && apres) {
+      if (avant === apres) note -= PRIME_MEME_TIERS;
+      // Traverser tout l'écran — un bord à l'autre — est ce qui fatigue ; passer
+      // par le centre ne compte pas.
+      else if ((avant === "gauche" && apres === "droite")
+        || (avant === "droite" && apres === "gauche")) note += PUNITION_TRAVERSEE;
+    }
+  }
+
+  /* La charnière masquée : quand le plan d'avant vient d'ailleurs, un plan qui
+     remplit l'écran cache le saut. */
+  if (AILLEURS(precedent, plan)) {
+    const tags = new Set(plan.tags || []);
+    if ([...MASQUES].some((mot) => tags.has(mot))) note -= PRIME_CHARNIERE_MASQUEE;
+  }
+  return note;
+}
+
+/* ---- La synchro interne : le mouvement épouse l'enveloppe sonore ---------
+
+   Couper sur le temps est acquis, et ça ne suffit pas. Un jury regarde la SYNCHRO
+   INTERNE : ce qui se passe À L'INTÉRIEUR du plan pendant qu'il est à l'écran.
+
+   Deux cas que tout monteur connaît, et que le montage ignorait.
+
+   **La tenue.** Une note de chant qui s'étire, une cymbale qui résonne, une nappe
+   sans kick : le son décroît lentement. Un plan qui accélère là-dessus se bat
+   contre la musique. Il faut un plan qui S'ÉTEINT — dont le mouvement décroît, qui
+   meurt avec la note.
+
+   **La coupure sèche.** Une frappe suivie d'un silence, un break. Un plan dont le
+   mouvement file dans le vide après l'impact laisse l'œil courir sans raison. Il
+   faut un plan qui S'ARRÊTE : une pose, un freeze d'animation, une chute nette.
+
+   La courbe de mouvement de « /api/cles » sait répondre aux deux : elle est
+   échantillonnée toutes les demi-secondes, et sa PENTE sur la fenêtre dit si le
+   plan monte, tient ou retombe. On ne mesure donc rien de neuf — on lit ce qui
+   était déjà là et qu'on ne regardait pas.
+
+   Comment on sait que le son s'étire, ou qu'il se coupe : la grille rend déjà
+   « {quand, force} » pour chaque coupe, et l'écart jusqu'à la frappe suivante dit
+   le reste. Un écart long sans frappe forte, c'est une tenue. Une frappe forte
+   suivie d'un grand vide, c'est un break. */
+const TENUE_SANS_FRAPPE = 1.2;   // au-delà, le son s'étire : plus d'une seconde sans rien
+const PRIME_DECELERATION = 7;    // ce que vaut un plan qui s'éteint sur une tenue
+const PRIME_ARRET = 8;           // ce que vaut un plan qui s'arrête sur un break
+const PUNITION_FUITE = 6;        // ce que coûte un plan qui file dans le vide
+
+/* La pente du mouvement sur la fenêtre : négative quand le plan retombe.
+
+   Une régression linéaire serait le réflexe ; la moitié contre la moitié suffit et
+   ne coûte rien. On rend aussi « chute » — de combien la fin est plus calme que le
+   pic — parce qu'un plan qui s'arrête net n'a pas la même signature qu'un plan qui
+   ralentit : le premier tombe d'un coup, le second glisse. */
+function penteDuMouvement(plan, entree, sortie) {
+  const courbe = clesConnues.get(mediaDe(plan))?.mouvement;
+  if (!courbe?.valeurs?.length || !(courbe.pas > 0)) return null;
+  const a = Math.max(0, Math.floor(entree / courbe.pas));
+  const b = Math.min(courbe.valeurs.length, Math.ceil(sortie / courbe.pas));
+  const v = courbe.valeurs.slice(a, b);
+  if (v.length < 4) return null;
+  const milieu = Math.floor(v.length / 2);
+  const tot = (l) => l.reduce((s, x) => s + x, 0) / Math.max(1, l.length);
+  const debut = tot(v.slice(0, milieu));
+  const fin = tot(v.slice(milieu));
+  const pic = Math.max(...v);
+  const dernier = tot(v.slice(-2));
+  return {
+    // La pente, rapportée au niveau du plan : un plan calme qui perd deux points
+    // n'a pas ralenti autant qu'un plan vif qui en perd vingt.
+    pente: debut > 0 ? (fin - debut) / debut : 0,
+    // La chute finale : de combien la fin est sous le pic.
+    chute: pic > 0 ? 1 - dernier / pic : 0,
+  };
+}
+
+/* Le terme, et ce qu'il demande selon ce que fait le son.
+
+   « ecartApres » est le temps qui sépare cette coupe de la suivante ; « forte »
+   dit si elle tombe sur une frappe qui porte. */
+function synchroInterne(plan, entree, sortie, ecartApres, forte) {
+  const tenue = ecartApres >= TENUE_SANS_FRAPPE;
+  if (!tenue) return 0;
+  const forme = penteDuMouvement(plan, entree, sortie);
+  if (!forme) return 0;
+
+  if (forte) {
+    /* Une frappe forte suivie d'un long vide : c'est un break. On veut un plan
+       qui s'arrête — la chute finale compte plus que la pente moyenne, parce
+       qu'un arrêt net se voit dans les dernières images. */
+    if (forme.chute >= 0.45) return -PRIME_ARRET * Math.min(1, forme.chute);
+    if (forme.pente > 0.15) return PUNITION_FUITE * Math.min(1, forme.pente);
+    return 0;
+  }
+  /* Pas de frappe, le son s'étire : on veut un plan qui s'éteint. Une pente
+     négative est exactement ça ; une pente qui monte se bat contre la note. */
+  if (forme.pente <= -0.12) return -PRIME_DECELERATION * Math.min(1, -forme.pente * 2);
+  if (forme.pente > 0.2) return PUNITION_FUITE * Math.min(1, forme.pente);
+  return 0;
+}
+
 /* ---- Le raccord chromatique : ce que l'œil suit en couleur ---------------
 
    Le flux rétinien ne tient pas qu'à la direction. Passer d'une prairie verte
@@ -19524,7 +19677,7 @@ function estFixe(plan) {
 
 function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, serie = 0,
   graine = 0, partFrappe = 0, phase = "", cibles = [], axe = null, climax = false,
-  charniere = false) {
+  charniere = false, ecartApres = 0) {
   // Deux tiers de la frappe la plus forte : au-dessus, c'est un temps qui porte.
   const fort = partFrappe >= 0.62;
   const ecart = Math.abs(energieDuPlan(plan) - section.energie);
@@ -19724,6 +19877,8 @@ function noterCandidat(plan, section, vus, rang, accord, precedent, budgets, ser
     + focusDuFil(plan, precedent, phase, cibles)
     + escalade(plan, phase, axe, climax)
     + raccordChromatique(precedent, plan, phase, charniere)
+    + synchroInterne(plan, 0, dureeSource(plan), ecartApres, fort)
+    + guidageDuRegard(precedent, plan, phase, ecartApres > 0 && ecartApres <= 0.9)
     + accordDuMouvement(precedent, plan, fort)
     + enchainement(precedent, plan, serie)
     + humeur(plan.id, graine, plan.__pris || 0)
@@ -21273,7 +21428,7 @@ function construireMontage(projet, { ordre = "libre", depuis = null, graine = 0 
             const court = dureeSource(plan) < vise ? 3 : 0;
             const note = noterCandidat(plan, vu, vus, rang, accord, precedent, budgets,
               serie, graine, partFrappe, bord ? "" : phase, cibles, axe, climax,
-              charniere) + court;
+              charniere, vise) + court;
             if (note < meilleure) { meilleure = note; choix = plan; }
           }
           if (choix) { tourRetenu = tour; if (tour === 3) cedeALaRedite += 1; break; }

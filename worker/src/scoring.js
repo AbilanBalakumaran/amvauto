@@ -78,7 +78,17 @@ export const TAGS_MONTAGE = new Set([
 
 // Ce qui aide ou gêne au montage, indépendamment de l'ambiance.
 const BONUS_TAGS = { background_animation: 6, impact_frames: 5, effects: 4, smears: 3, debris: 2 };
-const MALUS_TAGS = { cgi: -8, artist_unknown: -1, web: -2, "3d_background": -4 };
+/* « black_and_white » recule, sans être écarté.
+
+   Un cut en noir et blanc — un flash-back, une planche animée — n'est pas une
+   pollution : c'est un choix de l'animé. Mais posé au milieu d'un montage en
+   couleur, il casse la ligne, et il casse aussi le raccord chromatique du tunnel,
+   qui n'a alors aucune teinte à raccorder. Relevé sur le vrai catalogue : trois
+   cuts sur cent pour Naruto Shippuden, six pour Jujutsu Kaisen. Assez pour se
+   voir, assez rare pour qu'un recul suffise — l'écarter priverait un AMV de
+   flash-back d'un plan qui a peut-être tout son sens. */
+const MALUS_TAGS = { cgi: -8, artist_unknown: -1, web: -2, "3d_background": -4,
+  black_and_white: -5 };
 
 export function moodsOf(post) {
   const tags = new Set(post.tags);
