@@ -134,9 +134,6 @@ export async function themes(query) {
           // source n'offre qu'un seul fichier.
           montage: montage ? montage.link : null,
           montageHauteur: montage ? montage.resolution || 0 : 0,
-          // Toujours faux depuis que les deux fichiers sortent du même lot de NC.
-          // Le champ reste pour la page, qui l'affiche.
-          montageCredite: false,
           preview: null,
           page: anime.slug ? `https://animethemes.moe/anime/${anime.slug}` : "https://animethemes.moe",
           flags: ["sans crédits", rendu.source].filter(Boolean),
@@ -194,7 +191,6 @@ export async function themesLarges(combien = 12, page = 1) {
       video: video.link,
       montage: null,
       montageHauteur: 0,
-      montageCredite: false,
       preview: null,
       page: anime.slug ? `https://animethemes.moe/anime/${anime.slug}` : "https://animethemes.moe",
       flags: ["sans crédits", "BD"],

@@ -70,7 +70,7 @@ visionnage de concours.
 
 | | Ce que c'est | Mesuré |
 |---|---|---|
-| **Zéro redite** | Une fenêtre posée bannit sa bande — ±1,5 s — pour tout le reste du montage. Le garde-fou d'avant comparait des instants exacts : deux fenêtres à un dixième de seconde passaient toutes les deux. | **0 plan identique · 102 scènes pour 102 coupes** (avant : jusqu'à 26 emplois d'un même rush, 46 % de recouvrement) |
+| **Zéro redite** | Une fenêtre posée bannit sa bande — ±1,5 s — pour tout le reste du montage. Le garde-fou d'avant comparait des instants exacts : deux fenêtres à un dixième de seconde passaient toutes les deux. | **0 plan identique · 104 scènes pour 104 coupes · au pire 1 emploi** (avant : jusqu'à 26 emplois d'un même rush, 46 % de recouvrement) |
 | **Sources propres** | Vingt-quatre tags écartés au lieu de quatre — comparaisons, cartons-titres, captures, papier de production — et le 4:3 comme le cinémascope refusés. | 1494 cuts → 1382 · plus un seul ratio hors 16:9 |
 | **Synchro interne** | Quand le son s'étire, un plan qui s'éteint ; sur un break, un plan qui s'arrête net. La pente de la courbe de mouvement le dit. | 80 % des coupes longues prennent un plan qui retombe, contre 41 % des courtes |
 | **Guidage du regard** | Sur les coupes rapides, l'action reste dans le même tiers de l'écran. Et un smear ou de la fumée masque un saut d'arc. | 84 % de même tiers (33 % au hasard) · 6 % de traversées (22 % au hasard) |
@@ -126,9 +126,13 @@ la propriété la plus vérifiée de tout le projet.
 
 1. **Résout la série.** « frieren », « csm », « mob psycho » → le bon tag Sakugabooru.
 2. **Ratisse large.** Jusqu'à 2000 cuts par série, paginés par vagues de cinq requêtes —
-   ce qui donne 1817 rushs sur One Piece, 1494 sur Naruto Shippuden, 1869 sur Gundam.
-3. **Ne garde que le montable.** Vidéos uniquement : les genga, layouts et scans de
-   production sont écartés, ce n'est pas de l'image exploitable au montage.
+   ce qui ramène, avant tout filtrage, 1817 posts sur One Piece, 1494 sur Naruto
+   Shippuden, 1869 sur Gundam.
+3. **Ne garde que le montable**, et c'est une passe sévère. Vidéos uniquement, puis
+   **vingt-quatre tags écartés** — genga, layouts, scans de production, comparaisons,
+   cartons-titres, captures d'écran, prises de vue réelle — puis le cadre : rien sous
+   480 lignes, et aucun ratio hors du 16:9 large (1,60 à 1,90), ce qui refuse le 4:3
+   comme le cinémascope. Mesuré sur Naruto Shippuden : **1494 posts → 1382 scènes**.
 4. **Nomme chaque plan.** Sakugabooru ne nomme pas ses cuts. Le nom est reconstruit
    depuis les tags : `E41 · Combat, impact frames et flammes (Itano circus)`. Épisode,
    action principale, deux détails visuels, et la figure de style quand il y en a une.
@@ -356,7 +360,10 @@ tools/
   sens.py            direction dominante d'un plan, et le tiers où l'action se concentre
   teinte.py          luminance, contraste, saturation, teinte dominante — et la correction
   projet.py          archive DaVinci Resolve (XMEML + EDL + sources)
-.github/workflows/   rendu.yml, projet.yml
+.github/workflows/
+  deploy.yml         déploiement Cloudflare à chaque push sur main
+  rendu.yml          rendu du MP4 (ffmpeg)
+  projet.yml         archive DaVinci Resolve
 wrangler.toml        config de déploiement
 HISTORIQUE.md        le journal de bord : ce qui a été essayé et mesuré
 ```
@@ -402,10 +409,13 @@ Le procédé **ne dépend d'aucune capacité du navigateur** : ni WebCodecs, ni 
 l'appareil, rien qui existe sur un poste et manque sur un téléphone. C'est le choix d'une
 adresse plutôt qu'une autre — identique sur iPhone, sur Android et sur ordinateur.
 
-Une réserve, affichée dans la fiche du rush : le fichier léger porte parfois les crédits que
-la version Blu-ray n'a pas. Même image, même durée, du texte en plus pendant le montage —
-absent du rendu. Quand une variante de même nature existe (créditée comme le rendu, ou sans
-crédits comme lui), c'est elle qui est préférée.
+**La réserve qui existait ici n'existe plus.** Le fichier léger portait parfois les
+crédits que la version Blu-ray n'a pas — même image, même durée, du texte en plus
+pendant le montage. On « préférait » alors une variante de même nature, et la fiche du
+rush affichait la réserve. C'était la dernière porte par laquelle du texte entrait :
+le fichier de montage se choisit maintenant **parmi les sans-crédits**, comme celui du
+rendu. Le champ `montageCredite` a disparu avec la réserve : il ne pouvait plus valoir
+que faux, et une branche morte dans une fiche se relit comme un cas possible.
 
 ## Générer la musique depuis l'outil
 
@@ -478,7 +488,7 @@ l'énergie de l'émotion posée sur la trame.
 | **Montée** | énergie 2 | courses, poursuites, envols, déformations | le plan fixe et calme (+8) |
 | **Drop** | énergie 3 | chocs, impacts, rayons | le plan calme (+14) |
 | **Retombée** | suit un drop, énergie < 3 | débris, fumée, étincelles | le calme neutre et fixe (+20) |
-| **Outro** | dernière section **et** énergie ≤ 1 | plan large, pose tenue | le choc (+25) |
+| **Outro** | dernière section, **ou** au-delà de 88 % du morceau — et énergie ≤ 1 | plan large, pose tenue | le choc (+25) |
 
 Les pénalités sont du même ordre que celle d'une scène déjà vue : franchissables
 quand il ne reste que ça — un catalogue sans une seule scène de combat monte
@@ -770,6 +780,79 @@ le choc.
 La fiche n'est plus servie `immutable` pour un an : un enrichissement n'arriverait
 jamais chez le visiteur. Un jour de cache, une semaine de sursis.
 
+**Le même aller-retour porte maintenant trois mesures**, pas une : le sens du
+déplacement, la teinte dominante (`teinte.py`) et le tiers où l'action se concentre.
+Trois règles en dépendent — le raccord cinétique, le raccord chromatique et le guidage
+du regard — et les trois dorment de la même façon sur un catalogue qu'aucun rendu n'a
+réchauffé. C'est le prix d'une mesure qui demande de décoder des images ; le journal le
+dit, et le montage couvre sa musique sans elles.
+
+### La synchro interne : le mouvement épouse l'enveloppe sonore
+
+Couper sur le temps est acquis, et ça ne suffit pas. Un jury d'AMV regarde la
+**synchro interne** : ce qui se passe *à l'intérieur* du plan pendant qu'il est à
+l'écran. Deux cas que tout monteur connaît, et que le montage ignorait.
+
+**La tenue.** Une note de chant qui s'étire, une cymbale qui résonne, une nappe sans
+kick : le son décroît lentement. Un plan qui accélère là-dessus se bat contre la
+musique. Il faut un plan qui **s'éteint** — dont le mouvement décroît, qui meurt avec
+la note.
+
+**La coupure sèche.** Une frappe suivie d'un silence, un break. Un plan dont le
+mouvement file dans le vide après l'impact laisse l'œil courir sans raison. Il faut un
+plan qui **s'arrête** : une pose, un freeze d'animation, une chute nette.
+
+On ne mesure rien de neuf pour ça — on lit ce qui était déjà là. La courbe de
+mouvement de `/api/cles` est échantillonnée toutes les demi-secondes ; la moyenne de
+sa première moitié contre celle de sa seconde donne la **pente**, et l'écart entre son
+pic et ses deux dernières valeurs donne la **chute**. Les deux ne disent pas la même
+chose : un plan qui s'arrête net tombe d'un coup, un plan qui ralentit glisse.
+
+Et le son se lit sur la grille, qui rend déjà `{quand, force}` : l'écart jusqu'à la
+coupe suivante suffit.
+
+| Ce que fait le son | Ce qu'on veut | Barème |
+|---|---|---|
+| plus de 1,2 s sans frappe, après un temps faible | une pente ≤ −0,12 : le plan s'éteint | −7 au plus |
+| plus de 1,2 s sans frappe, après une frappe forte *(un break)* | une chute ≥ 0,45 : le plan s'arrête | −8 au plus |
+| l'un ou l'autre | une pente qui MONTE : le plan file dans le vide | +6 au plus |
+
+Sous 1,2 s d'écart, la règle se tait : une coupe qui enchaîne n'a pas d'intérieur à
+juger. Et une fiche sans courbe de mouvement la fait taire aussi, comme partout
+ailleurs. Mesuré : **80 % des coupes longues prennent un plan qui retombe, contre 41 %
+des courtes** — la règle ne s'applique donc bien que là où elle doit.
+
+### Le guidage du regard, et les charnières masquées
+
+L'œil suit une chose à la fois. Sur une suite de coupes rapides — une montée, un drop
+—, si l'action saute du bord gauche au bord droit à chaque plan, le regard passe sa vie
+à traverser l'écran. C'est de la fatigue oculaire, et un jury la lit comme du désordre.
+
+Le tiers où l'action se concentre vient de `sens.py`, mesuré par le runner et rangé
+dans la fiche avec le sens et la teinte : pour chaque paire d'images, le tiers où la
+différence est la plus forte. **La différence entre deux images EST le mouvement**, et
+sa répartition horizontale dit où il se passe — sans détection d'objet, sans modèle,
+sans API.
+
+| | Barème |
+|---|---|
+| deux plans de suite dont l'action est au même tiers | −5 |
+| gauche → droite, ou droite → gauche : toute la largeur | +4 |
+| par le centre | rien : ce n'est pas une traversée |
+
+**La règle ne parle que sur les coupes rapides d'une montée ou d'un drop.** Ailleurs,
+l'œil a le temps de trouver l'action tout seul, et l'obliger à rester au même tiers
+ferait un montage qui regarde toujours le même coin de l'écran.
+
+**Les charnières masquées.** Un smear, un jaillissement de fumée, une pluie
+d'étincelles remplissent l'écran : ils servent d'obturateur naturel. C'est par là qu'on
+passe d'un arc à un autre, ou d'un animé à un autre, sans que le saut se voie. Quand le
+plan d'avant vient d'ailleurs — autre animé, ou plus de trente épisodes d'écart —, un
+plan de dispersion vaut **−6**.
+
+Mesuré : **84 % de coupes au même tiers** là où le hasard en donnerait 33, et **6 % de
+traversées** contre 22 au hasard.
+
 ### Le rendu brut, et l'harmonisation des teintes
 
 **Le rendu ne pose plus un seul effet.** Un rush de sakuga est monté tel qu'il a
@@ -847,6 +930,37 @@ cent coupes dont beaucoup sont courtes, ce sont des dixièmes de seconde de dér
 entre l'image et la musique — tout ce que le montage s'échine à éviter, perdu au
 dernier moment. On demande maintenant deux images de rab et `-frames:v` tranche au
 compte exact.
+
+### Un rush mort n'annule plus le rendu
+
+Le runner télécharge cent vingt-trois fichiers, puis découpe, puis assemble. Si
+quoi que ce soit lève une exception, trois minutes de travail partent avec — et
+l'utilisateur, qui attend sur son téléphone, reçoit une croix rouge.
+
+**Trois filets, et une règle qui les gouverne : la ligne de temps garde sa
+durée.** C'est elle qui tient la musique ; une case plus courte décalerait tout ce
+qui suit.
+
+| Ce qui casse | Ce qui se passe |
+|---|---|
+| un téléchargement échoue | **trois essais**, 2 s puis 4 s d'attente — un 503 n'est pas un rush perdu |
+| le rush reste mort | la case reçoit **un autre rush du montage**, pris à son début |
+| ffmpeg refuse le fichier | on réessaie **sans la correction de couleur**, puis on remplace |
+| rien ne passe, même le remplaçant | la case devient **noire**, de la durée exacte |
+| aucun rush du tout n'a pu être téléchargé | là, on s'arrête : il n'y a rien à monter |
+
+Le remplaçant n'est pas toujours le premier de la liste : le point de départ est
+tiré de l'adresse morte, donc dix rushs perdus ne donnent pas dix fois le même
+plan — ce serait exactement la redite que tout le montage s'échine à éviter.
+
+**Et la durée d'une case ne dépend plus de la longueur de la source.** Un filtre
+`tpad=stop=-1:stop_mode=clone` prolonge la dernière image indéfiniment, `-frames:v`
+tranche au compte exact : une source d'une demi-seconde tient une case de deux
+secondes. Mesuré au banc — 48 images demandées, 48 images rendues, là où la même
+case en donnait 24 sans le filtre.
+
+Chaque incident est compté et dit en clair dans le journal du runner : *rushs
+perdus : 1 sur 3*, *plans remplacés : 1 · plans noircis : 0 sur 4*.
 
 ### L'escalade dramatique
 
@@ -1011,10 +1125,12 @@ les dernières redites :
 Le plafond d'emploi est plus strict que l'interdiction de recouvrement, et les
 confondre faisait sauter les **deux** règles d'un coup : le montage rejouait des
 images alors qu'il en restait de neuves à trois secondes de là. Le plafond est
-d'ailleurs déduit de la source et non figé : un rush de douze secondes porte cinq
-fenêtres franchement distinctes, et les employer n'est pas une redite. Restent deux
-conditions dures — moins de quatre secondes de source, un seul emploi ; et jamais
-deux fois dans le même moment du morceau.
+d'ailleurs déduit de la source et non figé : un rush de douze secondes porte trois à
+cinq fenêtres franchement distinctes selon la longueur des coupes — `(source −
+tenue) / (tenue + 1,5 s)` —, et les employer n'est pas une redite. Restent **trois
+conditions dures** : moins de quatre secondes de source, un seul emploi ; moins de
+huit secondes, un seul emploi aussi ; et jamais deux fois dans le même moment du
+morceau.
 
 Trois fuites trouvées et bouchées, dont une vicieuse : l'allongement du dernier
 plan de chaque section grandissait **après** réservation, et recouvrait alors une
@@ -1041,15 +1157,16 @@ l'arbitrage : une redite se voit, une concentration un peu molle ne se voit pas.
 ### Les bancs
 
 Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
-La suite en fait tourner **quarante**, soit **638 vérifications** ; ceux du moteur
-de montage sont ici, ceux de l'interface dans
-[« Le banc d'essai »](#le-banc-dessai). Au dernier passage, **638 sur 638**, aucun
+La suite en fait tourner **quarante et un**, soit **658 vérifications** ; ceux du
+moteur de montage sont ici, ceux de l'interface dans
+[« Le banc d'essai »](#le-banc-dessai). Au dernier passage, **658 sur 658**, aucun
 raté :
 
 | Banc | Ce qu'il tient | |
 |---|---|---|
 | **le rendu brut et la géographie** | | |
 | `vfx.py` | l'ABSENCE de secousse, de flash, de rampe et de stroboscope | 22/22 |
+| `runner.py` | `main()` de bout en bout : le rendu nominal, le rush mort remplacé, le fichier illisible, le noir de dernier recours, la durée exacte | 20/20 |
 | `rendu.mjs` | la feuille de route qui ne commande aucun effet, et un runner qui ne sait plus les écrire | 19/19 |
 | `geographie.mjs` | l'ancrage, le gros plan sans repère, la monotonie d'échelle | 23/23 |
 | `generique.mjs` | 100 % des sources AnimeThemes strictement sans crédits | 13/13 |
@@ -1171,9 +1288,11 @@ de fichier qui donnent les images-clés. Vérifié sur l'ED1 de Chainsaw Man :
 91,175 s, 148 images-clés, 1920 × 1080.
 
 Ils forment leur propre lot dans la recherche : le serveur les rend en dernier, et
-l'entrelacement les noyait. Huit par génération au plus — Naruto en a cent
+l'entrelacement les noyait. **Huit par génération au plus** — Naruto en a cent
 quarante-sept, et les lire tous épuisait le budget de lecture avant d'avoir touché
-aux cuts.
+aux cuts. Le plafond monte à **vingt-quatre quand le catalogue est maigre** (moins de
+120 scènes) : là, les génériques ne prennent pas la place des cuts, ils sont la seule
+matière qui reste.
 
 **Le « sans crédits » est une condition d'entrée, et ce n'en était pas une.** Un
 générique crédité porte les noms du staff en surimpression : dans un AMV de
@@ -1348,6 +1467,7 @@ nombre de navigations. Quelques-uns, et ce qu'ils gardent :
 | `macro.mjs`, `impact.mjs`, `regimes.mjs` | les six moments, la frappe et la crête, les cinq régimes |
 | `entrees.mjs`, `fuite.mjs` | ce qui entre dans le tunnel, et rien qui s'empile sur trois générations |
 | `vfx.py`, `rendu.mjs` | l'absence totale d'effet : ni zoompan, ni drawbox, ni setpts, ni stroboscope — et une feuille de route qui n'en commande aucun |
+| `runner.py` | le runner de bout en bout, et ce qu'il fait quand un rush meurt |
 | `geographie.mjs`, `stutter.mjs` | le plan d'ensemble avant le gros plan, les rafales qui n'ajoutent pas une coupe |
 | `escalade.mjs`, `teinte-match.mjs` | le montage qui monte avec la série, la couleur qui se prolonge ou décharge |
 

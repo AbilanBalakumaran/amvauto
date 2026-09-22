@@ -5307,3 +5307,48 @@ images — ce n'est plus un stroboscope, c'est une lampe qu'on allume. La pulsat
 tient donc dans une image, et les frappes plus serrées que deux images sont
 écartées : à 24 images par seconde, on ne peut pas alterner clair et sombre plus
 vite. Mesuré : images claires **5, 9, 13** — une allumée, trois éteintes.
+
+---
+
+## Le nom d'un module écrasé par une variable locale
+
+Le 22/09/2026, deux rendus sont morts au même endroit, après deux minutes
+cinquante et six minutes de téléchargements :
+
+```
+File "tools/rendu.py", line 290, in main
+    vise = teinte.cible(list(mesures.values()))
+UnboundLocalError: cannot access local variable 'teinte' where it is not
+associated with a value
+```
+
+**La cause tient en une ligne**, et elle est à soixante lignes de l'endroit qui
+échoue. En retirant les effets procéduraux du rendu, la ligne de journal de chaque
+plan a été réécrite :
+
+```python
+teinte = "couleur harmonisée" if couleurs.get(plan["video"]) else "brut"
+print(f"plan {rang + 1}/{len(plans)} · {teinte}", flush=True)
+```
+
+`teinte` est le nom du module importé en tête de fichier. Python décide à la
+compilation qu'un nom affecté *quelque part* dans une fonction est local *partout*
+dans cette fonction — y compris avant l'affectation. L'appel à `teinte.cible()`,
+vingt lignes plus haut, ne voit donc plus le module mais une locale pas encore
+écrite. Le fichier se compile sans un mot ; l'erreur n'existe qu'à l'exécution.
+
+Le correctif est le renommage de la locale. Ce qui compte est ailleurs.
+
+**Aucun banc ne pouvait voir ça.** `vfx.py` vérifiait la commande ffmpeg que
+`decouper` construit — il n'appelait jamais `main()`. Un banc qui ne passe pas par
+la fonction d'entrée ne tient pas le programme : il tient des morceaux, et les
+morceaux allaient très bien. `runner.py` a donc été écrit, il appelle `main()` sur
+une vraie feuille de route, et il a été vérifié dans les deux sens — la version
+corrigée passe, la version buguée rend exactement la trace ci-dessus.
+
+**Et le rendu a été rendu tolérant**, parce que la vraie leçon n'est pas la faute
+de frappe : c'est que trois minutes de téléchargements ne doivent pas mourir d'une
+seule case. Trois essais par fichier, un remplaçant pris ailleurs dans le montage,
+un repli sans correction de couleur, une case noire en dernier recours — et
+toujours la durée exacte, parce que c'est elle qui tient la musique. Le détail est
+dans le [README](README.md#un-rush-mort-nannule-plus-le-rendu).

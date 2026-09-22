@@ -29,9 +29,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 import sens as mesure_sens
 import teinte
@@ -59,13 +61,56 @@ def permise(adresse):
     return morceau.scheme == "https" and morceau.hostname in HOTES
 
 
+TAILLE_MINI = 2048          # en deçà, ce n'est pas une vidéo mais une page d'erreur
+ESSAIS = 3                  # un 503 de Sakugabooru n'est pas un rush perdu
+ATTENTE = 2                 # secondes, doublées à chaque essai
+
+
 def telecharger(adresse, vers):
+    """Un fichier, et la certitude de l'avoir reçu en entier.
+
+    Une coupure en cours de transfert ne lève rien : « copyfileobj » s'arrête où
+    le flux s'arrête, et le fichier tronqué a l'air d'un fichier. On compare donc
+    ce qu'on a écrit à ce que le serveur annonçait, et on refuse ce qui est trop
+    petit pour être une vidéo — une page d'erreur HTML fait deux kilo-octets.
+    """
     if not permise(adresse):
         raise ValueError(f"source non autorisée : {adresse}")
     requete = urllib.request.Request(adresse, headers=ENTETES)
     with urllib.request.urlopen(requete, timeout=120) as reponse, open(vers, "wb") as fichier:
+        annonce = reponse.headers.get("content-length")
         shutil.copyfileobj(reponse, fichier)
+    recu = os.path.getsize(vers)
+    if annonce and int(annonce) != recu:
+        raise RuntimeError(f"transfert incomplet : {recu} octets sur {annonce}")
+    if recu < TAILLE_MINI:
+        raise RuntimeError(f"fichier trop petit pour une vidéo : {recu} octets")
     return vers
+
+
+def telecharger_avec_patience(adresse, vers):
+    """Trois essais, puis on renonce À CE RUSH — pas au rendu.
+
+    Cent vingt-trois rushs téléchargés pendant trois minutes, et le rendu entier
+    annulé parce que le cent-vingt-troisième a rendu un 503 : c'est le scénario
+    qu'on refuse. Un rush mort est un rush remplacé, et le journal le dit.
+    """
+    souci = None
+    for essai in range(1, ESSAIS + 1):
+        try:
+            return telecharger(adresse, vers)
+        except Exception as raison:                      # noqa: BLE001
+            souci = raison
+            try:
+                os.remove(vers)
+            except OSError:
+                pass
+            if essai < ESSAIS:
+                attente = ATTENTE * (2 ** (essai - 1))
+                print(f"   raté ({raison}) — on réessaie dans {attente} s", flush=True)
+                time.sleep(attente)
+    print(f"   ABANDONNÉ après {ESSAIS} essais : {souci}", flush=True)
+    return None
 
 
 def ffmpeg(*arguments):
@@ -128,6 +173,13 @@ def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, couleur=""
         f"scale={largeur}:{hauteur}:force_original_aspect_ratio=decrease",
         f"pad={largeur}:{hauteur}:(ow-iw)/2:(oh-ih)/2:color=black",
         f"fps={cadence}",
+        # La source peut être plus courte que la case — un rush de remplacement
+        # dont on ne connaît pas la durée, une fenêtre qui frôle la fin du
+        # fichier. « tpad » prolonge alors la dernière image indéfiniment, et
+        # « -frames:v » tranche au compte exact : la case fait TOUJOURS la durée
+        # annoncée. Sans ça, une source trop courte raccourcit le plan, et tout
+        # ce qui suit glisse à côté de la musique.
+        "tpad=stop=-1:stop_mode=clone",
         "setsar=1",
     ]
     # Le seul effet qui reste, et il ne touche ni le cadre ni la vitesse : ramener
@@ -157,6 +209,45 @@ def decouper(source, entree, sortie, vers, cadence, largeur, hauteur, couleur=""
         "-movflags", "+faststart",
         vers,
     )
+
+
+def noircir(vers, duree, cadence, largeur, hauteur):
+    """Une case noire de la durée exacte : le tout dernier recours.
+
+    Mieux vaut deux secondes de noir dans un AMV que pas d'AMV du tout — et
+    surtout, la ligne de temps garde sa longueur, donc tout ce qui suit reste
+    calé sur la musique. Le journal le compte, et le rapport le dit.
+    """
+    images = max(1, int(round(duree * cadence)))
+    ffmpeg(
+        "-f", "lavfi", "-i", f"color=black:s={largeur}x{hauteur}:r={cadence}",
+        # Même rapport de pixels que les autres cases : le collage se fait en
+        # copie de flux, et un SAR qui diffère le ferait échouer.
+        "-vf", "setsar=1",
+        "-frames:v", str(images),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", vers,
+    )
+    return vers
+
+
+def remplacants(plan, rapatries, combien=3):
+    """Quelques rushs vivants pour tenir la case d'un rush mort.
+
+    On tourne dans la liste au lieu de reprendre toujours le premier : sans ça,
+    dix rushs perdus donneraient dix fois le même plan de remplacement — la
+    redite, précisément ce que tout le montage s'échine à éviter. Le point de
+    départ dépend de l'adresse morte, donc deux cases perdues distinctes
+    reçoivent deux remplaçants distincts. Et « crc32 » plutôt que « hash » :
+    celui de Python est salé à chaque démarrage, donc deux rendus de la même
+    feuille de route ne choisiraient pas les mêmes images.
+    """
+    sienne = plan.get("video") or ""
+    vivants = sorted(adresse for adresse in rapatries if adresse != sienne)
+    if not vivants:
+        return []
+    depart = zlib.crc32(sienne.encode()) % len(vivants)
+    return [vivants[(depart + i) % len(vivants)] for i in range(min(combien, len(vivants)))]
 
 
 def assembler(morceaux, vers, dossier):
@@ -268,12 +359,29 @@ def main():
     try:
         # Un rush sert souvent plusieurs plans : on ne le télécharge qu'une fois.
         rapatries = {}
+        perdus = []
+        vus = 0
         for plan in plans:
             adresse = plan["video"]
-            if adresse not in rapatries:
-                vers = os.path.join(dossier, f"rush{len(rapatries)}.mp4")
-                print(f"rush {len(rapatries) + 1} : {adresse}", flush=True)
-                rapatries[adresse] = telecharger(adresse, vers)
+            if adresse in rapatries or adresse in perdus:
+                continue
+            vus += 1
+            vers = os.path.join(dossier, f"rush{vus}.mp4")
+            print(f"rush {vus} : {adresse}", flush=True)
+            obtenu = telecharger_avec_patience(adresse, vers)
+            if obtenu:
+                rapatries[adresse] = obtenu
+            else:
+                perdus.append(adresse)
+        if perdus:
+            print(f"rushs perdus : {len(perdus)} sur {vus} — ils seront remplacés",
+                  flush=True)
+        # Rien du tout, c'est autre chose qu'un rush mort : le réseau est coupé,
+        # ou la liste blanche a tout refusé. Là, il n'y a pas de rendu possible.
+        if not rapatries:
+            print("aucun rush n'a pu être téléchargé : rien à monter",
+                  file=sys.stderr)
+            return 1
 
         # L'harmonisation, mesurée avant de découper.
         #
@@ -301,17 +409,74 @@ def main():
                   flush=True)
 
         morceaux = []
+        remplaces = 0
+        noircis = 0
         for rang, plan in enumerate(plans):
             morceau = os.path.join(dossier, f"plan{rang:04d}.mp4")
-            decouper(rapatries[plan["video"]], plan["entree"], plan["sortie"],
-                     morceau, cadence, largeur, hauteur,
-                     couleurs.get(plan["video"], ""))
+            duree = max(0.05, float(plan["sortie"]) - float(plan["entree"]))
+
+            # Ce plan a-t-il encore sa source ? Et si oui, ffmpeg la lit-il
+            # vraiment ? Trois filets, essayés dans cet ordre :
+            #
+            #   1. le rush du montage, avec sa correction de couleur ;
+            #   2. le même sans la correction — si c'est le filtre « eq » qui
+            #      coince, ce n'est pas une raison de perdre l'image ;
+            #   3. un autre rush du montage, pris au début du fichier, seul
+            #      endroit dont on soit sûr qu'il existe.
+            #
+            # Dans tous les cas la case garde sa durée : c'est elle qui tient la
+            # musique, et « tpad » la remplit même si le remplaçant est court.
+            propre = rapatries.get(plan["video"])
+            essais = []
+            if propre:
+                sienne = couleurs.get(plan["video"], "")
+                essais.append((propre, float(plan["entree"]), sienne, ""))
+                if sienne:
+                    essais.append((propre, float(plan["entree"]), "", " · sans correction"))
+            for adresse in remplacants(plan, rapatries):
+                essais.append((rapatries[adresse], 0.0, couleurs.get(adresse, ""),
+                               " · REMPLACÉ"))
+
+            pose = None
+            for source, entree, couleur, note in essais:
+                try:
+                    decouper(source, entree, entree + duree, morceau,
+                             cadence, largeur, hauteur, couleur)
+                    pose = (couleur, note)
+                    break
+                except Exception as souci:               # noqa: BLE001
+                    print(f"   plan {rang + 1} : {souci}", flush=True)
+            if pose is None:
+                # Le tout dernier recours. Mieux vaut une case noire qu'un rendu
+                # annulé après trois minutes — et la ligne de temps garde sa
+                # longueur, donc tout ce qui suit reste calé sur la musique.
+                try:
+                    noircir(morceau, duree, cadence, largeur, hauteur)
+                except Exception as souci:               # noqa: BLE001
+                    print(f"même le noir a échoué : {souci}", file=sys.stderr)
+                    return 1
+                pose = ("", " · NOIR")
+                noircis += 1
+            elif "REMPLACÉ" in pose[1]:
+                remplaces += 1
             morceaux.append(morceau)
             # Une ligne par plan, et ce qu'elle dit est tout ce qui lui arrive :
             # le cadre commun, la cadence commune, et une correction de couleur
             # quand le plan en demande une.
-            teinte = "couleur harmonisée" if couleurs.get(plan["video"]) else "brut"
-            print(f"plan {rang + 1}/{len(plans)} · {teinte}", flush=True)
+            #
+            # Et surtout PAS « teinte = … » ici : ce nom est celui du module
+            # importé en tête. Une affectation, même soixante lignes plus bas,
+            # fait de « teinte » une locale de toute la fonction — donc
+            # « teinte.cible() », vingt lignes plus haut, lève
+            # UnboundLocalError. C'est ce qui a tué deux rendus après deux
+            # minutes cinquante de téléchargements, le 22/09/2026.
+            etat = "couleur harmonisée" if pose[0] else "brut"
+            print(f"plan {rang + 1}/{len(plans)} · {etat}{pose[1]}", flush=True)
+
+        if remplaces or noircis:
+            print(f"plans remplacés : {remplaces} · plans noircis : {noircis}"
+                  f" sur {len(plans)} — la ligne de temps garde sa durée",
+                  flush=True)
 
         muet = os.path.join(dossier, "muet.mp4")
         assembler(morceaux, muet, dossier)

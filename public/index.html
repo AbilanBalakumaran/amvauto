@@ -3241,9 +3241,12 @@ function lire(rush) {
     rush.height
       ? `rendu ${rush.width}×${rush.height}${rush.mbRendu || rush.mb ? ` · ${rush.mbRendu || rush.mb} Mo` : ""}`
       : null,
+    // Plus de mention « crédits visibles au montage seulement » : le fichier de
+    // montage se choisit parmi les sans-crédits, donc l'avertissement ne pouvait
+    // plus s'afficher. Une branche morte dans une fiche se relit comme un cas
+    // possible.
     rush.montage
-      ? `montage ${rush.montageHauteur ? `${rush.montageHauteur}p` : "allégé"}${rush.mb ? ` · ${rush.mb} Mo` : ""}` +
-        (rush.montageCredite ? " · crédits visibles au montage seulement" : "")
+      ? `montage ${rush.montageHauteur ? `${rush.montageHauteur}p` : "allégé"}${rush.mb ? ` · ${rush.mb} Mo` : ""}`
       : null,
     rush.score === null
       ? `${PROVENANCE[rush.provider]} · pas de note`
@@ -20520,7 +20523,9 @@ function rushEpuise(plan, prises, tenue, phase = "") {
      posé, il est fini. C'est une règle dure.
 
      Au-delà, le plafond est DÉDUIT de la source au lieu d'être figé : un rush de
-     douze secondes porte trois fenêtres franchement distinctes, et les employer
+     douze secondes porte trois à cinq fenêtres franchement distinctes selon la
+     longueur des coupes — cinq pour des coupes d'une seconde, trois pour des
+     coupes de deux —, et les employer
      n'est pas une redite — c'est ce que fait un monteur avec un long plan. Un
      plafond figé à deux, lui, forçait la redite ailleurs : mesuré, cinquante rushs
      plafonnés à deux ne fournissent que cent emplois là où le montage en demande

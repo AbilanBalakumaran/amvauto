@@ -120,7 +120,6 @@ function fromSource(item) {
     // légère pour monter. Le montage n'a pas besoin de 1080p, le rendu si.
     montage: item.montage || null,
     montageHauteur: item.montageHauteur || 0,
-    montageCredite: item.montageCredite || false,
     mbRendu: item.mbRendu || null,
     youtube: item.youtube || null,
     preview: item.preview,
