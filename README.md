@@ -1157,16 +1157,16 @@ l'arbitrage : une redite se voit, une concentration un peu molle ne se voit pas.
 ### Les bancs
 
 Tout ce qui précède est tenu par des bancs Playwright et Python, hors du dépôt.
-La suite en fait tourner **quarante et un**, soit **658 vérifications** ; ceux du
+La suite en fait tourner **quarante et un**, soit **659 vérifications** ; ceux du
 moteur de montage sont ici, ceux de l'interface dans
-[« Le banc d'essai »](#le-banc-dessai). Au dernier passage, **658 sur 658**, aucun
+[« Le banc d'essai »](#le-banc-dessai). Au dernier passage, **659 sur 659**, aucun
 raté :
 
 | Banc | Ce qu'il tient | |
 |---|---|---|
 | **le rendu brut et la géographie** | | |
 | `vfx.py` | l'ABSENCE de secousse, de flash, de rampe et de stroboscope | 22/22 |
-| `runner.py` | `main()` de bout en bout : le rendu nominal, le rush mort remplacé, le fichier illisible, le noir de dernier recours, la durée exacte | 20/20 |
+| `runner.py` | `main()` de bout en bout : le rendu nominal, le rush mort remplacé, le fichier illisible, le noir de dernier recours, la durée exacte — et, sur l'arbre syntaxique, qu'aucune locale ne masque un module importé | 21/21 |
 | `rendu.mjs` | la feuille de route qui ne commande aucun effet, et un runner qui ne sait plus les écrire | 19/19 |
 | `geographie.mjs` | l'ancrage, le gros plan sans repère, la monotonie d'échelle | 23/23 |
 | `generique.mjs` | 100 % des sources AnimeThemes strictement sans crédits | 13/13 |
