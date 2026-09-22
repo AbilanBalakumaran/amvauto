@@ -172,6 +172,14 @@ npm run dev      # http://127.0.0.1:8787
 npm run deploy   # -> https://amvauto.<ton-sous-domaine>.workers.dev
 ```
 
+**Mais le déploiement ne demande pas d'ordinateur.** Ce projet se pilote depuis un
+téléphone, et `npm run deploy` demandait un terminal, un dépôt cloné et un jeton
+Cloudflare dans l'environnement. Le workflow `.github/workflows/deploy.yml` fait
+maintenant les trois : **pousser sur `main` déploie**, une à deux minutes plus tard.
+L'onglet Actions permet aussi de le relancer à la main, sans inventer un commit. Un
+seul secret à poser une fois, `CLOUDFLARE_API_TOKEN` ; s'il manque, le workflow le
+dit en clair au lieu d'échouer au milieu du journal de wrangler.
+
 Le Worker sert l'interface **et** relaie l'API : Sakugabooru ne renvoie aucun en-tête
 CORS, une page statique ne peut donc pas l'appeler directement. Les vignettes et les
 MP4, eux, sont chargés en direct par le navigateur — `<img>` et `<video>` échappent au
@@ -251,6 +259,13 @@ fois figerait l'application chez l'utilisateur.
 > pouvait plus se déclencher : page et Worker portaient le même horodatage périmé, donc
 > ils étaient d'accord. Et l'ordre compte : on déploie, **puis** on valide les fichiers
 > estampillés, pour que le commit corresponde exactement à ce qui est en ligne.
+>
+> Sur le runner, cet ordre n'a plus lieu d'être : l'estampille est écrite dans les
+> fichiers de la course et n'est pas recommitée — la recommiter relancerait le
+> workflow, indéfiniment. Ce qui compte est que la page et le Worker soient
+> estampillés dans la **même** course, et ils le sont ; c'est leur comparaison qui
+> déclenche le bandeau. La valeur rangée dans le dépôt ne sert plus qu'au
+> développement local.
 
 La page est servie en `no-store` et le Worker s'exécute avant les fichiers statiques
 (`run_worker_first`), sans quoi cet en-tête ne s'appliquerait jamais. Page et Worker portent

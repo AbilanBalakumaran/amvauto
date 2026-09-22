@@ -1,0 +1,89 @@
+# Le déploiement, fait ailleurs lui aussi.
+#
+# Il n'y a pas d'ordinateur au bout de ce projet : il se pilote depuis un
+# téléphone. Or « npm run deploy » demandait un terminal, un dépôt cloné et un
+# jeton Cloudflare posé dans l'environnement — trois choses qu'un navigateur
+# mobile n'a pas. Le déploiement descend donc là où sont déjà le rendu et
+# l'export : sur un runner GitHub.
+#
+# À partir de maintenant, POUSSER SUR « main » SUFFIT. Le workflow estampille,
+# installe et déploie ; une ou deux minutes plus tard, l'application en ligne
+# porte le dernier commit.
+#
+# Un seul secret à poser, une seule fois : CLOUDFLARE_API_TOKEN, dans
+# Settings → Secrets and variables → Actions du dépôt. Sans lui, le workflow
+# s'arrête sur un message clair plutôt que sur une erreur de wrangler.
+name: Déploiement Cloudflare
+
+on:
+  push:
+    branches: [main]
+  # Et à la main, depuis l'onglet Actions : indispensable quand le jeton vient
+  # d'être posé ou renouvelé, pour redéployer sans avoir à inventer un commit.
+  workflow_dispatch:
+
+# Deux poussées coup sur coup ne se marchent pas dessus : la seconde annule la
+# première en vol. C'est le dernier commit de « main » qui doit être en ligne,
+# pas le plus rapide des deux.
+concurrency:
+  group: deploiement
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deployer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Dire tout de suite ce qui manque. Sans cette garde, wrangler échoue
+      # trente secondes plus tard sur « it's necessary to set a
+      # CLOUDFLARE_API_TOKEN », au milieu de sa propre documentation — un
+      # message juste, mais qu'il faut aller chercher dans le journal.
+      - name: Vérifier le jeton
+        env:
+          JETON: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$JETON" ]; then
+            echo "::error::Le secret CLOUDFLARE_API_TOKEN est absent. Settings → Secrets and variables → Actions → New repository secret."
+            exit 1
+          fi
+          echo "jeton présent"
+
+      - name: Installer les dépendances
+        run: npm install
+
+      # « npm run deploy » estampille puis déploie. L'estampille est écrite dans
+      # les fichiers du RUNNER, pas dans le dépôt, et c'est voulu : recommiter
+      # l'horodatage relancerait ce même workflow, indéfiniment. Ce qui compte
+      # est que la page et le Worker soient estampillés dans la MÊME course —
+      # ils le sont —, car c'est leur comparaison qui dit à l'utilisateur que
+      # son navigateur sert une copie périmée. La valeur rangée dans le dépôt,
+      # elle, ne sert qu'au développement local.
+      - name: Estampiller et déployer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Facultatif : nécessaire seulement si le jeton ouvre plusieurs
+          # comptes Cloudflare, auquel cas wrangler refuse de choisir.
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run deploy
+
+      - name: Rapport
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "### Déployé ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "Le commit \`${GITHUB_SHA:0:7}\` est en ligne." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Déploiement raté ❌" >> "$GITHUB_STEP_SUMMARY"
+            echo "Le commit \`${GITHUB_SHA:0:7}\` n'est PAS en ligne : la version précédente continue de servir." >> "$GITHUB_STEP_SUMMARY"
+          fi
